@@ -1,4 +1,4 @@
-// Copyright 2020 Intrinsec
+// Copyright 2021 Intrinsec
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,6 +17,7 @@ package collector
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/go-kit/kit/log"
@@ -87,7 +88,7 @@ func NewVirtualMachineCollector(logger log.Logger) (Collector, error) {
 
 	networkLabels = append(networkLabels, "network", "mac", "ip")
 	ethernetDevLabels = append(ethernetDevLabels, "driver_model", "driver_mac", "driver_status")
-	diskLabels = append(diskLabels, "vmdk")
+	diskLabels = append(diskLabels, "vmdk", "thin_provisioned")
 
 	res := virtualMachineCollector{
 
@@ -304,7 +305,7 @@ func (c *virtualMachineCollector) Update(ch chan<- prometheus.Metric) (err error
 		}
 		disks := GetDisks(item)
 		for _, disk := range disks {
-			tmp := append(labelsValues, disk.vmdk)
+			tmp := append(labelsValues, disk.vmdk, strconv.FormatBool(disk.thinProvisioned))
 			ch <- c.diskCapacityBytes.mustNewConstMetric(float64(disk.capacity), tmp...)
 		}
 	}
@@ -387,8 +388,9 @@ func GetNetworks(vm mo.VirtualMachine) []Network {
 }
 
 type Disk struct {
-	vmdk     string
-	capacity int64
+	vmdk            string
+	capacity        int64
+	thinProvisioned bool
 }
 
 func GetDisks(vm mo.VirtualMachine) []Disk {
@@ -398,8 +400,9 @@ func GetDisks(vm mo.VirtualMachine) []Disk {
 		disk := d.(*types.VirtualDisk)
 		info := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo)
 		res = append(res, Disk{
-			vmdk:     info.FileName,
-			capacity: disk.CapacityInBytes,
+			vmdk:            info.FileName,
+			capacity:        disk.CapacityInBytes,
+			thinProvisioned: *info.ThinProvisioned,
 		})
 	}
 	return res
