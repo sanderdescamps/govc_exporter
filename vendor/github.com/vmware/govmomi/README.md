@@ -99,7 +99,7 @@ Refer to the [CHANGELOG](CHANGELOG.md) for version to version changes.
 * [VMware Event Broker Appliance](https://github.com/vmware-samples/vcenter-event-broker-appliance/tree/development/vmware-event-router)
 
 * [VMware VIC Engine](https://github.com/vmware/vic)
-
+  
 * [vSphere 7.0](https://docs.vmware.com/en/VMware-vSphere/7.0/rn/vsphere-esxi-vcenter-server-7-vsphere-with-kubernetes-release-notes.html)
 
 ## Related projects
