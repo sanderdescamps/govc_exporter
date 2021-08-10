@@ -4,12 +4,6 @@ github.com/alecthomas/template/parse
 # github.com/alecthomas/units v0.0.0-20210208195552-ff826a37aa15
 ## explicit
 github.com/alecthomas/units
-# github.com/apache/thrift v0.13.0
-## explicit
-# github.com/aryann/difflib v0.0.0-20170710044230-e206f873d14a
-## explicit
-# github.com/aws/aws-lambda-go v1.13.3
-## explicit
 # github.com/beorn7/perks v1.0.1
 github.com/beorn7/perks/quantile
 # github.com/cespare/xxhash/v2 v2.1.1
@@ -23,8 +17,6 @@ github.com/go-kit/log
 github.com/go-kit/log/level
 # github.com/go-logfmt/logfmt v0.5.0
 github.com/go-logfmt/logfmt
-# github.com/go-sql-driver/mysql v1.4.0
-## explicit
 # github.com/golang/protobuf v1.5.2
 github.com/golang/protobuf/proto
 github.com/golang/protobuf/ptypes
@@ -33,40 +25,19 @@ github.com/golang/protobuf/ptypes/duration
 github.com/golang/protobuf/ptypes/timestamp
 # github.com/google/uuid v1.3.0
 ## explicit
-# github.com/hashicorp/go-version v1.2.0
-## explicit
-# github.com/hashicorp/go.net v0.0.1
-## explicit
 # github.com/jpillora/backoff v1.0.0
 github.com/jpillora/backoff
-# github.com/lightstep/lightstep-tracer-go v0.18.1
-## explicit
 # github.com/matttproud/golang_protobuf_extensions v1.0.1
 github.com/matttproud/golang_protobuf_extensions/pbutil
-# github.com/mitchellh/gox v0.4.0
-## explicit
-# github.com/mitchellh/iochan v1.0.0
-## explicit
 # github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f
 github.com/mwitkow/go-conntrack
-# github.com/oklog/oklog v0.3.2
-## explicit
-# github.com/oklog/run v1.0.0
-## explicit
-# github.com/opentracing/basictracer-go v1.0.0
-## explicit
-# github.com/openzipkin-contrib/zipkin-go-opentracing v0.4.5
-## explicit
-# github.com/pact-foundation/pact-go v1.0.4
-## explicit
-# github.com/pborman/uuid v1.2.0
-## explicit
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
 # github.com/prometheus/client_golang v1.11.0
 ## explicit
 github.com/prometheus/client_golang/prometheus
+github.com/prometheus/client_golang/prometheus/collectors
 github.com/prometheus/client_golang/prometheus/internal
 github.com/prometheus/client_golang/prometheus/promhttp
 # github.com/prometheus/client_model v0.2.0
@@ -85,8 +56,6 @@ github.com/prometheus/common/version
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
-# github.com/samuel/go-zookeeper v0.0.0-20190923202752-2cc03de413da
-## explicit
 # github.com/vmware/govmomi v0.26.0
 ## explicit
 github.com/vmware/govmomi
@@ -107,10 +76,6 @@ github.com/vmware/govmomi/vim25/progress
 github.com/vmware/govmomi/vim25/soap
 github.com/vmware/govmomi/vim25/types
 github.com/vmware/govmomi/vim25/xml
-# go.etcd.io/etcd v0.0.0-20191023171146-3cf2f69b5738
-## explicit
-# go.uber.org/tools v0.0.0-20190618225709-2cfd321de3ee
-## explicit
 # golang.org/x/crypto v0.0.0-20210711020723-a769d52b0f97
 ## explicit
 golang.org/x/crypto/bcrypt
@@ -186,5 +151,3 @@ gopkg.in/alecthomas/kingpin.v2
 # gopkg.in/yaml.v2 v2.4.0
 ## explicit
 gopkg.in/yaml.v2
-# sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
-## explicit

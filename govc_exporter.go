@@ -28,6 +28,7 @@ import (
 	"github.com/intrinsec/govc_exporter/collector"
 	"github.com/intrinsec/govc_exporter/https"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/version"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
@@ -55,8 +56,8 @@ func newHandler(includeExporterMetrics bool, maxRequests int, logger log.Logger)
 	}
 	if h.includeExporterMetrics {
 		h.exporterMetricsRegistry.MustRegister(
-			prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
-			prometheus.NewGoCollector(),
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+			collectors.NewGoCollector(),
 		)
 	}
 	if innerHandler, err := h.innerHandler(); err != nil {
