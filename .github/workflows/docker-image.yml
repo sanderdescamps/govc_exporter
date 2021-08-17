@@ -34,7 +34,7 @@ jobs:
           push: true
           tags: |
             intrinsec/govc-exporter:latest
-            intrinsec/govc-exporter:1.1.0
+            intrinsec/govc-exporter:1.1.1
       -
         name: Image digest
         run: echo ${{ steps.docker_build.outputs.digest }}
