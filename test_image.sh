@@ -20,7 +20,10 @@ wait_start() {
 }
 
 docker_start() {
-    container_id=$(docker run -d -p "${port}":"${port}" "${docker_image}")
+    container_id=$(docker run -d -p "${port}":"${port}" "${docker_image}" \
+    --collector.vc.url=test \
+    --collector.vc.username=test \
+    --collector.vc.password=test)
 }
 
 docker_cleanup() {
