@@ -16,6 +16,8 @@
 package collector
 
 import (
+	"strconv"
+	
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
@@ -45,7 +47,7 @@ func init() {
 // NewEsxCollector returns a new Collector exposing IpTables stats.
 func NewEsxCollector(logger log.Logger) (Collector, error) {
 
-	labels := []string{"vc", "dc", "cluster", "name", "version", "status", "power_state", "connection_state"}
+	labels := []string{"vc", "dc", "cluster", "name", "version", "status", "power_state", "connection_state", "standby_mode", "maintenance_mode"}
 
 	res := esxCollector{
 		uptimeSeconds: typedDesc{prometheus.NewDesc(
@@ -105,9 +107,11 @@ func (c *esxCollector) Update(ch chan<- prometheus.Metric) (err error) {
 		status := string(summ.OverallStatus)
 		powerstate := string(summ.Runtime.PowerState)
 		connstate := string(summ.Runtime.ConnectionState)
+		standby := string(summ.Runtime.StandbyMode)
+		maintenance := strconv.FormatBool(summ.Runtime.InMaintenanceMode)
 		qs := summ.QuickStats
 		mb := int64(1024 * 1024)
-		labels := []string{vc, tmp.dc, tmp.cluster, name, version, status, powerstate, connstate}
+		labels := []string{vc, tmp.dc, tmp.cluster, name, version, status, powerstate, connstate, standby, maintenance}
 
 		ch <- c.uptimeSeconds.mustNewConstMetric(float64(qs.Uptime), labels...)
 
