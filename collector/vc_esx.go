@@ -107,7 +107,7 @@ func (c *esxCollector) Update(ch chan<- prometheus.Metric) (err error) {
 		connstate := string(summ.Runtime.ConnectionState)
 		qs := summ.QuickStats
 		mb := int64(1024 * 1024)
-		labels := []string{vc, tmp.dc, tmp.cluster, name, version, status, power_state, connstate}
+		labels := []string{vc, tmp.dc, tmp.cluster, name, version, status, powerstate, connstate}
 
 		ch <- c.uptimeSeconds.mustNewConstMetric(float64(qs.Uptime), labels...)
 
