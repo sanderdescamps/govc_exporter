@@ -45,7 +45,7 @@ func init() {
 // NewEsxCollector returns a new Collector exposing IpTables stats.
 func NewEsxCollector(logger log.Logger) (Collector, error) {
 
-	labels := []string{"vc", "dc", "cluster", "name", "version", "status"}
+	labels := []string{"vc", "dc", "cluster", "name", "version", "status", "power_state", "connection_state"}
 
 	res := esxCollector{
 		uptimeSeconds: typedDesc{prometheus.NewDesc(
@@ -103,9 +103,11 @@ func (c *esxCollector) Update(ch chan<- prometheus.Metric) (err error) {
 		tmp := getParents(c.ctx, c.logger, c.client.Client, hs.ManagedEntity)
 		version := summ.Config.Product.Version
 		status := string(summ.OverallStatus)
+		powerstate := string(summ.Runtime.PowerState)
+		connstate := string(summ.Runtime.ConnectionState)
 		qs := summ.QuickStats
 		mb := int64(1024 * 1024)
-		labels := []string{vc, tmp.dc, tmp.cluster, name, version, status}
+		labels := []string{vc, tmp.dc, tmp.cluster, name, version, status, power_state, connstate}
 
 		ch <- c.uptimeSeconds.mustNewConstMetric(float64(qs.Uptime), labels...)
 
