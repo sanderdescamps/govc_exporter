@@ -125,6 +125,11 @@ test-docker:
 	@echo ">> testing docker image"
 	./test_image.sh "$(DOCKER_REPO)/$(DOCKER_IMAGE_NAME)-linux-amd64:$(DOCKER_IMAGE_TAG)" 9752
 
+.PHONY: run-mock
+run-mock:
+	vcsim
+
+
 .PHONY: promtool
 promtool: $(PROMTOOL)
 

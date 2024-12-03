@@ -1,6 +1,6 @@
 module github.com/intrinsec/govc_exporter
 
-go 1.17
+go 1.23
 
 require (
 	github.com/alecthomas/units v0.0.0-20210208195552-ff826a37aa15 // indirect
