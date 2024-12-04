@@ -3,6 +3,8 @@ package collector
 import (
 	"sync"
 	"time"
+
+	"github.com/vmware/govmomi/vim25/mo"
 )
 
 type Sensor struct {
@@ -10,12 +12,11 @@ type Sensor struct {
 	Namespace       string
 	LastRefresh     time.Time
 	refreshPeriod   time.Duration
-	refreshFunction func() ([]Metric, error)
-	metrics         []Metric
+	refreshFunction func() ([]mo.ManagedEntity, error)
 	lock            sync.Mutex
 }
 
-func NewSensor(namespace string, f func() ([]Metric, error), refreshPeriod time.Duration) *Sensor {
+func NewSensor(namespace string, f func() ([]mo.ManagedEntity, error), refreshPeriod time.Duration) *Sensor {
 	s := Sensor{
 		Namespace:       namespace,
 		refreshFunction: f,
@@ -44,19 +45,4 @@ func (s *Sensor) GetMetrics() []Metric {
 		return s.metrics
 	}
 	return []Metric{}
-}
-
-func (s *Sensor) GetLatestMetrics() ([]Metric, error) {
-	if s.Expired() {
-		err := s.Refresh()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return s.GetMetrics(), nil
-}
-
-func (s *Sensor) Expired() bool {
-	return s.metrics == nil || time.Now().After(s.LastRefresh.Add(s.refreshPeriod))
 }

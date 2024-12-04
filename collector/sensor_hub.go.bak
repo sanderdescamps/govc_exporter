@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
@@ -19,7 +20,7 @@ func init() {
 
 type SensorHub struct {
 	ctx       context.Context
-	cache     []CacheEntity
+	sensors   []*Sensor
 	client    *govmomi.Client
 	config    SensorHubConf
 	jobTicker *time.Ticker
@@ -43,33 +44,33 @@ const (
 	SensorLoggerCtxKey ContextKey = "sensor-logger"
 )
 
-// func NexVCenterHub(ctx context.Context, conf SensorHubConf) (*SensorHub, error) {
-// 	// logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{AddSource: true}))
-// 	ctx = context.WithValue(ctx, SensorLoggerCtxKey, logger)
-// 	sh := &SensorHub{
-// 		ctx:    ctx,
-// 		config: conf,
-// 	}
+func NexVCenterHub(ctx context.Context, conf SensorHubConf) (*SensorHub, error) {
+	// logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{AddSource: true}))
+	ctx = context.WithValue(ctx, SensorLoggerCtxKey, logger)
+	sh := &SensorHub{
+		ctx:    ctx,
+		config: conf,
+	}
 
-// 	sh.sensors = []*Sensor{}
-// 	sh.sensors = append(sh.sensors, NewSensor(
-// 		"govc_esx",
-// 		NewHostRefreshFunc(sh.ctx, sh),
-// 		time.Duration(time.Duration(sh.config.SensorRefreshPeriod)*time.Second),
-// 	))
-// 	sh.sensors = append(sh.sensors, NewSensor(
-// 		"govc_ds",
-// 		NewDatastoreRefreshFunc(sh.ctx, sh),
-// 		time.Duration(time.Duration(sh.config.SensorRefreshPeriod)*time.Second),
-// 	))
-// 	sh.sensors = append(sh.sensors, NewSensor(
-// 		"govc_spod",
-// 		NewSpodRefreshFunc(sh.ctx, sh),
-// 		time.Duration(time.Duration(sh.config.SensorRefreshPeriod)*time.Second),
-// 	))
+	sh.sensors = []*Sensor{}
+	sh.sensors = append(sh.sensors, NewSensor(
+		"govc_esx",
+		NewHostRefreshFunc(sh.ctx, sh),
+		time.Duration(time.Duration(sh.config.SensorRefreshPeriod)*time.Second),
+	))
+	sh.sensors = append(sh.sensors, NewSensor(
+		"govc_ds",
+		NewDatastoreRefreshFunc(sh.ctx, sh),
+		time.Duration(time.Duration(sh.config.SensorRefreshPeriod)*time.Second),
+	))
+	sh.sensors = append(sh.sensors, NewSensor(
+		"govc_spod",
+		NewSpodRefreshFunc(sh.ctx, sh),
+		time.Duration(time.Duration(sh.config.SensorRefreshPeriod)*time.Second),
+	))
 
-// 	return sh, nil
-// }
+	return sh, nil
+}
 
 func NewSensorHub(ctx context.Context, conf SensorHubConf) (*SensorHub, error) {
 	// logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{AddSource: true}))
@@ -139,32 +140,32 @@ func (sh *SensorHub) GetClient() *govmomi.Client {
 // 	return &s, nil
 // }
 
-// func (sh *SensorHub) refreshSensors() {
-// 	for _, s := range sh.sensors {
-// 		if s.Expired() {
-// 			logger.Debug(fmt.Sprintf("refreshing %v", s))
-// 			s.Refresh()
-// 		}
-// 	}
-// }
+func (sh *SensorHub) refreshSensors() {
+	for _, s := range sh.sensors {
+		if s.Expired() {
+			logger.Debug(fmt.Sprintf("refreshing %v", s))
+			s.Refresh()
+		}
+	}
+}
 
-// func (sh *SensorHub) Start() {
-// 	sh.jobTicker = time.NewTicker(time.Duration(sh.config.SensorHubJobPeriod) * time.Second)
-// 	go func() {
-// 		for range sh.jobTicker.C {
-// 			sh.refreshSensors()
-// 		}
-// 	}()
-// }
+func (sh *SensorHub) Start() {
+	sh.jobTicker = time.NewTicker(time.Duration(sh.config.SensorHubJobPeriod) * time.Second)
+	go func() {
+		for range sh.jobTicker.C {
+			sh.refreshSensors()
+		}
+	}()
+}
 
-// func (sh *SensorHub) Stop() {
-// 	sh.jobTicker.Stop()
-// }
+func (sh *SensorHub) Stop() {
+	sh.jobTicker.Stop()
+}
 
-// func (sh SensorHub) GetMetrics() []Metric {
-// 	metrics := []Metric{}
-// 	for _, s := range sh.sensors {
-// 		metrics = append(metrics, s.GetMetrics()...)
-// 	}
-// 	return metrics
-// }
+func (sh SensorHub) GetMetrics() []Metric {
+	metrics := []Metric{}
+	for _, s := range sh.sensors {
+		metrics = append(metrics, s.GetMetrics()...)
+	}
+	return metrics
+}
