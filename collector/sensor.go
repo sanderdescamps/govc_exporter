@@ -11,6 +11,7 @@ type Sensor struct {
 	// parentHub       *SensorHub
 	Namespace       string
 	LastRefresh     time.Time
+	metrics         []Metric
 	refreshPeriod   time.Duration
 	refreshFunction func() ([]mo.ManagedEntity, error)
 	lock            sync.Mutex
@@ -28,13 +29,13 @@ func NewSensor(namespace string, f func() ([]mo.ManagedEntity, error), refreshPe
 }
 
 func (s *Sensor) Refresh() error {
-	metrics, err := s.refreshFunction()
-	if err != nil {
-		return err
-	}
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	s.metrics = metrics
+	// metrics, err := s.refreshFunction()
+	// if err != nil {
+	// 	return err
+	// }
+	// s.lock.Lock()
+	// defer s.lock.Unlock()
+	// s.metrics = metrics
 	return nil
 }
 

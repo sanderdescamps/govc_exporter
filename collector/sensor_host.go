@@ -1,46 +1,8 @@
 package collector
 
 import (
-	"context"
-
-	"github.com/vmware/govmomi/view"
-	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 )
-
-func NewHostRefreshFunc(ctx context.Context, sh *SensorHub) func() ([]mo.HostSystem, error) {
-	return func() ([]mo.HostSystem, error) {
-		c := sh.GetClient()
-
-		m := view.NewManager(c.Client)
-		v, err := m.CreateContainerView(
-			ctx,
-			c.ServiceContent.RootFolder,
-			[]string{"HostSystem"},
-			true,
-		)
-		if err != nil {
-			return nil, err
-		}
-		defer v.Destroy(ctx)
-
-		var items []mo.HostSystem
-		err = v.Retrieve(
-			context.Background(),
-			[]string{"HostSystem"},
-			[]string{
-				"parent",
-				"summary",
-			},
-			&items,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		return items, nil
-	}
-}
 
 // func NewHostRefreshFunc(ctx context.Context, sh *SensorHub) func() ([]Metric, error) {
 // 	return func() ([]Metric, error) {

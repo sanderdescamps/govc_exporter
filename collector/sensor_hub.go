@@ -19,7 +19,7 @@ func init() {
 
 type SensorHub struct {
 	ctx       context.Context
-	cache     []CacheEntity
+	cache     []any
 	client    *govmomi.Client
 	config    SensorHubConf
 	jobTicker *time.Ticker
