@@ -8,8 +8,17 @@ import (
 	"github.com/vmware/govmomi/vim25/mo"
 )
 
-func NewHostRefreshFunc(ctx context.Context, sh *SensorHub) func() ([]mo.HostSystem, error) {
-	return func() ([]mo.HostSystem, error) {
+type SensorType int
+
+const (
+	HostSensor SensorType = iota
+	ClusterSensor
+	DatastoreSensor
+	VMSensor
+)
+
+func NewHostRefreshFunc(ctx context.Context, sh *SensorHub) (SensorType, func() ([]mo.HostSystem, error)) {
+	return HostSensor, func() ([]mo.HostSystem, error) {
 		c := sh.GetClient()
 
 		m := view.NewManager(c.Client)
@@ -42,15 +51,15 @@ func NewHostRefreshFunc(ctx context.Context, sh *SensorHub) func() ([]mo.HostSys
 	}
 }
 
-func NewClusterRefreshFunc(ctx context.Context, sh *SensorHub) func() ([]mo.HostSystem, error) {
-	return func() ([]mo.HostSystem, error) {
+func NewClusterRefreshFunc(ctx context.Context, sh *SensorHub) (SensorType, func() ([]mo.ComputeResource, error)) {
+	return ClusterSensor, func() ([]mo.ComputeResource, error) {
 		c := sh.GetClient()
 
 		m := view.NewManager(c.Client)
 		v, err := m.CreateContainerView(
 			ctx,
 			c.ServiceContent.RootFolder,
-			[]string{"HostSystem"},
+			[]string{"ComputeResource"},
 			true,
 		)
 		if err != nil {
@@ -58,13 +67,13 @@ func NewClusterRefreshFunc(ctx context.Context, sh *SensorHub) func() ([]mo.Host
 		}
 		defer v.Destroy(ctx)
 
-		var items []mo.HostSystem
+		var items []mo.ComputeResource
 		err = v.Retrieve(
 			context.Background(),
-			[]string{"HostSystem"},
+			[]string{"ComputeResource"},
 			[]string{
-				"parent",
-				"summary",
+				// "parent",
+				// "summary",
 			},
 			&items,
 		)
@@ -99,6 +108,43 @@ func NewHostPerClusterRefreshFunc(ctx context.Context, sh *SensorHub, cluster st
 		err = v.RetrieveWithFilter(
 			context.Background(),
 			[]string{"HostSystem"},
+			[]string{
+				"parent",
+				"summary",
+			},
+			&items, property.Filter{},
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return items, nil
+	}
+}
+
+func NewVMPerHostRefreshFunc(ctx context.Context, sh *SensorHub, cluster string) func() ([]mo.VirtualMachine, error) {
+	return func() ([]mo.VirtualMachine, error) {
+		c := sh.GetClient()
+
+		m := view.NewManager(c.Client)
+		v, err := m.CreateContainerView(
+			ctx,
+			c.ServiceContent.RootFolder,
+			[]string{"VirtualMachine"},
+			true,
+		)
+		if err != nil {
+			return nil, err
+		}
+		defer v.Destroy(ctx)
+
+		// filter := property.Filter{}
+		// filter.MatchAnyPropertyList([]types.DynamicProperty{})
+
+		var items []mo.VirtualMachine
+		err = v.RetrieveWithFilter(
+			context.Background(),
+			[]string{"VirtualMachine"},
 			[]string{
 				"parent",
 				"summary",

@@ -6,9 +6,11 @@ import (
 	"testing"
 
 	"github.com/vmware/govmomi"
+	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/soap"
+	"github.com/vmware/govmomi/vim25/types"
 )
 
 func GetClient(t *testing.T) *govmomi.Client {
@@ -179,6 +181,56 @@ func TestVMwareVM(t *testing.T) {
 			"summary",
 		},
 		&items,
+	)
+
+	if err != nil {
+		t.Errorf("%v", err)
+		t.Fail()
+	}
+	for _, vm := range items {
+		t.Logf("host:  %s", vm.Config.Name)
+	}
+}
+
+func TestVMwareVMperHost(t *testing.T) {
+	host := types.ManagedObjectReference{
+		Type:  "HostSystem",
+		Value: "host-22",
+	}
+
+	var items []mo.VirtualMachine
+	client := GetClient(t)
+	ctx := context.Background()
+	m := view.NewManager(client.Client)
+	v, err := m.CreateContainerView(
+		ctx,
+		client.ServiceContent.RootFolder,
+		[]string{"VirtualMachine"},
+		true,
+	)
+	if err != nil {
+		t.Errorf("%v", err)
+		t.Fail()
+	}
+	defer v.Destroy(ctx)
+
+	err = v.RetrieveWithFilter(
+		ctx,
+		[]string{"VirtualMachine"},
+		[]string{
+			"config",
+			//"datatore",
+			"guest",
+			"guestHeartbeatStatus",
+			"network",
+			"parent",
+			"resourceConfig",
+			"resourcePool",
+			"runtime",
+			"snapshot",
+			"summary",
+		},
+		&items, property.Filter{"Runtime.Host": host},
 	)
 
 	if err != nil {

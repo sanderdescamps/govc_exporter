@@ -2,15 +2,20 @@ package collector
 
 import (
 	"time"
-
-	"github.com/vmware/govmomi/vim25/mo"
 )
 
-type VMwareCacheItem struct {
-	Entity    mo.ManagedEntity
-	timeStamp time.Time
+type VMwareCacheItem[t VMwareResource] struct {
+	Item       *t
+	expireTime time.Time
 }
 
-func (s *VMwareCacheItem) Expired(maxAge time.Duration) bool {
-	return time.Now().After(s.timeStamp.Add(maxAge))
+func NewVMwareCacheItem[T VMwareResource](item *T, maxAge time.Duration) *VMwareCacheItem[T] {
+	return &VMwareCacheItem[T]{
+		Item:       item,
+		expireTime: time.Now().Add(maxAge),
+	}
+}
+
+func (s *VMwareCacheItem[T]) Expired() bool {
+	return time.Now().After(s.expireTime)
 }
