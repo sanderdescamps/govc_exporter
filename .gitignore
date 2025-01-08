@@ -6,6 +6,8 @@
 # Folders
 _obj
 _test
+/dist
+/debug-collector
 
 # Architecture specific extensions/prefixes
 *.[568vq]
@@ -33,5 +35,10 @@ dependencies-stamp
 /.idea
 *.iml
 
+# VSCode
+*/__debug_bin*
+
 # Test files extracted from ttar
 collector/fixtures/sys/
+
+

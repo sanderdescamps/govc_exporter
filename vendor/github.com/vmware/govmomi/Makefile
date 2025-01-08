@@ -58,7 +58,7 @@ lint-go: $(GOLANGCI_LINT) ## Lint codebase
 	$(GOLANGCI_LINT) run -v $(GOLANGCI_LINT_FLAGS)
 
 .PHONY: lint-go-full
-lint-go-full: GOLANGCI_LINT_FLAGS = --fast=false
+lint-go-full: GOLANGCI_LINT_FLAGS = --fast=false --max-same-issues=200
 lint-go-full: lint-go ## Run slower linters to detect possible issues
 
 .PHONY: fix
@@ -94,18 +94,30 @@ install: ## Install govc and vcsim
 ## Generate
 ## --------------------------------------
 
-.PHONY: mod
-mod: ## Runs go mod tidy to validate modules
-	go mod tidy -v
+GO_MOD_FILES := $(filter-out ./hack/tools/go.mod,$(shell find . -name go.mod))
+GO_MOD_OP := tidy
 
-.PHONY: mod-get
-mod-get: ## Downloads and caches the modules
-	go mod download
+.PHONY: $(GO_MOD_FILES)
+$(GO_MOD_FILES):
+	go -C $(@D) mod $(GO_MOD_OP)
+
+.PHONY: mod
+mod: $(GO_MOD_FILES)
+mod: ## Validates the modules
+
+.PHONY: modules-download
+mod-download: GO_MOD_OP=download
+mod-download: $(GO_MOD_FILES)
+mod-download: ## Downloads and caches the modules
 
 .PHONY: doc
 doc: install
 doc: ## Generates govc USAGE.md
 	./govc/usage.sh > ./govc/USAGE.md
+
+.PHONY: generate-types
+generate-types: ## Generate the types
+	$(MAKE) -C ./gen/ $@
 
 
 ## --------------------------------------
@@ -132,7 +144,7 @@ endif
 
 .PHONY: go-test
 go-test: ## Runs go unit tests with race detector enabled
-	GORACE=$(GORACE) $(GO) test \
+	GORACE=$(GORACE) CGO_ENABLED=1 $(GO) test \
   -count $(TEST_COUNT) \
   -race \
   -timeout $(TEST_TIMEOUT) \
@@ -143,16 +155,7 @@ go-test: ## Runs go unit tests with race detector enabled
 govc-test: install
 govc-test: ## Runs govc bats tests
 	./govc/test/images/update.sh
-	(cd govc/test && ./vendor/github.com/sstephenson/bats/libexec/bats -t .)
-
-.PHONY: govc-test-sso
-govc-test-sso: install
-	./govc/test/images/update.sh
-	(cd govc/test && SSO_BATS=1 ./vendor/github.com/sstephenson/bats/libexec/bats -t sso.bats)
-
-.PHONY: govc-test-sso-assert-cert
-govc-test-sso-assert-cert:
-	SSO_BATS_ASSERT_CERT=1 $(MAKE) govc-test-sso
+	(cd govc/test && ./vendor/github.com/bats-core/bats-core/bin/bats -t .)
 
 .PHONY: test
 test: go-test govc-test	## Runs go-test and govc-test

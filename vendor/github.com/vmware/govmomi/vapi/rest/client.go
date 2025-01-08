@@ -1,11 +1,11 @@
 /*
-Copyright (c) 2018 VMware, Inc. All Rights Reserved.
+Copyright (c) 2018-2024 VMware, Inc. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,9 +22,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/vmware/govmomi/vapi/internal"
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/soap"
+	"github.com/vmware/govmomi/vim25/types"
 )
 
 // Client extends soap.Client to support JSON encoding, while inheriting security features, debug tracing and session persistence.
@@ -155,6 +157,14 @@ func (e *statusError) Error() string {
 	return fmt.Sprintf("%s %s: %s", e.res.Request.Method, e.res.Request.URL, e.res.Status)
 }
 
+func IsStatusError(err error, code int) bool {
+	statusErr, ok := err.(*statusError)
+	if !ok || statusErr == nil || statusErr.res == nil {
+		return false
+	}
+	return statusErr.res.StatusCode == code
+}
+
 // RawResponse may be used with the Do method as the resBody argument in order
 // to capture the raw response data.
 type RawResponse struct {
@@ -180,6 +190,11 @@ func (c *Client) Do(ctx context.Context, req *http.Request, resBody interface{})
 		}
 	}
 
+	// OperationID (see soap.Client.soapRoundTrip)
+	if id, ok := ctx.Value(types.ID{}).(string); ok {
+		req.Header.Add("X-Request-ID", id)
+	}
+
 	if headers, ok := ctx.Value(headersContext{}).(http.Header); ok {
 		for k, v := range headers {
 			for _, v := range v {
@@ -192,10 +207,11 @@ func (c *Client) Do(ctx context.Context, req *http.Request, resBody interface{})
 		switch res.StatusCode {
 		case http.StatusOK:
 		case http.StatusCreated:
+		case http.StatusAccepted:
 		case http.StatusNoContent:
 		case http.StatusBadRequest:
 			// TODO: structured error types
-			detail, err := ioutil.ReadAll(res.Body)
+			detail, err := io.ReadAll(res.Body)
 			if err != nil {
 				return err
 			}
@@ -257,6 +273,36 @@ func (c *Client) DownloadFile(ctx context.Context, file string, u *url.URL, para
 	p := *param
 	p.Headers = c.authHeaders(p.Headers)
 	return c.Client.DownloadFile(ctx, file, u, &p)
+}
+
+// DownloadAttachment writes the response to given filename, defaulting to Content-Disposition filename in the response.
+// A filename of "-" writes the response to stdout.
+func (c *Client) DownloadAttachment(ctx context.Context, req *http.Request, filename string) error {
+	return c.Client.Do(ctx, req, func(res *http.Response) error {
+		if filename == "" {
+			d := res.Header.Get("Content-Disposition")
+			_, params, err := mime.ParseMediaType(d)
+			if err == nil {
+				filename = params["filename"]
+			}
+		}
+
+		var w io.Writer
+
+		if filename == "-" {
+			w = os.Stdout
+		} else {
+			f, err := os.Create(filename)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			w = f
+		}
+
+		_, err := io.Copy(w, res.Body)
+		return err
+	})
 }
 
 // Upload wraps soap.Client.Upload, adding the REST authentication header

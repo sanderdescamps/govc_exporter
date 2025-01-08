@@ -1,0 +1,49 @@
+package pool
+
+import "time"
+
+type FixedSizePool[T any] struct {
+	poolObjects []*T
+	available   chan int
+}
+
+func NewFixedSizePoolFromCreatorFunc[T any](creator func() *T, size int) Pool[T] {
+	fixedPool := FixedSizePool[T]{
+		available: make(chan int, size),
+	}
+
+	for i := 0; i < size; i++ {
+		item := creator()
+		fixedPool.poolObjects = append(fixedPool.poolObjects, item)
+		fixedPool.available <- i + 1
+	}
+
+	return &fixedPool
+}
+
+func NewFixedSizePool[T any](items []*T) Pool[T] {
+	fixedPool := FixedSizePool[T]{
+		available: make(chan int, len(items)),
+	}
+
+	for id, item := range items {
+		fixedPool.poolObjects = append(fixedPool.poolObjects, item)
+		fixedPool.available <- id + 1
+	}
+	return &fixedPool
+}
+
+func (p *FixedSizePool[T]) Acquire() (*T, int) {
+	for {
+		select {
+		case id := <-p.available:
+			return p.poolObjects[id-1], id
+		default:
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+}
+
+func (p *FixedSizePool[T]) Release(id int) {
+	p.available <- id
+}

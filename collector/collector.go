@@ -15,178 +15,94 @@
 package collector
 
 import (
-	"errors"
 	"fmt"
-	"sync"
-	"time"
+	"log/slog"
+	"net/http"
+	"slices"
+	"strings"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
+	"github.com/intrinsec/govc_exporter/collector/helper"
+	"github.com/intrinsec/govc_exporter/collector/scraper"
 	"github.com/prometheus/client_golang/prometheus"
-	kingpin "gopkg.in/alecthomas/kingpin.v2"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Namespace defines the common namespace to be used by all metrics.
 const namespace = "govc"
 
-var (
-	scrapeDurationDesc = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "scrape", "collector_duration_seconds"),
-		"govc_exporter: Duration of a collector scrape.",
-		[]string{"collector"},
-		nil,
-	)
-	scrapeSuccessDesc = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "scrape", "collector_success"),
-		"govc_exporter: Whether a collector succeeded.",
-		[]string{"collector"},
-		nil,
-	)
-)
+type VCCollector struct {
+	scraper    *scraper.VCenterScraper
+	logger     *slog.Logger
+	conf       CollectorConf
+	collectors map[*helper.Matcher]prometheus.Collector
+}
 
-const (
-	defaultEnabled = true
-	//defaultDisabled = false
-)
+func NewVCCollector(conf CollectorConf, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
+	collectors := map[*helper.Matcher]prometheus.Collector{}
+	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper)
+	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper)
+	collectors[helper.NewMatcher("resourcepool", "rp")] = NewResourcePoolCollector(scraper)
+	collectors[helper.NewMatcher("cluster", "host")] = NewClusterCollector(scraper)
+	collectors[helper.NewMatcher("vm", "virtualmachine")] = NewVirtualMachineCollector(scraper, virtualMachineCollectorOptions{
+		CollectNetworks:  conf.CollectVMNetworks,
+		CollectDisks:     conf.CollectVMDisks,
+		UseIsecSpecifics: conf.UseIsecSpecifics,
+	})
+	collectors[helper.NewMatcher("spod", "storagepod")] = NewStoragePodCollector(scraper)
+	collectors[helper.NewMatcher("scraper")] = NewScraperCollector(scraper)
 
-var (
-	factories        = make(map[string]func(logger log.Logger) (Collector, error))
-	collectorState   = make(map[string]*bool)
-	forcedCollectors = map[string]bool{} // collectors which have been explicitly enabled or disabled
-)
-
-func registerCollector(collector string, isDefaultEnabled bool, factory func(logger log.Logger) (Collector, error)) {
-	var helpDefaultState string
-	if isDefaultEnabled {
-		helpDefaultState = "enabled"
-	} else {
-		helpDefaultState = "disabled"
+	return &VCCollector{
+		scraper:    scraper,
+		logger:     logger,
+		conf:       conf,
+		collectors: collectors,
 	}
-
-	flagName := fmt.Sprintf("collector.%s", collector)
-	flagHelp := fmt.Sprintf("Enable the %s collector (default: %s).", collector, helpDefaultState)
-	defaultValue := fmt.Sprintf("%v", isDefaultEnabled)
-
-	flag := kingpin.Flag(flagName, flagHelp).Default(defaultValue).Action(collectorFlagAction(collector)).Bool()
-	collectorState[collector] = flag
-
-	factories[collector] = factory
 }
 
-// MainCollector implements the prometheus.Collector interface.
-type MainCollector struct {
-	Collectors map[string]Collector
-	logger     log.Logger
-}
+func (c *VCCollector) GetMetricHandler() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		params := r.URL.Query()
 
-// DisableDefaultCollectors sets the collector state to false for all collectors which
-// have not been explicitly enabled on the command line.
-func DisableDefaultCollectors() {
-	for c := range collectorState {
-		if _, ok := forcedCollectors[c]; !ok {
-			*collectorState[c] = false
+		filters := []string{}
+		if f, ok := params["collect[]"]; ok {
+			filters = append(filters, f...)
 		}
-	}
-}
-
-// collectorFlagAction generates a new action function for the given collector
-// to track whether it has been explicitly enabled or disabled from the command line.
-// A new action function is needed for each collector flag because the ParseContext
-// does not contain information about which flag called the action.
-// See: https://github.com/alecthomas/kingpin/issues/294
-func collectorFlagAction(collector string) func(ctx *kingpin.ParseContext) error {
-	return func(ctx *kingpin.ParseContext) error {
-		forcedCollectors[collector] = true
-		return nil
-	}
-}
-
-// NewMainCollector creates a new MainCollector.
-func NewMainCollector(logger log.Logger, filters ...string) (*MainCollector, error) {
-	f := make(map[string]bool)
-	for _, filter := range filters {
-		enabled, exist := collectorState[filter]
-		if !exist {
-			return nil, fmt.Errorf("missing collector: %s", filter)
+		if f, ok := params["collect"]; ok {
+			filters = append(filters, f...)
 		}
-		if !*enabled {
-			return nil, fmt.Errorf("disabled collector: %s", filter)
+
+		exclude := []string{}
+		if f, ok := params["exclude[]"]; ok {
+			exclude = append(exclude, f...)
 		}
-		f[filter] = true
-	}
-	collectors := make(map[string]Collector)
-	for key, enabled := range collectorState {
-		if *enabled {
-			collector, err := factories[key](log.With(logger, "collector", key))
-			if err != nil {
-				return nil, err
-			}
-			if len(f) == 0 || f[key] {
-				collectors[key] = collector
+		if f, ok := params["exclude"]; ok {
+			exclude = append(exclude, f...)
+		}
+		excludeMatcher := helper.NewMatcher(exclude...)
+		c.logger.Debug(fmt.Sprintf("%s %s", r.Method, r.URL.Path), "filters", filters, "exclude", exclude)
+
+		registry := prometheus.NewRegistry()
+		if !c.conf.DisableExporterMetrics && !excludeMatcher.MatchAny("exporter_metrics", "exporter") {
+			registry.MustRegister(
+				collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+				collectors.NewGoCollector(),
+			)
+		}
+		for matcher, collector := range c.collectors {
+			if (len(filters) == 0 || slices.ContainsFunc(filters, matcher.Match)) && !excludeMatcher.MatchAny(matcher.Kewords...) {
+				c.logger.Debug(fmt.Sprintf("register %s collector", matcher.First()))
+				err := registry.Register(collector)
+				if err != nil {
+					c.logger.Error(fmt.Sprintf("Error registring %s collector for %s", matcher.First(), strings.Join(filters, ",")), "err", err.Error())
+				}
 			}
 		}
+
+		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{
+			ErrorHandling:       promhttp.ContinueOnError,
+			MaxRequestsInFlight: c.conf.MaxRequests,
+		})
+		h.ServeHTTP(w, r)
 	}
-	return &MainCollector{Collectors: collectors, logger: logger}, nil
-}
-
-// Describe implements the prometheus.Collector interface.
-func (n MainCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- scrapeDurationDesc
-	ch <- scrapeSuccessDesc
-}
-
-// Collect implements the prometheus.Collector interface.
-func (n MainCollector) Collect(ch chan<- prometheus.Metric) {
-	wg := sync.WaitGroup{}
-	wg.Add(len(n.Collectors))
-	for name, c := range n.Collectors {
-		go func(name string, c Collector) {
-			execute(name, c, ch, n.logger)
-			wg.Done()
-		}(name, c)
-	}
-	wg.Wait()
-}
-
-func execute(name string, c Collector, ch chan<- prometheus.Metric, logger log.Logger) {
-	begin := time.Now()
-	err := c.Update(ch)
-	duration := time.Since(begin)
-	var success float64
-
-	if err != nil {
-		if IsNoDataError(err) {
-			level.Debug(logger).Log("msg", "collector returned no data", "name", name, "duration_seconds", duration.Seconds(), "err", err)
-		} else {
-			level.Error(logger).Log("msg", "collector failed", "name", name, "duration_seconds", duration.Seconds(), "err", err)
-		}
-		success = 0
-	} else {
-		level.Debug(logger).Log("msg", "collector succeeded", "name", name, "duration_seconds", duration.Seconds())
-		success = 1
-	}
-	ch <- prometheus.MustNewConstMetric(scrapeDurationDesc, prometheus.GaugeValue, duration.Seconds(), name)
-	ch <- prometheus.MustNewConstMetric(scrapeSuccessDesc, prometheus.GaugeValue, success, name)
-}
-
-// Collector is the interface a collector has to implement.
-type Collector interface {
-	// Get new metrics and expose them via prometheus registry.
-	Update(ch chan<- prometheus.Metric) error
-}
-
-type typedDesc struct {
-	desc      *prometheus.Desc
-	valueType prometheus.ValueType
-}
-
-func (d *typedDesc) mustNewConstMetric(value float64, labels ...string) prometheus.Metric {
-	return prometheus.MustNewConstMetric(d.desc, d.valueType, value, labels...)
-}
-
-// ErrNoData indicates the collector found no data to collect, but had no other error.
-var ErrNoData = errors.New("collector returned no data")
-
-func IsNoDataError(err error) bool {
-	return err == ErrNoData
 }

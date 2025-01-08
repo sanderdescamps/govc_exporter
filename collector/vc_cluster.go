@@ -1,0 +1,130 @@
+// Copyright 2020 Intrinsec
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//go:build !noesx
+// +build !noesx
+
+package collector
+
+import (
+	"github.com/intrinsec/govc_exporter/collector/scraper"
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+const (
+	clusterCollectorSubsystem = "cluster"
+)
+
+type clusterCollector struct {
+	scraper *scraper.VCenterScraper
+
+	totalCPU          *prometheus.Desc
+	effectiveCPU      *prometheus.Desc
+	totalMemory       *prometheus.Desc
+	effectiveMemory   *prometheus.Desc
+	numCPUCores       *prometheus.Desc
+	numCPUThreads     *prometheus.Desc
+	numEffectiveHosts *prometheus.Desc
+	numHosts          *prometheus.Desc
+	overallStatus     *prometheus.Desc
+}
+
+func NewClusterCollector(scraper *scraper.VCenterScraper) *clusterCollector {
+	labels := []string{"id", "name", "datacenter"}
+	return &clusterCollector{
+		scraper: scraper,
+		totalCPU: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "total_cpu_mhz"),
+			"Aggregated CPU resources of all hosts, in MHz", labels, nil),
+		effectiveCPU: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "effective_cpu_mhz"),
+			"Effective CPU resources (in MHz) available to run virtual machines.", labels, nil),
+		totalMemory: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "total_memory"),
+			"Aggregated memory resources of all hosts, in bytes", labels, nil),
+		effectiveMemory: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "effective_memory_bytes"),
+			"Effective memory resources (in bytes) available to run virtual machines", labels, nil),
+		numCPUCores: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "num_cpu_cores"),
+			"Number of physical CPU cores. Physical CPU cores are the processors contained by a CPU package.", labels, nil),
+		numCPUThreads: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "num_cpu_threads"),
+			"Aggregated number of CPU threads", labels, nil),
+		numEffectiveHosts: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "num_effective_hosts"),
+			"Total number of effective hosts", labels, nil),
+		numHosts: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "num_hosts"),
+			"Total number of hosts", labels, nil),
+		overallStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "overall_status"),
+			"overall health status", labels, nil),
+	}
+}
+
+func (c *clusterCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.totalCPU
+	ch <- c.effectiveCPU
+	ch <- c.totalMemory
+	ch <- c.effectiveMemory
+	ch <- c.numCPUCores
+	ch <- c.numCPUThreads
+	ch <- c.numEffectiveHosts
+	ch <- c.numHosts
+	ch <- c.overallStatus
+}
+
+func (c *clusterCollector) Collect(ch chan<- prometheus.Metric) {
+	if c.scraper.Cluster == nil {
+		return
+	}
+	clusters := c.scraper.Cluster.GetAll()
+	for _, p := range clusters {
+		summary := p.Summary.GetComputeResourceSummary()
+		if summary == nil {
+			continue
+		}
+		parentChain := c.scraper.GetParentChain(p.Self)
+		mb := int64(1024 * 1024)
+		labelValues := []string{me2id(p.ManagedEntity), p.Name, parentChain.DC}
+		ch <- prometheus.MustNewConstMetric(
+			c.totalCPU, prometheus.GaugeValue, float64(summary.TotalCpu), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.effectiveCPU, prometheus.GaugeValue, float64(summary.EffectiveCpu), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.totalMemory, prometheus.GaugeValue, float64(summary.TotalMemory), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.effectiveMemory, prometheus.GaugeValue, float64(summary.EffectiveMemory*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.numCPUCores, prometheus.GaugeValue, float64(summary.NumCpuCores), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.numCPUThreads, prometheus.GaugeValue, float64(summary.NumCpuThreads), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.numEffectiveHosts, prometheus.GaugeValue, float64(summary.NumEffectiveHosts), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.numHosts, prometheus.GaugeValue, float64(summary.NumHosts), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(summary.OverallStatus), labelValues...,
+		)
+	}
+
+}

@@ -11,109 +11,148 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !noesx
 // +build !noesx
 
 package collector
 
 import (
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/vmware/govmomi/view"
-	"github.com/vmware/govmomi/vim25/mo"
-)
+	"fmt"
+	"reflect"
 
-type datastoreCollector struct {
-	vcCollector
-	capacity   typedDesc
-	freeSpace  typedDesc
-	accessible typedDesc
-}
+	"github.com/intrinsec/govc_exporter/collector/scraper"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/vmware/govmomi/vim25/types"
+)
 
 const (
 	datastoreCollectorSubsystem = "ds"
 )
 
-func init() {
-	registerCollector(datastoreCollectorSubsystem, defaultEnabled, NewDatastoreCollector)
+type datastoreCollector struct {
+	// vcCollector
+	scraper         *scraper.VCenterScraper
+	capacity        *prometheus.Desc
+	freeSpace       *prometheus.Desc
+	accessible      *prometheus.Desc
+	maintenanceMode *prometheus.Desc
+	overallStatus   *prometheus.Desc
 }
 
-// NewDatastoreCollector returns a new Collector exposing IpTables stats.
-func NewDatastoreCollector(logger log.Logger) (Collector, error) {
-	labels := []string{"vc", "dc", "name", "type", "cluster", "maintenance_mode"}
-
-	res := datastoreCollector{
-		capacity: typedDesc{prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "capacity_bytes"),
-			"datastore capacity in bytes", labels, nil), prometheus.GaugeValue},
-		freeSpace: typedDesc{prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "free_space_bytes"),
-			"datastore freespace in bytes", labels, nil), prometheus.GaugeValue},
-		accessible: typedDesc{prometheus.NewDesc(
+func NewDatastoreCollector(scraper *scraper.VCenterScraper) *datastoreCollector {
+	labels := []string{"id", "name", "cluster", "kind"}
+	return &datastoreCollector{
+		scraper: scraper,
+		accessible: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "accessible"),
-			"datastore is accessible", labels, nil), prometheus.GaugeValue},
+			"datastore is accessible", labels, nil),
+		freeSpace: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "free_space_bytes"),
+			"datastore freespace in bytes", labels, nil),
+		capacity: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "total_capacity_bytes"),
+			"datastore capacity in bytes", labels, nil),
+		maintenanceMode: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "maintenance_mode"),
+			"datastore in maintenance", labels, nil),
+		overallStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "overall_status"),
+			"overall health status", labels, nil),
 	}
-	res.logger = logger
-	return &res, nil
 }
 
-func (c *datastoreCollector) Update(ch chan<- prometheus.Metric) (err error) {
-
-	cache.Flush()
-
-	err = c.apiConnect()
-	if err != nil {
-		level.Error(c.logger).Log("msg", "unable to connect", "err", err)
-		return err
-	}
-	defer c.apiDisconnect()
-	items, err := c.apiRetrieve()
-	if err != nil {
-		level.Error(c.logger).Log("msg", "unable retrieve esx", "err", err)
-		return err
-	}
-
-	vc := *vcURL
-
-	level.Debug(c.logger).Log("msg", "datastore retrieved", "num", len(items))
-
-	for _, item := range items {
-		summary := item.Summary
-		name := summary.Name
-		tmp := getParents(c.ctx, c.logger, c.client.Client, item.ManagedEntity)
-
-		labels := []string{vc, tmp.dc, name, summary.Type, tmp.spod, summary.MaintenanceMode}
-		ch <- c.capacity.mustNewConstMetric(float64(summary.Capacity), labels...)
-		ch <- c.freeSpace.mustNewConstMetric(float64(summary.FreeSpace), labels...)
-		ch <- c.accessible.mustNewConstMetric(b2f(summary.Accessible), labels...)
-
-	}
-	return nil
+func (c *datastoreCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.accessible
+	ch <- c.capacity
+	ch <- c.freeSpace
+	ch <- c.maintenanceMode
+	ch <- c.overallStatus
 }
 
-func (c *datastoreCollector) apiRetrieve() ([]mo.Datastore, error) {
-	var items []mo.Datastore
+func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
+	datastores := c.scraper.Datastore.GetAll()
+	for _, d := range datastores {
+		summary := d.Summary
 
-	m := view.NewManager(c.client.Client)
-	v, err := m.CreateContainerView(
-		c.ctx,
-		c.client.ServiceContent.RootFolder,
-		[]string{"Datastore"},
-		true,
-	)
-	if err != nil {
-		return items, err
+		kind := "NONE"
+
+		if d.Info != nil {
+			// func() {
+			// 	b, err := json.Marshal(info)
+			// 	if err != nil {
+			// 		return
+			// 	}
+			// 	var vmfsInfo types.VmfsDatastoreInfo
+			// 	err = json.Unmarshal(b, &vmfsInfo)
+			// 	if err != nil {
+			// 		return
+			// 	}
+			// 	if vmfsInfo.Vmfs != nil {
+			// 		isLocal = strconv.FormatBool(*vmfsInfo.Vmfs.Local)
+			// 		isSSD = strconv.FormatBool(*vmfsInfo.Vmfs.Ssd)
+			// 	}
+			// }()
+
+			iInfo := reflect.ValueOf(d.Info).Elem().Interface()
+			switch pInfo := iInfo.(type) {
+			case types.LocalDatastoreInfo:
+				kind = "local"
+			case types.VmfsDatastoreInfo:
+				if pInfo.Vmfs != nil {
+					var ssd string
+					if *pInfo.Vmfs.Ssd {
+						ssd = "ssd"
+					} else {
+						ssd = "hdd"
+					}
+					var local string
+					if pInfo.Vmfs.Local == nil || *pInfo.Vmfs.Local {
+						local = "local"
+					} else {
+						local = "non-local"
+					}
+					kind = fmt.Sprintf("vmfs-%s-%s", local, ssd)
+				}
+			case types.NasDatastoreInfo:
+				kind = "nas"
+			case types.PMemDatastoreInfo:
+				kind = "pmem"
+			case types.VsanDatastoreInfo:
+				kind = "vsan"
+			case types.VvolDatastoreInfo:
+				kind = "vvol"
+			}
+		} else {
+			fmt.Printf("info is nil")
+		}
+
+		parentChain := c.scraper.GetParentChain(d.Self)
+		labelValues := []string{me2id(d.ManagedEntity), summary.Name, parentChain.SPOD, kind}
+		ch <- prometheus.MustNewConstMetric(
+			c.accessible, prometheus.GaugeValue, b2f(summary.Accessible), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.capacity, prometheus.GaugeValue, float64(summary.Capacity), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.freeSpace, prometheus.GaugeValue, float64(summary.FreeSpace), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.maintenanceMode, prometheus.GaugeValue, ConvertDatastoreMaintenanceModeStateToValue(summary.MaintenanceMode), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(d.OverallStatus), labelValues...,
+		)
 	}
-	defer c.destroyView(v)
 
-	err = v.Retrieve(
-		c.ctx,
-		[]string{"Datastore"},
-		[]string{
-			"parent",
-			"summary",
-		},
-		&items,
-	)
-	return items, err
+}
+
+func ConvertDatastoreMaintenanceModeStateToValue(d string) float64 {
+	dTyped := types.DatastoreSummaryMaintenanceModeState(d)
+	if dTyped == types.DatastoreSummaryMaintenanceModeStateEnteringMaintenance {
+		return 1.0
+	} else if dTyped == types.DatastoreSummaryMaintenanceModeStateInMaintenance {
+		return 2.0
+	}
+	return 0
 }

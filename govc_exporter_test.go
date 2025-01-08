@@ -16,6 +16,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,6 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/intrinsec/govc_exporter/collector"
+	"github.com/intrinsec/govc_exporter/collector/scraper"
+	"github.com/prometheus/common/version"
 	"github.com/prometheus/procfs"
 )
 
@@ -33,6 +37,89 @@ var (
 const (
 	address = "localhost:19123"
 )
+
+func TestGeneralExporter(t *testing.T) {
+	collectorConf := collector.CollectorConf{
+		UseIsecSpecifics:       false,
+		CollectVMNetworks:      true,
+		CollectVMDisks:         true,
+		DisableExporterMetrics: false,
+		MaxRequests:            4,
+	}
+	scraperConf := scraper.ScraperConfig{
+		Endpoint:                         "https://localhost:8989",
+		Username:                         "testuser",
+		Password:                         "testpass",
+		HostCollectorEnabled:             true,
+		HostMaxAgeSec:                    60,
+		HostRefreshIntervalSec:           20,
+		ClusterCollectorEnabled:          true,
+		ClusterMaxAgeSec:                 60,
+		ClusterRefreshIntervalSec:        20,
+		VirtualMachineCollectorEnabled:   true,
+		VirtualMachineMaxAgeSec:          60,
+		VirtualMachineRefreshIntervalSec: 20,
+		DatastoreCollectorEnabled:        true,
+		DatastoreMaxAgeSec:               60,
+		DatastoreRefreshIntervalSec:      20,
+		SpodCollectorEnabled:             true,
+		SpodMaxAgeSec:                    60,
+		SpodRefreshIntervalSec:           20,
+		ResourcePoolCollectorEnabled:     true,
+		ResourcePoolMaxAgeSec:            60,
+		ResourcePoolRefreshIntervalSec:   20,
+		OnDemandCacheMaxAge:              60,
+		CleanIntervalSec:                 5,
+		ClientPoolSize:                   5,
+	}
+
+	metricsPath := "/metrics"
+	listenAddress := ":9752"
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	// ctx, cancel := context.WithCancelCause(context.Background())
+	// collector := collector.NewVCCollector(collectorConf, logger)
+	// collector.Start(ctx)
+
+	// http.HandleFunc(metricsPath, collector.GetMetricHandler())
+	// http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// 	w.Write([]byte(`<html>
+	// 		<head><title>govc Exporter</title></head>
+	// 		<body>
+	// 		<h1>govc Exporter</h1>
+	// 		<p><a href="` + metricsPath + `">Metrics</a></p>
+	// 		</body>
+	// 		</html>`))
+	// })
+
+	// logger.Info("Listening on", "address", listenAddress)
+	// server := &http.Server{
+	// 	Addr: listenAddress,
+	// }
+
+	scraper, err := scraper.NewVCenterScraper(scraperConf)
+	if err != nil {
+		logger.Error("Failed to create VCenterScraper", "err", err.Error())
+	}
+	scraper.Start(logger)
+
+	collector := collector.NewVCCollector(collectorConf, scraper, logger)
+
+	logger.Info("Starting govc_exporter", "version", version.Info())
+	logger.Info("Build context", "build_context", version.BuildContext())
+
+	server := &http.Server{
+		Addr: listenAddress,
+	}
+
+	http.HandleFunc(metricsPath, collector.GetMetricHandler())
+	http.HandleFunc("/", defaultHandler(metricsPath))
+
+	err = server.ListenAndServe()
+	if err != nil {
+		logger.Error("Exporter failed", "err", err)
+		os.Exit(1)
+	}
+}
 
 func TestFileDescriptorLeak(t *testing.T) {
 	if _, err := os.Stat(binary); err != nil {

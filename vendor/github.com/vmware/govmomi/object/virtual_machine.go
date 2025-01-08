@@ -1,11 +1,11 @@
 /*
-Copyright (c) 2015-2021 VMware, Inc. All Rights Reserved.
+Copyright (c) 2015-2024 VMware, Inc. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -169,6 +169,15 @@ func (v VirtualMachine) ShutdownGuest(ctx context.Context) error {
 	}
 
 	_, err := methods.ShutdownGuest(ctx, v.c, &req)
+	return err
+}
+
+func (v VirtualMachine) StandbyGuest(ctx context.Context) error {
+	req := types.StandbyGuest{
+		This: v.Reference(),
+	}
+
+	_, err := methods.StandbyGuest(ctx, v.c, &req)
 	return err
 }
 
@@ -429,6 +438,17 @@ func (v VirtualMachine) Device(ctx context.Context) (VirtualDeviceList, error) {
 	return VirtualDeviceList(o.Config.Hardware.Device), nil
 }
 
+func (v VirtualMachine) EnvironmentBrowser(ctx context.Context) (*EnvironmentBrowser, error) {
+	var vm mo.VirtualMachine
+
+	err := v.Properties(ctx, v.Reference(), []string{"environmentBrowser"}, &vm)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewEnvironmentBrowser(v.c, vm.EnvironmentBrowser), nil
+}
+
 func (v VirtualMachine) HostSystem(ctx context.Context) (*HostSystem, error) {
 	var o mo.VirtualMachine
 
@@ -480,7 +500,7 @@ func diskFileOperation(op types.VirtualDeviceConfigSpecOperation, fop types.Virt
 	return ""
 }
 
-func (v VirtualMachine) configureDevice(ctx context.Context, op types.VirtualDeviceConfigSpecOperation, fop types.VirtualDeviceConfigSpecFileOperation, devices ...types.BaseVirtualDevice) error {
+func (v VirtualMachine) configureDevice(ctx context.Context, profile []types.BaseVirtualMachineProfileSpec, op types.VirtualDeviceConfigSpecOperation, fop types.VirtualDeviceConfigSpecFileOperation, devices ...types.BaseVirtualDevice) error {
 	spec := types.VirtualMachineConfigSpec{}
 
 	for _, device := range devices {
@@ -488,6 +508,7 @@ func (v VirtualMachine) configureDevice(ctx context.Context, op types.VirtualDev
 			Device:        device,
 			Operation:     op,
 			FileOperation: diskFileOperation(op, fop, device),
+			Profile:       profile,
 		}
 
 		spec.DeviceChange = append(spec.DeviceChange, config)
@@ -503,12 +524,22 @@ func (v VirtualMachine) configureDevice(ctx context.Context, op types.VirtualDev
 
 // AddDevice adds the given devices to the VirtualMachine
 func (v VirtualMachine) AddDevice(ctx context.Context, device ...types.BaseVirtualDevice) error {
-	return v.configureDevice(ctx, types.VirtualDeviceConfigSpecOperationAdd, types.VirtualDeviceConfigSpecFileOperationCreate, device...)
+	return v.AddDeviceWithProfile(ctx, nil, device...)
+}
+
+// AddDeviceWithProfile adds the given devices to the VirtualMachine with the given profile
+func (v VirtualMachine) AddDeviceWithProfile(ctx context.Context, profile []types.BaseVirtualMachineProfileSpec, device ...types.BaseVirtualDevice) error {
+	return v.configureDevice(ctx, profile, types.VirtualDeviceConfigSpecOperationAdd, types.VirtualDeviceConfigSpecFileOperationCreate, device...)
 }
 
 // EditDevice edits the given (existing) devices on the VirtualMachine
 func (v VirtualMachine) EditDevice(ctx context.Context, device ...types.BaseVirtualDevice) error {
-	return v.configureDevice(ctx, types.VirtualDeviceConfigSpecOperationEdit, types.VirtualDeviceConfigSpecFileOperationReplace, device...)
+	return v.EditDeviceWithProfile(ctx, nil, device...)
+}
+
+// EditDeviceWithProfile edits the given (existing) devices on the VirtualMachine with the given profile
+func (v VirtualMachine) EditDeviceWithProfile(ctx context.Context, profile []types.BaseVirtualMachineProfileSpec, device ...types.BaseVirtualDevice) error {
+	return v.configureDevice(ctx, profile, types.VirtualDeviceConfigSpecOperationEdit, types.VirtualDeviceConfigSpecFileOperationReplace, device...)
 }
 
 // RemoveDevice removes the given devices on the VirtualMachine
@@ -517,17 +548,17 @@ func (v VirtualMachine) RemoveDevice(ctx context.Context, keepFiles bool, device
 	if keepFiles {
 		fop = ""
 	}
-	return v.configureDevice(ctx, types.VirtualDeviceConfigSpecOperationRemove, fop, device...)
+	return v.configureDevice(ctx, nil, types.VirtualDeviceConfigSpecOperationRemove, fop, device...)
 }
 
 // AttachDisk attaches the given disk to the VirtualMachine
-func (v VirtualMachine) AttachDisk(ctx context.Context, id string, datastore *Datastore, controllerKey int32, unitNumber int32) error {
+func (v VirtualMachine) AttachDisk(ctx context.Context, id string, datastore *Datastore, controllerKey int32, unitNumber *int32) error {
 	req := types.AttachDisk_Task{
 		This:          v.Reference(),
 		DiskId:        types.ID{Id: id},
 		Datastore:     datastore.Reference(),
 		ControllerKey: controllerKey,
-		UnitNumber:    &unitNumber,
+		UnitNumber:    unitNumber,
 	}
 
 	res, err := methods.AttachDisk_Task(ctx, v.c, &req)
@@ -907,27 +938,6 @@ func (v VirtualMachine) Unregister(ctx context.Context) error {
 
 	_, err := methods.UnregisterVM(ctx, v.Client(), &req)
 	return err
-}
-
-// QueryEnvironmentBrowser is a helper to get the environmentBrowser property.
-func (v VirtualMachine) QueryConfigTarget(ctx context.Context) (*types.ConfigTarget, error) {
-	var vm mo.VirtualMachine
-
-	err := v.Properties(ctx, v.Reference(), []string{"environmentBrowser"}, &vm)
-	if err != nil {
-		return nil, err
-	}
-
-	req := types.QueryConfigTarget{
-		This: vm.EnvironmentBrowser,
-	}
-
-	res, err := methods.QueryConfigTarget(ctx, v.Client(), &req)
-	if err != nil {
-		return nil, err
-	}
-
-	return res.Returnval, nil
 }
 
 func (v VirtualMachine) MountToolsInstaller(ctx context.Context) error {

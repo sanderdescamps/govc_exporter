@@ -11,6 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !noesx
 // +build !noesx
 
 package collector
@@ -18,298 +19,402 @@ package collector
 import (
 	"encoding/json"
 	"strconv"
-	"strings"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
+	"github.com/intrinsec/govc_exporter/collector/scraper"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/vmware/govmomi/object"
-	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 )
-
-type virtualMachineCollector struct {
-	vcCollector
-	numCPU                       typedDesc
-	numCoresPerSocket            typedDesc
-	memoryBytes                  typedDesc
-	overallCPUUsage              typedDesc
-	overallCPUDemand             typedDesc
-	guestMemoryUsage             typedDesc
-	hostMemoryUsage              typedDesc
-	distributedCPUEntitlement    typedDesc
-	distributedMemoryEntitlement typedDesc
-	staticCPUEntitlement         typedDesc
-	staticMemoryEntitlement      typedDesc
-	privateMemory                typedDesc
-	sharedMemory                 typedDesc
-	swappedMemory                typedDesc
-	balloonedMemory              typedDesc
-	consumedOverheadMemory       typedDesc
-	ftLogBandwidth               typedDesc
-	ftSecondaryLatency           typedDesc
-	compressedMemory             typedDesc
-	uptimeSeconds                typedDesc
-	ssdSwappedMemory             typedDesc
-	numSnapshot                  typedDesc
-	diskCapacityBytes            typedDesc
-	networkConnected             typedDesc
-	ethernetDriverConnected      typedDesc
-}
 
 const (
 	virtualMachineCollectorSubsystem = "vm"
 )
 
-func init() {
-	registerCollector(virtualMachineCollectorSubsystem, defaultEnabled, NewVirtualMachineCollector)
+type virtualMachineCollectorOptions struct {
+	CollectDisks     bool
+	CollectNetworks  bool
+	UseIsecSpecifics bool
 }
 
-// NewVirtualMachineCollector returns a new Collector exposing IpTables stats.
-func NewVirtualMachineCollector(logger log.Logger) (Collector, error) {
+type virtualMachineCollector struct {
+	scraper                      *scraper.VCenterScraper
+	options                      virtualMachineCollectorOptions
+	numCPU                       *prometheus.Desc
+	numCoresPerSocket            *prometheus.Desc
+	memoryBytes                  *prometheus.Desc
+	overallCPUUsage              *prometheus.Desc
+	overallCPUDemand             *prometheus.Desc
+	guestMemoryUsage             *prometheus.Desc
+	hostMemoryUsage              *prometheus.Desc
+	distributedCPUEntitlement    *prometheus.Desc
+	distributedMemoryEntitlement *prometheus.Desc
+	staticCPUEntitlement         *prometheus.Desc
+	staticMemoryEntitlement      *prometheus.Desc
+	privateMemory                *prometheus.Desc
+	sharedMemory                 *prometheus.Desc
+	swappedMemory                *prometheus.Desc
+	balloonedMemory              *prometheus.Desc
+	consumedOverheadMemory       *prometheus.Desc
+	ftLogBandwidth               *prometheus.Desc
+	ftSecondaryLatency           *prometheus.Desc
+	compressedMemory             *prometheus.Desc
+	uptimeSeconds                *prometheus.Desc
+	ssdSwappedMemory             *prometheus.Desc
+	numSnapshot                  *prometheus.Desc
+	diskCapacityBytes            *prometheus.Desc
+	networkConnected             *prometheus.Desc
+	ethernetDriverConnected      *prometheus.Desc
 
-	labels := []string{
-		"vc", "dc", "cluster", "esx", "pool",
-		"name", "hostname", "guestfullname",
-		"power_state", "overall_status",
-		"tools_status", "tools_version",
-	}
-	if *useIsecSpecifics {
+	powerState           *prometheus.Desc
+	overallStatus        *prometheus.Desc
+	guestHeartbeatStatus *prometheus.Desc
+	toolsStatus          *prometheus.Desc
+	vmInfo               *prometheus.Desc
+}
+
+func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, options virtualMachineCollectorOptions) *virtualMachineCollector {
+	labels := []string{"uuid", "name", "datacenter", "cluster", "esx", "pool", "hostname"}
+	if options.UseIsecSpecifics {
 		labels = append(labels, "crit", "responsable", "service")
 	}
-	networkLabels := make([]string, len(labels))
-	ethernetDevLabels := make([]string, len(labels))
-	diskLabels := make([]string, len(labels))
-
-	copy(networkLabels, labels)
-	copy(ethernetDevLabels, labels)
-	copy(diskLabels, labels)
-
-	networkLabels = append(networkLabels, "network", "mac", "ip")
-	ethernetDevLabels = append(ethernetDevLabels, "driver_model", "driver_mac", "driver_status")
-	diskLabels = append(diskLabels, "vmdk", "thin_provisioned")
-
-	res := virtualMachineCollector{
-
-		numCPU: typedDesc{prometheus.NewDesc(
+	infoLabels := append(labels, "guest_id", "tools_version")
+	diskLabels := append(labels, "disk_uuid", "thin_provisioned")
+	networkLabels := append(labels, "network", "mac", "ip")
+	ethernetDevLabels := append(labels, "driver_model", "driver_mac", "driver_status")
+	return &virtualMachineCollector{
+		scraper: scraper,
+		options: options,
+		numCPU: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cpu_number_total"),
-			"vm number of cpu", labels, nil), prometheus.CounterValue},
+			"vm number of cpu", labels, nil),
 
-		numCoresPerSocket: typedDesc{prometheus.NewDesc(
+		numCoresPerSocket: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cores_number_per_socket_total"),
-			"vm number of cores by socket", labels, nil), prometheus.CounterValue},
+			"vm number of cores by socket", labels, nil),
 
-		memoryBytes: typedDesc{prometheus.NewDesc(
+		memoryBytes: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "memory_bytes"),
-			"vm memory in bytes", labels, nil), prometheus.GaugeValue},
+			"vm memory in bytes", labels, nil),
 
-		overallCPUUsage: typedDesc{prometheus.NewDesc(
+		overallCPUUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "overall_cpu_usage_mhz"),
-			"vm overall CPU usage in MHz", labels, nil), prometheus.GaugeValue},
+			"vm overall CPU usage in MHz", labels, nil),
 
-		overallCPUDemand: typedDesc{prometheus.NewDesc(
+		overallCPUDemand: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "overall_cpu_demand_mhz"),
-			"vm overall CPU demand in MHz", labels, nil), prometheus.GaugeValue},
+			"vm overall CPU demand in MHz", labels, nil),
 
-		guestMemoryUsage: typedDesc{prometheus.NewDesc(
+		guestMemoryUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "guest_memory_usage_bytes"),
-			"vm guest memory usage in bytes", labels, nil), prometheus.GaugeValue},
+			"vm guest memory usage in bytes", labels, nil),
 
-		hostMemoryUsage: typedDesc{prometheus.NewDesc(
+		hostMemoryUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "host_memory_usage_bytes"),
-			"vm host memory usage in bytes", labels, nil), prometheus.GaugeValue},
+			"vm host memory usage in bytes", labels, nil),
 
-		distributedCPUEntitlement: typedDesc{prometheus.NewDesc(
+		distributedCPUEntitlement: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "distributed_cpu_entitlement_mhz"),
-			"vm distributed CPU entitlement in MHz", labels, nil), prometheus.GaugeValue},
+			"vm distributed CPU entitlement in MHz", labels, nil),
 
-		distributedMemoryEntitlement: typedDesc{prometheus.NewDesc(
+		distributedMemoryEntitlement: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "distributed_memory_entitlement_bytes"),
-			"vm distributed memory entitlement in bytes", labels, nil), prometheus.GaugeValue},
+			"vm distributed memory entitlement in bytes", labels, nil),
 
-		staticCPUEntitlement: typedDesc{prometheus.NewDesc(
+		staticCPUEntitlement: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "static_cpu_entitlement_mhz"),
-			"vm static CPU entitlement in MHz", labels, nil), prometheus.GaugeValue},
+			"vm static CPU entitlement in MHz", labels, nil),
 
-		staticMemoryEntitlement: typedDesc{prometheus.NewDesc(
+		staticMemoryEntitlement: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "static_memory_entitlement_bytes"),
-			"vm static memory entitlement in bytes", labels, nil), prometheus.GaugeValue},
+			"vm static memory entitlement in bytes", labels, nil),
 
-		privateMemory: typedDesc{prometheus.NewDesc(
+		privateMemory: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "private_memory_bytes"),
-			"vm private memory in bytes", labels, nil), prometheus.GaugeValue},
+			"vm private memory in bytes", labels, nil),
 
-		sharedMemory: typedDesc{prometheus.NewDesc(
+		sharedMemory: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "shared_memory_bytes"),
-			"vm shared memory in bytes", labels, nil), prometheus.GaugeValue},
+			"vm shared memory in bytes", labels, nil),
 
-		swappedMemory: typedDesc{prometheus.NewDesc(
+		swappedMemory: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "swapped_memory_bytes"),
-			"vm swapped memory in bytes", labels, nil), prometheus.GaugeValue},
+			"vm swapped memory in bytes", labels, nil),
 
-		balloonedMemory: typedDesc{prometheus.NewDesc(
+		balloonedMemory: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "ballooned_memory_bytes"),
-			"vm ballooned memory in bytes", labels, nil), prometheus.GaugeValue},
+			"vm ballooned memory in bytes", labels, nil),
 
-		consumedOverheadMemory: typedDesc{prometheus.NewDesc(
+		consumedOverheadMemory: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "consumed_overhead_memory_bytes"),
-			"vm consumed overhead memory bytes", labels, nil), prometheus.GaugeValue},
+			"vm consumed overhead memory bytes", labels, nil),
 
-		ftLogBandwidth: typedDesc{prometheus.NewDesc(
+		ftLogBandwidth: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "ft_log_bandwidth"),
-			"vm ft log bandwidth", labels, nil), prometheus.GaugeValue},
+			"vm ft log bandwidth", labels, nil),
 
-		ftSecondaryLatency: typedDesc{prometheus.NewDesc(
+		ftSecondaryLatency: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "ft_secondary_latency"),
-			"vm ft secondary latency", labels, nil), prometheus.GaugeValue},
+			"vm ft secondary latency", labels, nil),
 
-		compressedMemory: typedDesc{prometheus.NewDesc(
+		compressedMemory: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "compressed_memory_bytes"),
-			"vm compressed memory in bytes", labels, nil), prometheus.GaugeValue},
+			"vm compressed memory in bytes", labels, nil),
 
-		uptimeSeconds: typedDesc{prometheus.NewDesc(
+		uptimeSeconds: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "uptime_seconds"),
-			"vm uptime in seconds", labels, nil), prometheus.CounterValue},
+			"vm uptime in seconds", labels, nil),
 
-		ssdSwappedMemory: typedDesc{prometheus.NewDesc(
+		ssdSwappedMemory: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "ssd_swapped_memory_bytes"),
-			"vm ssd swapped memory in bytes", labels, nil), prometheus.GaugeValue},
+			"vm ssd swapped memory in bytes", labels, nil),
 
-		numSnapshot: typedDesc{prometheus.NewDesc(
+		numSnapshot: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "snapshot_number_total"),
-			"vm number of snapshot", labels, nil), prometheus.GaugeValue},
+			"vm number of snapshot", labels, nil),
 
-		diskCapacityBytes: typedDesc{prometheus.NewDesc(
+		diskCapacityBytes: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "disk_capacity_bytes"),
-			"vm disk capacity bytes", diskLabels, nil), prometheus.GaugeValue},
+			"vm disk capacity bytes", diskLabels, nil),
 
-		networkConnected: typedDesc{prometheus.NewDesc(
+		networkConnected: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "network_connected"),
-			"vm network connected", networkLabels, nil), prometheus.GaugeValue},
+			"vm network connected", networkLabels, nil),
 
-		ethernetDriverConnected: typedDesc{prometheus.NewDesc(
+		ethernetDriverConnected: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "ethernet_driver_connected"),
-			"vm ethernet driver connected", ethernetDevLabels, nil), prometheus.GaugeValue},
+			"vm ethernet driver connected", ethernetDevLabels, nil),
+
+		powerState: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "power_state"),
+			"vm power state", labels, nil),
+
+		overallStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "overall_status"),
+			"overall health status", labels, nil),
+
+		guestHeartbeatStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "guest_heartbeat_status"),
+			"Guest hartbeat status", labels, nil),
+
+		toolsStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "tools_status"),
+			"vmware tools status", labels, nil),
+
+		vmInfo: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "info"),
+			"Info about vm", infoLabels, nil),
 	}
-	res.logger = logger
-	return &res, nil
 }
 
-func (c *virtualMachineCollector) Update(ch chan<- prometheus.Metric) (err error) {
+func (c *virtualMachineCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.numCPU
+	ch <- c.numCoresPerSocket
+	ch <- c.memoryBytes
+	ch <- c.overallCPUUsage
+	ch <- c.overallCPUDemand
+	ch <- c.guestMemoryUsage
+	ch <- c.hostMemoryUsage
+	ch <- c.distributedCPUEntitlement
+	ch <- c.distributedMemoryEntitlement
+	ch <- c.staticCPUEntitlement
+	ch <- c.staticMemoryEntitlement
+	ch <- c.privateMemory
+	ch <- c.sharedMemory
+	ch <- c.swappedMemory
+	ch <- c.balloonedMemory
+	ch <- c.consumedOverheadMemory
+	ch <- c.ftLogBandwidth
+	ch <- c.ftSecondaryLatency
+	ch <- c.compressedMemory
+	ch <- c.uptimeSeconds
+	ch <- c.ssdSwappedMemory
+	ch <- c.numSnapshot
+	ch <- c.diskCapacityBytes
+	ch <- c.networkConnected
+	ch <- c.ethernetDriverConnected
+	ch <- c.powerState
+	ch <- c.overallStatus
+	ch <- c.guestHeartbeatStatus
+	ch <- c.toolsStatus
+	ch <- c.vmInfo
+}
 
-	cache.Flush()
+func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
+	vms := c.scraper.VM.GetAll()
+	for _, vm := range vms {
+		summary := vm.Summary
+		qs := summary.QuickStats
+		mb := int64(1024 * 1024)
 
-	err = c.apiConnect()
-	if err != nil {
-		level.Error(c.logger).Log("msg", "unable to connect", "err", err)
-		return err
-	}
-	defer c.apiDisconnect()
-	items, err := c.apiRetrieve()
-	if err != nil {
-		level.Error(c.logger).Log("msg", "unable retrieve vm", "err", err)
-		return err
-	}
+		esxName := "NONE"
+		hostRef := vm.Runtime.Host
+		if hostRef != nil {
+			host := c.scraper.Host.Get(*hostRef)
+			if host != nil {
+				esxName = host.Name
+			}
+		}
 
-	vc := *vcURL
-
-	level.Debug(c.logger).Log("msg", "virtual machine retrieved", "num", len(items))
-
-	for _, item := range items {
-
-		var esxName string
-		var poolName string
-		var parents Parents
-
-		pool := getVMPool(c.ctx, c.logger, c.client.Client, item)
-		if pool == nil {
-			parents = getParents(c.ctx, c.logger, c.client.Client, item.ManagedEntity)
-			poolName = "NONE"
-		} else {
-			parents = getParents(c.ctx, c.logger, c.client.Client, *pool)
+		poolName := "NONE"
+		var parentChain scraper.ParentChain
+		var pool *mo.ResourcePool
+		rePoolRef := vm.ResourcePool
+		if rePoolRef != nil {
+			pool = c.scraper.ResourcePool.Get(*rePoolRef)
+		}
+		if pool != nil {
 			poolName = pool.Name
-		}
-		host := getVMHostSystem(c.ctx, c.logger, c.client.Client, item)
-		if host == nil {
-			esxName = "NONE"
+			parentChain = c.scraper.GetParentChain(*pool.Parent)
 		} else {
-			esxName = host.Name
+			parentChain = c.scraper.GetParentChain(vm.Self)
 		}
 
-		labelsValues := []string{
-			vc,
-			parents.dc,
-			parents.cluster,
-			esxName,
-			poolName,
-			item.Summary.Config.Name,
-			item.Summary.Guest.HostName,
-			item.Summary.Guest.GuestFullName,
-			string(item.Runtime.PowerState),
-			string(item.Summary.OverallStatus),
-			string(item.Guest.ToolsStatus),
-			item.Guest.ToolsVersion,
-		}
-
-		if *useIsecSpecifics {
-			annotation := GetIsecAnnotation(item)
-			labelsValues = append(
-				labelsValues,
+		labelValues := []string{vm.Config.Uuid, vm.Name, parentChain.DC, parentChain.Cluster, esxName, poolName, summary.Guest.HostName}
+		if c.options.UseIsecSpecifics {
+			annotation := GetIsecAnnotation(vm)
+			labelValues = append(
+				labelValues,
 				annotation.Criticality,
 				annotation.Responsable,
 				annotation.Service,
 			)
 		}
-		mb := int64(1024 * 1024)
 
-		ch <- c.numCPU.mustNewConstMetric(float64(item.Config.Hardware.NumCPU), labelsValues...)
-		ch <- c.numCoresPerSocket.mustNewConstMetric(float64(item.Config.Hardware.NumCoresPerSocket), labelsValues...)
-		ch <- c.memoryBytes.mustNewConstMetric(float64(int64(item.Config.Hardware.MemoryMB)*mb), labelsValues...)
-		ch <- c.overallCPUUsage.mustNewConstMetric(float64(item.Summary.QuickStats.OverallCpuUsage), labelsValues...)
-		ch <- c.overallCPUDemand.mustNewConstMetric(float64(item.Summary.QuickStats.OverallCpuDemand), labelsValues...)
-		ch <- c.guestMemoryUsage.mustNewConstMetric(float64(int64(item.Summary.QuickStats.GuestMemoryUsage)*mb), labelsValues...)
-		ch <- c.hostMemoryUsage.mustNewConstMetric(float64(int64(item.Summary.QuickStats.HostMemoryUsage)*mb), labelsValues...)
-		ch <- c.distributedCPUEntitlement.mustNewConstMetric(float64(item.Summary.QuickStats.DistributedCpuEntitlement), labelsValues...)
-		ch <- c.distributedMemoryEntitlement.mustNewConstMetric(float64(int64(item.Summary.QuickStats.DistributedMemoryEntitlement)*mb), labelsValues...)
-		ch <- c.staticCPUEntitlement.mustNewConstMetric(float64(item.Summary.QuickStats.StaticCpuEntitlement), labelsValues...)
-		ch <- c.staticMemoryEntitlement.mustNewConstMetric(float64(int64(item.Summary.QuickStats.StaticMemoryEntitlement)*mb), labelsValues...)
-		ch <- c.privateMemory.mustNewConstMetric(float64(int64(item.Summary.QuickStats.PrivateMemory)*mb), labelsValues...)
-		ch <- c.sharedMemory.mustNewConstMetric(float64(int64(item.Summary.QuickStats.SharedMemory)*mb), labelsValues...)
-		ch <- c.swappedMemory.mustNewConstMetric(float64(int64(item.Summary.QuickStats.SwappedMemory)*mb), labelsValues...)
-		ch <- c.balloonedMemory.mustNewConstMetric(float64(int64(item.Summary.QuickStats.BalloonedMemory)*mb), labelsValues...)
-		ch <- c.consumedOverheadMemory.mustNewConstMetric(float64(int64(item.Summary.QuickStats.ConsumedOverheadMemory)*mb), labelsValues...)
-		ch <- c.ftLogBandwidth.mustNewConstMetric(float64(item.Summary.QuickStats.FtLogBandwidth), labelsValues...)
-		ch <- c.ftSecondaryLatency.mustNewConstMetric(float64(item.Summary.QuickStats.FtSecondaryLatency), labelsValues...)
-		ch <- c.compressedMemory.mustNewConstMetric(float64(int64(item.Summary.QuickStats.CompressedMemory)*mb), labelsValues...)
-		ch <- c.uptimeSeconds.mustNewConstMetric(float64(item.Summary.QuickStats.UptimeSeconds), labelsValues...)
-		ch <- c.ssdSwappedMemory.mustNewConstMetric(float64(int64(item.Summary.QuickStats.SsdSwappedMemory)*mb), labelsValues...)
+		ch <- prometheus.MustNewConstMetric(
+			c.numCPU, prometheus.GaugeValue, float64(vm.Config.Hardware.NumCPU), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.numCoresPerSocket, prometheus.GaugeValue, float64(vm.Config.Hardware.NumCoresPerSocket), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.memoryBytes, prometheus.GaugeValue, float64(int64(vm.Config.Hardware.MemoryMB)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.overallCPUUsage, prometheus.GaugeValue, float64(qs.OverallCpuUsage), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.overallCPUDemand, prometheus.GaugeValue, float64(qs.OverallCpuDemand), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.guestMemoryUsage, prometheus.GaugeValue, float64(int64(qs.GuestMemoryUsage)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.hostMemoryUsage, prometheus.GaugeValue, float64(int64(qs.HostMemoryUsage)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.distributedCPUEntitlement, prometheus.GaugeValue, float64(qs.DistributedCpuEntitlement), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.distributedMemoryEntitlement, prometheus.GaugeValue, float64(int64(qs.DistributedMemoryEntitlement)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.staticCPUEntitlement, prometheus.GaugeValue, float64(qs.StaticCpuEntitlement), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.staticMemoryEntitlement, prometheus.GaugeValue, float64(int64(qs.StaticMemoryEntitlement)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.privateMemory, prometheus.GaugeValue, float64(int64(qs.PrivateMemory)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.sharedMemory, prometheus.GaugeValue, float64(int64(qs.SharedMemory)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.swappedMemory, prometheus.GaugeValue, float64(int64(qs.SwappedMemory)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.balloonedMemory, prometheus.GaugeValue, float64(int64(qs.BalloonedMemory)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.consumedOverheadMemory, prometheus.GaugeValue, float64(int64(qs.ConsumedOverheadMemory)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.ftLogBandwidth, prometheus.GaugeValue, float64(qs.FtLogBandwidth), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.ftSecondaryLatency, prometheus.GaugeValue, float64(qs.FtSecondaryLatency), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.compressedMemory, prometheus.GaugeValue, float64(int64(qs.CompressedMemory)*mb), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.uptimeSeconds, prometheus.GaugeValue, float64(qs.UptimeSeconds), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.ssdSwappedMemory, prometheus.GaugeValue, float64(int64(qs.SsdSwappedMemory)*mb), labelValues...,
+		)
 
-		if item.Snapshot != nil {
-			ch <- c.numSnapshot.mustNewConstMetric(float64(len(item.Snapshot.RootSnapshotList)), labelsValues...)
-		} else {
-			ch <- c.numSnapshot.mustNewConstMetric(0.0, labelsValues...)
+		if vm.Snapshot != nil {
+			ch <- prometheus.MustNewConstMetric(
+				c.uptimeSeconds, prometheus.GaugeValue, float64(len(vm.Snapshot.RootSnapshotList)), labelValues...,
+			)
 		}
 
-		edevices := GetEthernetDevices(item)
-		for _, edev := range edevices {
-			tmp := append(labelsValues, edev.typeName, edev.mac, edev.status)
-			ch <- c.ethernetDriverConnected.mustNewConstMetric(b2f(edev.connected), tmp...)
-		}
-		networks := GetNetworks(item)
-		for _, net := range networks {
-			for _, ip := range net.ip {
-				tmp := append(labelsValues, net.network, net.mac, ip)
-				ch <- c.networkConnected.mustNewConstMetric(b2f(net.connected), tmp...)
+		if c.options.CollectDisks {
+			for _, disk := range GetDisks(vm) {
+				diskLabelValues := append(labelValues, disk.UUID, strconv.FormatBool(disk.ThinProvisioned))
+				ch <- prometheus.MustNewConstMetric(
+					c.diskCapacityBytes, prometheus.GaugeValue, float64(disk.Capacity), diskLabelValues...,
+				)
 			}
 		}
-		disks := GetDisks(item)
-		for _, disk := range disks {
-			tmp := append(labelsValues, disk.vmdk, strconv.FormatBool(disk.thinProvisioned))
-			ch <- c.diskCapacityBytes.mustNewConstMetric(float64(disk.capacity), tmp...)
+
+		if vm.Guest != nil && c.options.CollectNetworks {
+			for _, net := range vm.Guest.Net {
+				for _, ip := range net.IpAddress {
+					networkLabelValues := append(labelValues, net.Network, net.MacAddress, ip)
+					ch <- prometheus.MustNewConstMetric(
+						c.networkConnected, prometheus.GaugeValue, b2f(net.Connected), networkLabelValues...,
+					)
+				}
+			}
 		}
+
+		// ch <- prometheus.MustNewConstMetric(
+		// 	c.ethernetDriverConnected, prometheus.GaugeValue, value, labelValues...,
+		// )
+
+		ch <- prometheus.MustNewConstMetric(
+			c.powerState, prometheus.GaugeValue, ConvertVirtualMachinePowerStateToValue(vm.Runtime.PowerState), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(vm.OverallStatus), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.guestHeartbeatStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(vm.Summary.QuickStats.GuestHeartbeatStatus), labelValues...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.toolsStatus, prometheus.GaugeValue, ConvertVirtualMachineToolsStatusToValue(vm.Guest.ToolsStatus), labelValues...,
+		)
+		infoLabelValues := append(labelValues, vm.Config.GuestId, vm.Guest.ToolsVersion)
+		ch <- prometheus.MustNewConstMetric(
+			c.vmInfo, prometheus.GaugeValue, 0, infoLabelValues...,
+		)
 	}
-	return nil
+}
+
+type Disk struct {
+	UUID            string
+	VmdkFile        string
+	Capacity        int64
+	ThinProvisioned bool
+}
+
+func GetDisks(vm *mo.VirtualMachine) []Disk {
+	disks := object.VirtualDeviceList(vm.Config.Hardware.Device).SelectByType((*types.VirtualDisk)(nil))
+	res := make([]Disk, 0, len(disks))
+	for _, d := range disks {
+		disk := d.(*types.VirtualDisk)
+		info := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo)
+		res = append(res, Disk{
+			UUID:            info.Uuid,
+			VmdkFile:        info.FileName,
+			Capacity:        disk.CapacityInBytes,
+			ThinProvisioned: *info.ThinProvisioned,
+		})
+	}
+	return res
 }
 
 type IsecAnnotation struct {
@@ -318,7 +423,7 @@ type IsecAnnotation struct {
 	Service     string `json:"svc"`
 }
 
-func GetIsecAnnotation(vm mo.VirtualMachine) IsecAnnotation {
+func GetIsecAnnotation(vm *mo.VirtualMachine) IsecAnnotation {
 	tmp := IsecAnnotation{
 		Service:     "not defined",
 		Responsable: "not defined",
@@ -328,118 +433,50 @@ func GetIsecAnnotation(vm mo.VirtualMachine) IsecAnnotation {
 	return tmp
 }
 
-type EthernetDevice struct {
-	name      string
-	typeName  string
-	mac       string
-	status    string
-	connected bool
-}
-
-func GetEthernetDevices(vm mo.VirtualMachine) []EthernetDevice {
-	devices := object.VirtualDeviceList(vm.Config.Hardware.Device)
-	res := make([]EthernetDevice, 0, len(devices))
-	for _, dev := range devices {
-
-		switch md := dev.(type) {
-		case types.BaseVirtualEthernetCard:
-			status := "unknown"
-			connected := false
-			name := devices.Name(dev)
-			typeName := strings.TrimPrefix(devices.TypeName(dev), "Virtual")
-			d := dev.GetVirtualDevice()
-			mac := md.GetVirtualEthernetCard().MacAddress
-			if ca := d.Connectable; ca != nil {
-				status = ca.Status
-				connected = ca.Connected
-			}
-			res = append(res, EthernetDevice{
-				name:      name,
-				typeName:  typeName,
-				mac:       mac,
-				status:    status,
-				connected: connected,
-			})
-
-		}
+func ConvertVirtualMachinePowerStateToValue(s types.VirtualMachinePowerState) float64 {
+	if s == types.VirtualMachinePowerStateSuspended {
+		return 1.0
+	} else if s == types.VirtualMachinePowerStatePoweredOn {
+		return 2.0
 	}
-	return res
+	return 0
 }
 
-type Network struct {
-	network   string
-	mac       string
-	ip        []string
-	connected bool
-}
-
-func GetNetworks(vm mo.VirtualMachine) []Network {
-	res := make([]Network, 0, len(vm.Guest.Net))
-	for _, net := range vm.Guest.Net {
-		item := Network{
-			network:   net.Network,
-			mac:       net.MacAddress,
-			ip:        net.IpAddress,
-			connected: net.Connected,
-		}
-		res = append(res, item)
+func ConvertManagedEntityStatusToValue(s types.ManagedEntityStatus) float64 {
+	if s == types.ManagedEntityStatusRed {
+		return 1.0
+	} else if s == types.ManagedEntityStatusYellow {
+		return 2.0
+	} else if s == types.ManagedEntityStatusGreen {
+		return 3.0
 	}
-	return res
+	return 0
 }
 
-type Disk struct {
-	vmdk            string
-	capacity        int64
-	thinProvisioned bool
-}
-
-func GetDisks(vm mo.VirtualMachine) []Disk {
-	disks := object.VirtualDeviceList(vm.Config.Hardware.Device).SelectByType((*types.VirtualDisk)(nil))
-	res := make([]Disk, 0, len(disks))
-	for _, d := range disks {
-		disk := d.(*types.VirtualDisk)
-		info := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo)
-		res = append(res, Disk{
-			vmdk:            info.FileName,
-			capacity:        disk.CapacityInBytes,
-			thinProvisioned: *info.ThinProvisioned,
-		})
+func ConvertVirtualMachineGuestStateToValue(s types.VirtualMachineGuestState) float64 {
+	if s == types.VirtualMachineGuestStateNotRunning {
+		return 1.0
+	} else if s == types.VirtualMachineGuestStateResetting {
+		return 2.0
+	} else if s == types.VirtualMachineGuestStateShuttingDown {
+		return 3.0
+	} else if s == types.VirtualMachineGuestStateStandby {
+		return 4.0
+	} else if s == types.VirtualMachineGuestStateRunning {
+		return 5.0
 	}
-	return res
+	return 0
 }
 
-func (c *virtualMachineCollector) apiRetrieve() ([]mo.VirtualMachine, error) {
-	var items []mo.VirtualMachine
-
-	m := view.NewManager(c.client.Client)
-	v, err := m.CreateContainerView(
-		c.ctx,
-		c.client.ServiceContent.RootFolder,
-		[]string{"VirtualMachine"},
-		true,
-	)
-	if err != nil {
-		return items, err
+func ConvertVirtualMachineToolsStatusToValue(s types.VirtualMachineToolsStatus) float64 {
+	if s == types.VirtualMachineToolsStatusToolsNotInstalled {
+		return 1.0
+	} else if s == types.VirtualMachineToolsStatusToolsOld {
+		return 2.0
+	} else if s == types.VirtualMachineToolsStatusToolsNotRunning {
+		return 3.0
+	} else if s == types.VirtualMachineToolsStatusToolsOk {
+		return 4.0
 	}
-	defer c.destroyView(v)
-
-	err = v.Retrieve(
-		c.ctx,
-		[]string{"VirtualMachine"},
-		[]string{
-			"config",
-			//"datatore",
-			"guest",
-			"guestHeartbeatStatus",
-			"network",
-			"parent",
-			"resourceConfig",
-			"resourcePool",
-			"runtime",
-			"snapshot",
-			"summary",
-		},
-		&items,
-	)
-	return items, err
+	return 0
 }

@@ -14,127 +14,268 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"errors"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
-	"sort"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
 
-	"github.com/prometheus/common/promlog"
-	"github.com/prometheus/common/promlog/flag"
+	// "github.com/prometheus/common/promlog"
+	// "github.com/prometheus/common/promlog/flag"
+	"github.com/prometheus/common/promslog"
+	"github.com/prometheus/common/promslog/flag"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
+	kingpin "github.com/alecthomas/kingpin/v2"
 	"github.com/intrinsec/govc_exporter/collector"
-	"github.com/intrinsec/govc_exporter/https"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/intrinsec/govc_exporter/collector/scraper"
 	"github.com/prometheus/common/version"
-	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
-// handler wraps an unfiltered http.Handler but uses a filtered handler,
-// created on the fly, if filtering is requested. Create instances with
-// newHandler.
-type handler struct {
-	unfilteredHandler http.Handler
-	// exporterMetricsRegistry is a separate registry for the metrics about
-	// the exporter itself.
-	exporterMetricsRegistry *prometheus.Registry
-	includeExporterMetrics  bool
-	maxRequests             int
-	logger                  log.Logger
+// // handler wraps an unfiltered http.Handler but uses a filtered handler,
+// // created on the fly, if filtering is requested. Create instances with
+// // newHandler.
+// type handler struct {
+// 	unfilteredHandler http.Handler
+// 	// exporterMetricsRegistry is a separate registry for the metrics about
+// 	// the exporter itself.
+// 	exporterMetricsRegistry *prometheus.Registry
+// 	includeExporterMetrics  bool
+// 	maxRequests             int
+// 	logger                  log.Logger
+// }
+
+// func newHandler(includeExporterMetrics bool, maxRequests int, logger log.Logger) *handler {
+// 	h := &handler{
+// 		exporterMetricsRegistry: prometheus.NewRegistry(),
+// 		includeExporterMetrics:  includeExporterMetrics,
+// 		maxRequests:             maxRequests,
+// 		logger:                  logger,
+// 	}
+// 	if h.includeExporterMetrics {
+// 		h.exporterMetricsRegistry.MustRegister(
+// 			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+// 			collectors.NewGoCollector(),
+// 		)
+// 	}
+// 	if innerHandler, err := h.innerHandler(); err != nil {
+// 		panic(fmt.Sprintf("Couldn't create metrics handler: %s", err))
+// 	} else {
+// 		h.unfilteredHandler = innerHandler
+// 	}
+// 	return h
+// }
+
+// // ServeHTTP implements http.Handler.
+// func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// 	filters := r.URL.Query()["collect[]"]
+// 	level.Debug(h.logger).Log("msg", "collect query:", "filters", filters)
+
+// 	if len(filters) == 0 {
+// 		// No filters, use the prepared unfiltered handler.
+// 		h.unfilteredHandler.ServeHTTP(w, r)
+// 		return
+// 	}
+// 	// To serve filtered metrics, we create a filtering handler on the fly.
+// 	filteredHandler, err := h.innerHandler(filters...)
+// 	if err != nil {
+// 		level.Warn(h.logger).Log("msg", "Couldn't create filtered metrics handler:", "err", err)
+// 		w.WriteHeader(http.StatusBadRequest)
+// 		w.Write([]byte(fmt.Sprintf("Couldn't create filtered metrics handler: %s", err)))
+// 		return
+// 	}
+// 	filteredHandler.ServeHTTP(w, r)
+// }
+
+// // innerHandler is used to create both the one unfiltered http.Handler to be
+// // wrapped by the outer handler and also the filtered handlers created on the
+// // fly. The former is accomplished by calling innerHandler without any arguments
+// // (in which case it will log all the collectors enabled via command-line
+// // flags).
+// func (h *handler) innerHandler(filters ...string) (http.Handler, error) {
+// 	nc, err := collector.NewMainCollector(h.logger, filters...)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("couldn't create collector: %s", err)
+// 	}
+
+// 	// Only log the creation of an unfiltered handler, which should happen
+// 	// only once upon startup.
+// 	if len(filters) == 0 {
+// 		level.Info(h.logger).Log("msg", "Enabled collectors")
+// 		collectors := []string{}
+// 		for n := range nc.Collectors {
+// 			collectors = append(collectors, n)
+// 		}
+// 		sort.Strings(collectors)
+// 		for _, c := range collectors {
+// 			level.Info(h.logger).Log("collector", c)
+// 		}
+// 	}
+
+// 	r := prometheus.NewRegistry()
+// 	r.MustRegister(version.NewCollector("node_exporter"))
+// 	if err := r.Register(nc); err != nil {
+// 		return nil, fmt.Errorf("couldn't register node collector: %s", err)
+// 	}
+// 	handler := promhttp.HandlerFor(
+// 		prometheus.Gatherers{h.exporterMetricsRegistry, r},
+// 		promhttp.HandlerOpts{
+// 			ErrorHandling:       promhttp.ContinueOnError,
+// 			MaxRequestsInFlight: h.maxRequests,
+// 			Registry:            h.exporterMetricsRegistry,
+// 		},
+// 	)
+// 	if h.includeExporterMetrics {
+// 		// Note that we have to use h.exporterMetricsRegistry here to
+// 		// use the same promhttp metrics for all expositions.
+// 		handler = promhttp.InstrumentMetricHandler(
+// 			h.exporterMetricsRegistry, handler,
+// 		)
+// 	}
+// 	return handler, nil
+// }
+
+type Conf struct {
+	collectorConf collector.CollectorConf
+	MetricPath    string
+	ListenAddress string
 }
 
-func newHandler(includeExporterMetrics bool, maxRequests int, logger log.Logger) *handler {
-	h := &handler{
-		exporterMetricsRegistry: prometheus.NewRegistry(),
-		includeExporterMetrics:  includeExporterMetrics,
-		maxRequests:             maxRequests,
-		logger:                  logger,
-	}
-	if h.includeExporterMetrics {
-		h.exporterMetricsRegistry.MustRegister(
-			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-			collectors.NewGoCollector(),
-		)
-	}
-	if innerHandler, err := h.innerHandler(); err != nil {
-		panic(fmt.Sprintf("Couldn't create metrics handler: %s", err))
-	} else {
-		h.unfilteredHandler = innerHandler
-	}
-	return h
-}
+// func main() {
+// 	var (
+// 		listenAddress = kingpin.Flag(
+// 			"web.listen-address",
+// 			"Address on which to expose metrics and web interface.",
+// 		).Default(":9752").String()
+// 		metricsPath = kingpin.Flag(
+// 			"web.telemetry-path",
+// 			"Path under which to expose metrics.",
+// 		).Default("/metrics").String()
+// 		disableExporterMetrics = kingpin.Flag(
+// 			"web.disable-exporter-metrics",
+// 			"Exclude metrics about the exporter itself (promhttp_*, process_*, go_*).",
+// 		).Bool()
+// 		maxRequests = kingpin.Flag(
+// 			"web.max-requests",
+// 			"Maximum number of parallel scrape requests. Use 0 to disable.",
+// 		).Default("40").Int()
+// 		// disableDefaultCollectors = kingpin.Flag(
+// 		// 	"collector.disable-defaults",
+// 		// 	"Set all collectors to disabled by default.",
+// 		// ).Default("false").Bool()
+// 		// configFile = kingpin.Flag(
+// 		// 	"web.config",
+// 		// 	"[EXPERIMENTAL] Path to config yaml file that can enable TLS or authentication.",
+// 		// ).Default("").String()
 
-// ServeHTTP implements http.Handler.
-func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	filters := r.URL.Query()["collect[]"]
-	level.Debug(h.logger).Log("msg", "collect query:", "filters", filters)
+// 		endpoint = kingpin.Flag("collector.vc.url", "vc api username").Envar("VC_URL").Required().String()
+// 		username = kingpin.Flag("collector.vc.username", "vc api username").Envar("VC_USERNAME").Required().String()
+// 		password = kingpin.Flag("collector.vc.password", "vc api password").Envar("VC_PASSWORD").Required().String()
 
-	if len(filters) == 0 {
-		// No filters, use the prepared unfiltered handler.
-		h.unfilteredHandler.ServeHTTP(w, r)
-		return
-	}
-	// To serve filtered metrics, we create a filtering handler on the fly.
-	filteredHandler, err := h.innerHandler(filters...)
-	if err != nil {
-		level.Warn(h.logger).Log("msg", "Couldn't create filtered metrics handler:", "err", err)
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf("Couldn't create filtered metrics handler: %s", err)))
-		return
-	}
-	filteredHandler.ServeHTTP(w, r)
-}
+// 		hostEnabled           = kingpin.Flag("scraper.esx", "Enable host metrics").Default("True").String()
+// 		datastoreEnabled      = kingpin.Flag("scraper.ds", "Enable datastore metrics").Default("True").String()
+// 		repoolEnabled         = kingpin.Flag("scraper.repool", "Enable datastore metrics").Default("True").String()
+// 		storagePodEnabled     = kingpin.Flag("scraper.spod", "Enable datastore metrics").Default("True").String()
+// 		virtualMachineEnabled = kingpin.Flag("scraper.vm", "Enable datastore metrics").Default("True").String()
+// 		clusterEnabled        = kingpin.Flag("scraper.cluster", "Enable datastore metrics").Default("True").String()
 
-// innerHandler is used to create both the one unfiltered http.Handler to be
-// wrapped by the outer handler and also the filtered handlers created on the
-// fly. The former is accomplished by calling innerHandler without any arguments
-// (in which case it will log all the collectors enabled via command-line
-// flags).
-func (h *handler) innerHandler(filters ...string) (http.Handler, error) {
-	nc, err := collector.NewMainCollector(h.logger, filters...)
-	if err != nil {
-		return nil, fmt.Errorf("couldn't create collector: %s", err)
-	}
+// 		hostMaxAgeSec                    = kingpin.Flag("scraper.host_max_age", "time in seconds host metrics are cached").Default("120").Int()
+// 		hostRefreshIntervalSec           = kingpin.Flag("scraper.host_refresh_interval", "interval host metrics are refreshed").Default("60").Int()
+// 		clusterMaxAgeSec                 = kingpin.Flag("scraper.cluster_max_age", "time in seconds cluster metrics are cached").Default("300").Int()
+// 		clusterRefreshIntervalSec        = kingpin.Flag("scraper.cluster_refresh_interval", "interval cluster metrics are refreshed").Default("30").Int()
+// 		virtualMachineMaxAgeSec          = kingpin.Flag("scraper.virtual_machine_max_age", "time in seconds vm metrics are cached").Default("120").Int()
+// 		virtualMachineRefreshIntervalSec = kingpin.Flag("scraper.virtual_machine_refresh_interval", "interval vm metrics are refreshed").Default("60").Int()
+// 		datastoreMaxAgeSec               = kingpin.Flag("scraper.datastore_max_age", "time in seconds datastore metrics are cached").Default("120").Int()
+// 		datastoreRefreshIntervalSec      = kingpin.Flag("scraper.datastore_refresh_interval", "interval datastore metrics are refreshed").Default("60").Int()
+// 		spodMaxAgeSec                    = kingpin.Flag("scraper.spod_max_age", "time in seconds spod metrics are cached").Default("120").Int()
+// 		spodRefreshIntervalSec           = kingpin.Flag("scraper.storagepod_refresh_interval", "interval spod metrics are refreshed").Default("60").Int()
+// 		resourcePoolMaxAgeSec            = kingpin.Flag("scraper.repool_max_age", "time in seconds resource pool metrics are cached").Default("120").Int()
+// 		resourcePoolRefreshIntervalSec   = kingpin.Flag("scraper.repool_refresh_interval", "interval resource pool metrics are refreshed").Default("60").Int()
+// 		onDemandCacheMaxAge              = kingpin.Flag("scraper.on_demand_cache_max_age", "time in seconds all other metrics are in cache. Used to get parent objects").Default("300").Int()
+// 		cleanCacheIntervalSec            = kingpin.Flag("scraper.clean_cache_interval", "interval the cache cleanup runs").Default("5").Int()
+// 		clientPoolSize                   = kingpin.Flag("scraper.client_pool_size", "number of simultanious requests to vCenter api").Default("5").Int()
+// 		useIsecSpecifics                 = kingpin.Flag("collector.intrinsec", "Enable intrinsec specific features").Default("false").Bool()
+// 		collectVMDisks                   = kingpin.Flag("collector.vm.disk", "Collect vm disk metrics").Default("false").Bool()
+// 		collectVMNetwork                 = kingpin.Flag("collector.vm.network", "Collect vm network metrics").Default("false").Bool()
+// 	)
 
-	// Only log the creation of an unfiltered handler, which should happen
-	// only once upon startup.
-	if len(filters) == 0 {
-		level.Info(h.logger).Log("msg", "Enabled collectors")
-		collectors := []string{}
-		for n := range nc.Collectors {
-			collectors = append(collectors, n)
-		}
-		sort.Strings(collectors)
-		for _, c := range collectors {
-			level.Info(h.logger).Log("collector", c)
-		}
-	}
+// 	promlogConfig := &promslog.Config{}
+// 	flag.AddFlags(kingpin.CommandLine, promlogConfig)
+// 	kingpin.Version(version.Print("node_exporter"))
+// 	kingpin.HelpFlag.Short('h')
+// 	kingpin.Parse()
+// 	logger := promslog.New(promlogConfig)
 
-	r := prometheus.NewRegistry()
-	r.MustRegister(version.NewCollector("node_exporter"))
-	if err := r.Register(nc); err != nil {
-		return nil, fmt.Errorf("couldn't register node collector: %s", err)
+// 	collectorConf := collector.CollectorConf{
+// 		ScraperConf: cache.ScraperConfig{
+// 			Endpoint:                         *endpoint,
+// 			Username:                         *username,
+// 			Password:                         *password,
+// 			HostCollectorEnabled:             string2bool(*hostEnabled),
+// 			HostMaxAgeSec:                    *hostMaxAgeSec,
+// 			HostRefreshIntervalSec:           *hostRefreshIntervalSec,
+// 			ClusterCollectorEnabled:          string2bool(*clusterEnabled),
+// 			ClusterMaxAgeSec:                 *clusterMaxAgeSec,
+// 			ClusterRefreshIntervalSec:        *clusterRefreshIntervalSec,
+// 			VirtualMachineCollectorEnabled:   string2bool(*virtualMachineEnabled),
+// 			VirtualMachineMaxAgeSec:          *virtualMachineMaxAgeSec,
+// 			VirtualMachineRefreshIntervalSec: *virtualMachineRefreshIntervalSec,
+// 			DatastoreCollectorEnabled:        string2bool(*datastoreEnabled),
+// 			DatastoreMaxAgeSec:               *datastoreMaxAgeSec,
+// 			DatastoreRefreshIntervalSec:      *datastoreRefreshIntervalSec,
+// 			SpodCollectorEnabled:             string2bool(*storagePodEnabled),
+// 			SpodMaxAgeSec:                    *spodMaxAgeSec,
+// 			SpodRefreshIntervalSec:           *spodRefreshIntervalSec,
+// 			ResourcePoolCollectorEnabled:     string2bool(*repoolEnabled),
+// 			ResourcePoolMaxAgeSec:            *resourcePoolMaxAgeSec,
+// 			ResourcePoolRefreshIntervalSec:   *resourcePoolRefreshIntervalSec,
+// 			OnDemandCacheMaxAge:              *onDemandCacheMaxAge,
+// 			CleanCacheIntervalSec:            *cleanCacheIntervalSec,
+// 			ClientPoolSize:                   *clientPoolSize,
+// 		},
+// 		UseIsecSpecifics:       *useIsecSpecifics,
+// 		CollectVMNetworks:      *collectVMNetwork,
+// 		CollectVMDisks:         *collectVMDisks,
+// 		DisableExporterMetrics: *disableExporterMetrics,
+// 		MaxRequests:            *maxRequests,
+// 	}
+
+// 	ctx, cancel := context.WithCancelCause(context.Background())
+// 	collector := collector.NewVCCollector(collectorConf, logger)
+// 	collector.Start(logger)
+
+// 	logger.Info("Starting govc_exporter", "version", version.Info())
+// 	logger.Info("Build context", "build_context", version.BuildContext())
+
+// 	http.HandleFunc(*metricsPath, collector.GetMetricHandler())
+// 	http.HandleFunc("/", defaultHandler(*metricsPath))
+
+// 	logger.Info("Listening on", "address", *listenAddress)
+// 	server := &http.Server{
+// 		Addr: *listenAddress,
+// 	}
+
+// 	err := server.ListenAndServe()
+// 	if err != nil {
+// 		logger.Error("Exporter failed", "err", err)
+// 		cancel(err)
+// 		os.Exit(1)
+// 	}
+// }
+
+func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<html>
+			<head><title>govc Exporter</title></head>
+			<body>
+			<h1>govc Exporter</h1>
+			<p><a href="` + metricsPath + `">Metrics</a></p>
+			</body>
+			</html>`))
 	}
-	handler := promhttp.HandlerFor(
-		prometheus.Gatherers{h.exporterMetricsRegistry, r},
-		promhttp.HandlerOpts{
-			ErrorHandling:       promhttp.ContinueOnError,
-			MaxRequestsInFlight: h.maxRequests,
-			Registry:            h.exporterMetricsRegistry,
-		},
-	)
-	if h.includeExporterMetrics {
-		// Note that we have to use h.exporterMetricsRegistry here to
-		// use the same promhttp metrics for all expositions.
-		handler = promhttp.InstrumentMetricHandler(
-			h.exporterMetricsRegistry, handler,
-		)
-	}
-	return handler, nil
 }
 
 func main() {
@@ -155,44 +296,137 @@ func main() {
 			"web.max-requests",
 			"Maximum number of parallel scrape requests. Use 0 to disable.",
 		).Default("40").Int()
-		disableDefaultCollectors = kingpin.Flag(
-			"collector.disable-defaults",
-			"Set all collectors to disabled by default.",
-		).Default("false").Bool()
-		configFile = kingpin.Flag(
-			"web.config",
-			"[EXPERIMENTAL] Path to config yaml file that can enable TLS or authentication.",
-		).Default("").String()
+		// disableDefaultCollectors = kingpin.Flag(
+		// 	"collector.disable-defaults",
+		// 	"Set all collectors to disabled by default.",
+		// ).Default("false").Bool()
+		// configFile = kingpin.Flag(
+		// 	"web.config",
+		// 	"[EXPERIMENTAL] Path to config yaml file that can enable TLS or authentication.",
+		// ).Default("").String()
+
+		endpoint = kingpin.Flag("collector.vc.url", "vc api username").Envar("VC_URL").Required().String()
+		username = kingpin.Flag("collector.vc.username", "vc api username").Envar("VC_USERNAME").Required().String()
+		password = kingpin.Flag("collector.vc.password", "vc api password").Envar("VC_PASSWORD").Required().String()
+
+		// hostEnabled           = kingpin.Flag("scraper.esx", "Enable host metrics").Default("True").String() //Host always required
+		datastoreEnabled      = kingpin.Flag("scraper.ds", "Enable datastore metrics").Default("True").String()
+		repoolEnabled         = kingpin.Flag("scraper.repool", "Enable datastore metrics").Default("True").String()
+		storagePodEnabled     = kingpin.Flag("scraper.spod", "Enable datastore metrics").Default("True").String()
+		virtualMachineEnabled = kingpin.Flag("scraper.vm", "Enable datastore metrics").Default("True").String()
+		clusterEnabled        = kingpin.Flag("scraper.cluster", "Enable datastore metrics").Default("True").String()
+
+		hostMaxAgeSec                    = kingpin.Flag("scraper.host_max_age", "time in seconds host metrics are cached").Default("60").Int()
+		hostRefreshIntervalSec           = kingpin.Flag("scraper.host_refresh_interval", "interval host metrics are refreshed").Default("25").Int()
+		clusterMaxAgeSec                 = kingpin.Flag("scraper.cluster_max_age", "time in seconds cluster metrics are cached").Default("300").Int()
+		clusterRefreshIntervalSec        = kingpin.Flag("scraper.cluster_refresh_interval", "interval cluster metrics are refreshed").Default("25").Int()
+		virtualMachineMaxAgeSec          = kingpin.Flag("scraper.virtual_machine_max_age", "time in seconds vm metrics are cached").Default("120").Int()
+		virtualMachineRefreshIntervalSec = kingpin.Flag("scraper.virtual_machine_refresh_interval", "interval vm metrics are refreshed").Default("55").Int()
+		datastoreMaxAgeSec               = kingpin.Flag("scraper.datastore_max_age", "time in seconds datastore metrics are cached").Default("120").Int()
+		datastoreRefreshIntervalSec      = kingpin.Flag("scraper.datastore_refresh_interval", "interval datastore metrics are refreshed").Default("55").Int()
+		spodMaxAgeSec                    = kingpin.Flag("scraper.spod_max_age", "time in seconds spod metrics are cached").Default("120").Int()
+		spodRefreshIntervalSec           = kingpin.Flag("scraper.storagepod_refresh_interval", "interval spod metrics are refreshed").Default("55").Int()
+		resourcePoolMaxAgeSec            = kingpin.Flag("scraper.repool_max_age", "time in seconds resource pool metrics are cached").Default("120").Int()
+		resourcePoolRefreshIntervalSec   = kingpin.Flag("scraper.repool_refresh_interval", "interval resource pool metrics are refreshed").Default("55").Int()
+		onDemandCacheMaxAge              = kingpin.Flag("scraper.on_demand_cache_max_age", "time in seconds the scraper keeps all non-cache data. Used to get parent objects").Default("300").Int()
+		cleanIntervalSec                 = kingpin.Flag("scraper.clean_interval", "interval the scraper cleans up old data").Default("5").Int()
+		clientPoolSize                   = kingpin.Flag("scraper.client_pool_size", "number of simultanious requests to vCenter api").Default("5").Int()
+		useIsecSpecifics                 = kingpin.Flag("collector.intrinsec", "Enable intrinsec specific features").Default("false").Bool()
+		collectVMDisks                   = kingpin.Flag("collector.vm.disk", "Collect vm disk metrics").Default("false").Bool()
+		collectVMNetwork                 = kingpin.Flag("collector.vm.network", "Collect vm network metrics").Default("false").Bool()
 	)
 
-	promlogConfig := &promlog.Config{}
+	promlogConfig := &promslog.Config{}
 	flag.AddFlags(kingpin.CommandLine, promlogConfig)
 	kingpin.Version(version.Print("node_exporter"))
 	kingpin.HelpFlag.Short('h')
 	kingpin.Parse()
-	logger := promlog.New(promlogConfig)
+	logger := promslog.New(promlogConfig)
 
-	if *disableDefaultCollectors {
-		collector.DisableDefaultCollectors()
+	scraperConf := scraper.ScraperConfig{
+		Endpoint:                         *endpoint,
+		Username:                         *username,
+		Password:                         *password,
+		HostMaxAgeSec:                    *hostMaxAgeSec,
+		HostRefreshIntervalSec:           *hostRefreshIntervalSec,
+		ClusterCollectorEnabled:          string2bool(*clusterEnabled),
+		ClusterMaxAgeSec:                 *clusterMaxAgeSec,
+		ClusterRefreshIntervalSec:        *clusterRefreshIntervalSec,
+		VirtualMachineCollectorEnabled:   string2bool(*virtualMachineEnabled),
+		VirtualMachineMaxAgeSec:          *virtualMachineMaxAgeSec,
+		VirtualMachineRefreshIntervalSec: *virtualMachineRefreshIntervalSec,
+		DatastoreCollectorEnabled:        string2bool(*datastoreEnabled),
+		DatastoreMaxAgeSec:               *datastoreMaxAgeSec,
+		DatastoreRefreshIntervalSec:      *datastoreRefreshIntervalSec,
+		SpodCollectorEnabled:             string2bool(*storagePodEnabled),
+		SpodMaxAgeSec:                    *spodMaxAgeSec,
+		SpodRefreshIntervalSec:           *spodRefreshIntervalSec,
+		ResourcePoolCollectorEnabled:     string2bool(*repoolEnabled),
+		ResourcePoolMaxAgeSec:            *resourcePoolMaxAgeSec,
+		ResourcePoolRefreshIntervalSec:   *resourcePoolRefreshIntervalSec,
+		OnDemandCacheMaxAge:              *onDemandCacheMaxAge,
+		CleanIntervalSec:                 *cleanIntervalSec,
+		ClientPoolSize:                   *clientPoolSize,
 	}
-	level.Info(logger).Log("msg", "Starting govc_exporter", "version", version.Info())
-	level.Info(logger).Log("msg", "Build context", "build_context", version.BuildContext())
 
-	http.Handle(*metricsPath, newHandler(!*disableExporterMetrics, *maxRequests, logger))
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html>
-			<head><title>govc Exporter</title></head>
-			<body>
-			<h1>govc Exporter</h1>
-			<p><a href="` + *metricsPath + `">Metrics</a></p>
-			</body>
-			</html>`))
-	})
-
-	level.Info(logger).Log("msg", "Listening on", "address", *listenAddress)
-	server := &http.Server{Addr: *listenAddress}
-	if err := https.Listen(server, *configFile, logger); err != nil {
-		level.Error(logger).Log("err", err)
-		os.Exit(1)
+	collectorConf := collector.CollectorConf{
+		UseIsecSpecifics:       *useIsecSpecifics,
+		CollectVMNetworks:      *collectVMNetwork,
+		CollectVMDisks:         *collectVMDisks,
+		DisableExporterMetrics: *disableExporterMetrics,
+		MaxRequests:            *maxRequests,
 	}
+
+	scraper, err := scraper.NewVCenterScraper(scraperConf)
+	if err != nil {
+		logger.Error("Failed to create VCenterScraper", "err", err.Error())
+	}
+	scraper.Start(logger)
+
+	collector := collector.NewVCCollector(collectorConf, scraper, logger)
+
+	logger.Info("Starting govc_exporter", "version", version.Info())
+	logger.Info("Build context", "build_context", version.BuildContext())
+
+	server := &http.Server{
+		Addr: *listenAddress,
+	}
+
+	http.HandleFunc(*metricsPath, collector.GetMetricHandler())
+	http.HandleFunc("/", defaultHandler(*metricsPath))
+
+	shutdownChan := make(chan bool, 1)
+
+	go func() {
+		logger.Info("Listening on", "address", *listenAddress)
+		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP server error", "err", err)
+		}
+
+		logger.Info("Stopped serving new connections.")
+		scraper.Stop(logger)
+
+		shutdownChan <- true
+	}()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+
+	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownRelease()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("HTTP shutdown error", "err", err)
+	}
+
+	<-shutdownChan
+	logger.Info("Graceful shutdown complete.")
+}
+
+func string2bool(s string) bool {
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b
+	}
+	return false
 }
