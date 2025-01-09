@@ -59,7 +59,7 @@ func (p *MultiAccessPool[T]) SetAtExit(f func() error) {
 	p.atExit = f
 }
 
-func (p *MultiAccessPool[T]) Close() error {
+func (p *MultiAccessPool[T]) Destroy() error {
 	if p.atExit != nil {
 		return p.atExit()
 	}

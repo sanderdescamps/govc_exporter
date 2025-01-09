@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -342,6 +343,9 @@ func main() {
 	kingpin.HelpFlag.Short('h')
 	kingpin.Parse()
 	logger := promslog.New(promlogConfig)
+	logger.Info("Starting govc_exporter", "version", version.Info())
+	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
+	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "user", version.BuildUser, "date", version.BuildDate, "tags", version.GetTags())
 
 	scraperConf := scraper.ScraperConfig{
 		Endpoint:                         *endpoint,
@@ -384,9 +388,6 @@ func main() {
 	scraper.Start(logger)
 
 	collector := collector.NewVCCollector(collectorConf, scraper, logger)
-
-	logger.Info("Starting govc_exporter", "version", version.Info())
-	logger.Info("Build context", "build_context", version.BuildContext())
 
 	server := &http.Server{
 		Addr: *listenAddress,

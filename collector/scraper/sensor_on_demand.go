@@ -14,14 +14,14 @@ import (
 type OnDemandSensor struct {
 	objects       map[types.ManagedObjectReference]VMwareCacheItem[mo.ManagedEntity]
 	lock          sync.Mutex
-	getFunc       func(types.ManagedObjectReference, *govmomi.Client, *slog.Logger) (*mo.ManagedEntity, error)
-	config        cacheConfig
+	getFunc       func(types.ManagedObjectReference, pool.Pool[govmomi.Client], *slog.Logger) (*mo.ManagedEntity, error)
+	config        sensorConfig
 	logger        *slog.Logger
 	cleanupTicker *time.Ticker
 	clientPool    *pool.Pool[govmomi.Client]
 }
 
-func NewOnDemandSensor(getFunc func(types.ManagedObjectReference, *govmomi.Client, *slog.Logger) (*mo.ManagedEntity, error), conf cacheConfig) *OnDemandSensor {
+func NewOnDemandSensor(getFunc func(types.ManagedObjectReference, pool.Pool[govmomi.Client], *slog.Logger) (*mo.ManagedEntity, error), conf sensorConfig) *OnDemandSensor {
 	return &OnDemandSensor{
 		objects: map[types.ManagedObjectReference]VMwareCacheItem[mo.ManagedEntity]{},
 		getFunc: getFunc,
@@ -60,9 +60,6 @@ func (o *OnDemandSensor) GetAllRefs() []types.ManagedObjectReference {
 }
 
 func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity {
-	client, clientID := (*o.clientPool).Acquire()
-	defer (*o.clientPool).Release(clientID)
-
 	entity, hasInCache := func() (*mo.ManagedEntity, bool) {
 		o.lock.Lock()
 		defer o.lock.Unlock()
@@ -77,7 +74,7 @@ func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity
 		return entity
 	}
 
-	entity, err := o.getFunc(ref, client, o.logger)
+	entity, err := o.getFunc(ref, *o.clientPool, o.logger)
 	if err != nil {
 		return nil
 	}

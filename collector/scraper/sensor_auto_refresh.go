@@ -15,13 +15,13 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 )
 
-var SensorSkipRefreshError = errors.New("refresh is still running, skipping this one")
+var ErrSensorSkipRefresh = errors.New("refresh is still running, skipping this one")
 
 type VMwareResource interface {
 	mo.VirtualMachine | mo.ComputeResource | mo.HostSystem | mo.StoragePod | mo.Datastore | mo.ManagedEntity | mo.ResourcePool
 }
 
-type cacheConfig struct {
+type sensorConfig struct {
 	MaxAge             int
 	RefreshInterval    int
 	CleanCacheInterval int
@@ -29,25 +29,20 @@ type cacheConfig struct {
 
 type AutoRefreshSensor[T VMwareResource] struct {
 	objects       map[types.ManagedObjectReference]VMwareCacheItem[T]
-	refreshFunc   func(*govmomi.Client, *slog.Logger) ([]T, error)
+	refreshFunc   func(pool.Pool[govmomi.Client], *slog.Logger) ([]T, error)
 	lock          sync.Mutex
 	refreshLock   sync.Mutex
-	config        cacheConfig
-	metrics       *SensorMetrics
+	config        sensorConfig
 	refreshTicker *time.Ticker
 	cleanupTicker *time.Ticker
 }
 
-func NewAutoRefreshSensor[T VMwareResource](refreshFunc func(*govmomi.Client, *slog.Logger) ([]T, error), conf cacheConfig) *AutoRefreshSensor[T] {
+func NewAutoRefreshSensor[T VMwareResource](refreshFunc func(pool.Pool[govmomi.Client], *slog.Logger) ([]T, error), conf sensorConfig) *AutoRefreshSensor[T] {
 	return &AutoRefreshSensor[T]{
 		objects:     map[types.ManagedObjectReference]VMwareCacheItem[T]{},
 		refreshFunc: refreshFunc,
 		config:      conf,
 	}
-}
-
-func (o *AutoRefreshSensor[T]) GetMetrics() SensorMetrics {
-	return *o.metrics
 }
 
 func (o *AutoRefreshSensor[T]) getTypeString() string {
@@ -95,24 +90,12 @@ func (o *AutoRefreshSensor[t]) Get(ref types.ManagedObjectReference) *t {
 }
 
 func (o *AutoRefreshSensor[t]) Refresh(clientPool pool.Pool[govmomi.Client], logger *slog.Logger) error {
-	t1 := time.Now()
-	client, clientId := clientPool.Acquire()
-	defer clientPool.Release(clientId)
-
-	t2 := time.Now()
 	if !o.refreshLock.TryLock() {
-		return SensorSkipRefreshError
+		return ErrSensorSkipRefresh
 	}
 	defer o.refreshLock.Unlock()
-	results, err := o.refreshFunc(client, logger)
-	t3 := time.Now()
+	results, err := o.refreshFunc(clientPool, logger)
 	if err != nil {
-		o.metrics = &SensorMetrics{
-			Name:           o.getTypeString(),
-			QueryTime:      t2.Sub(t1),
-			ClientWaitTime: 0,
-			Status:         false,
-		}
 		return err
 	}
 	for _, r := range results {
@@ -136,11 +119,6 @@ func (o *AutoRefreshSensor[t]) Refresh(clientPool pool.Pool[govmomi.Client], log
 		}
 	}
 
-	o.metrics = &SensorMetrics{
-		QueryTime:      t2.Sub(t1),
-		ClientWaitTime: t3.Sub(t2),
-		Status:         true,
-	}
 	return nil
 }
 
@@ -165,7 +143,7 @@ func (o *AutoRefreshSensor[T]) Start(clientPool pool.Pool[govmomi.Client], logge
 			err := o.Refresh(clientPool, logger)
 			if err == nil {
 				logger.Info("refresh successfull", "sensor_type", o.getTypeString())
-			} else if errors.Is(err, SensorSkipRefreshError) {
+			} else if errors.Is(err, ErrSensorSkipRefresh) {
 				logger.Warn("Skipping sensor refresh", "err", err.Error(), "sensor_type", o.getTypeString())
 			} else {
 				logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_type", o.getTypeString())

@@ -17,7 +17,14 @@ builds:
     ldflags:
     #   # use commit date instead of current date as main.date
     #   # only needed if you actually use those things in your main package, otherwise can be ignored.
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{ .CommitDate }}
+      - | 
+        -s -w 
+        -X main.version={{.Version}} 
+        -X main.commit={{.Commit}} 
+        -X main.date={{ .CommitDate }}
+        -X github.com/prometheus/common/version.Version={{.Version}}
+        -X github.com/prometheus/common/version.Branch={{.Branch}}
+        -X github.com/prometheus/common/version.BuildDate={{ .CommitDate }}
 env:
   - CGO_ENABLED=0
 archives:

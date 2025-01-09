@@ -19,12 +19,13 @@ type ScraperStatus struct {
 
 	SensorEnabled   map[string]bool
 	SensorAvailable map[string]bool
-	SensorMetric    map[string]SensorMetrics
+	SensorMetric    []SensorMetric
 }
 
 type VCenterScraper struct {
 	clientPool       pool.Pool[govmomi.Client]
 	config           ScraperConfig
+	metrics          map[string]*SensorMetric
 	Host             *AutoRefreshSensor[mo.HostSystem]
 	Cluster          *AutoRefreshSensor[mo.ComputeResource]
 	ComputeResources *AutoRefreshSensor[mo.ComputeResource]
@@ -38,19 +39,33 @@ type VCenterScraper struct {
 func NewVCenterScraper(conf ScraperConfig) (*VCenterScraper, error) {
 	cache := VCenterScraper{
 		// clientPool: pool,
-		config: conf,
+		config:  conf,
+		metrics: make(map[string]*SensorMetric),
 	}
 
 	return &cache, nil
 }
 
-func (c *VCenterScraper) Status() ScraperStatus {
+func (c *VCenterScraper) dispatchMetrics(m SensorMetric) {
+	if m.Name == "on_demand" {
+		if current, ok := c.metrics[m.Name]; ok {
+			newMean := current.RollingMean(m, 10)
+			c.metrics[m.Name] = &newMean
+			return
+		}
+	}
+	c.metrics[m.Name] = &m
+}
 
+func (c *VCenterScraper) Status() ScraperStatus {
 	tcpConnect := false
-	var tcpErrMsg string
-	baeURL, err := c.config.URL()
+	tcpErrMsg := ""
+	tcpEndpoint := ""
+	baseURL, err := c.config.URL()
 	if err == nil {
-		tcpConnect, err = tcpConnectionCheck(baeURL.Host)
+		tcpEndpoint = baseURL.Host
+		tcpConnect, err = tcpConnectionCheck(tcpEndpoint)
+
 		if err != nil {
 			tcpErrMsg = err.Error()
 		}
@@ -59,56 +74,34 @@ func (c *VCenterScraper) Status() ScraperStatus {
 		tcpErrMsg = err.Error()
 	}
 
-	sensorEnabled := make(map[string]bool)
-	sensorAvailable := make(map[string]bool)
-	sensorMetrics := map[string]SensorMetrics{}
-
-	sensorAvailable["host"] = (c.Host != nil)
-	sensorEnabled["host"] = true
-	if c.Host != nil {
-		sensorMetrics["host"] = c.Host.GetMetrics()
+	sensorEnabled := map[string]bool{
+		"host":      true,
+		"cluster":   c.config.ClusterCollectorEnabled,
+		"datastore": c.config.DatastoreCollectorEnabled,
+		"vm":        c.config.VirtualMachineCollectorEnabled,
+		"spod":      c.config.SpodCollectorEnabled,
+		"repool":    c.config.ResourcePoolCollectorEnabled,
 	}
 
-	sensorAvailable["cluster"] = (c.Cluster != nil)
-	sensorEnabled["cluster"] = c.config.ClusterCollectorEnabled
-	if c.Cluster != nil {
-		sensorMetrics["cluster"] = c.Cluster.GetMetrics()
+	sensorAvailable := map[string]bool{
+		"host":             c.Host != nil,
+		"cluster":          c.Cluster != nil,
+		"compute_resource": c.ComputeResources != nil,
+		"datastore":        c.Datastore != nil,
+		"vm":               c.VM != nil,
+		"spod":             c.SPOD != nil,
+		"repool":           c.ResourcePool != nil,
 	}
 
-	sensorAvailable["datastore"] = (c.Datastore != nil)
-	sensorEnabled["datastore"] = c.config.DatastoreCollectorEnabled
-	if c.Datastore != nil {
-		sensorMetrics["datastore"] = c.Datastore.GetMetrics()
-	}
-
-	sensorAvailable["vm"] = (c.VM != nil)
-	sensorEnabled["vm"] = c.config.VirtualMachineCollectorEnabled
-	if c.VM != nil {
-		sensorMetrics["vm"] = c.VM.GetMetrics()
-	}
-
-	sensorAvailable["spod"] = (c.SPOD != nil)
-	sensorEnabled["spod"] = c.config.SpodCollectorEnabled
-	if c.SPOD != nil {
-		sensorMetrics["spod"] = c.SPOD.GetMetrics()
-	}
-
-	sensorAvailable["repool"] = (c.ResourcePool != nil)
-	sensorEnabled["repool"] = c.config.ResourcePoolCollectorEnabled
-	if c.ResourcePool != nil {
-		sensorMetrics["repool"] = c.ResourcePool.GetMetrics()
-	}
-
-	sensorAvailable["compute_resource"] = (c.ComputeResources != nil)
-	sensorEnabled["compute_resource"] = c.config.ResourcePoolCollectorEnabled
-	if c.ComputeResources != nil {
-		sensorMetrics["compute_resource"] = c.ComputeResources.GetMetrics()
+	sensorMetrics := []SensorMetric{}
+	for _, m := range c.metrics {
+		sensorMetrics = append(sensorMetrics, *m)
 	}
 
 	return ScraperStatus{
 		TCPStatusCheck:         tcpConnect,
 		TCPStatusCheckMgs:      tcpErrMsg,
-		TCPStatusCheckEndpoint: baeURL.Host,
+		TCPStatusCheckEndpoint: tcpEndpoint,
 		SensorEnabled:          sensorEnabled,
 		SensorAvailable:        sensorAvailable,
 		SensorMetric:           sensorMetrics,
@@ -144,7 +137,7 @@ func (c *VCenterScraper) Start(logger *slog.Logger) {
 		break
 	}
 
-	c.Host = NewAutoRefreshSensor(newHostRefreshFunc(ctx), cacheConfig{
+	c.Host = NewAutoRefreshSensor(newHostRefreshFunc(ctx, c), sensorConfig{
 		MaxAge:             c.config.HostMaxAgeSec,
 		RefreshInterval:    c.config.HostRefreshIntervalSec,
 		CleanCacheInterval: c.config.CleanIntervalSec,
@@ -153,7 +146,7 @@ func (c *VCenterScraper) Start(logger *slog.Logger) {
 	logger.Info("Host sensor started")
 
 	if c.config.ClusterCollectorEnabled {
-		c.Cluster = NewAutoRefreshSensor(newClusterRefreshFunc(ctx), cacheConfig{
+		c.Cluster = NewAutoRefreshSensor(newClusterRefreshFunc(ctx, c), sensorConfig{
 			MaxAge:             c.config.ClusterMaxAgeSec,
 			RefreshInterval:    c.config.ClusterRefreshIntervalSec,
 			CleanCacheInterval: c.config.CleanIntervalSec,
@@ -163,7 +156,7 @@ func (c *VCenterScraper) Start(logger *slog.Logger) {
 	}
 
 	if c.config.VirtualMachineCollectorEnabled {
-		c.VM = NewAutoRefreshSensor(newVMRefreshFunc(ctx, c), cacheConfig{
+		c.VM = NewAutoRefreshSensor(newVMRefreshFunc(ctx, c), sensorConfig{
 			MaxAge:             c.config.VirtualMachineMaxAgeSec,
 			RefreshInterval:    c.config.VirtualMachineRefreshIntervalSec,
 			CleanCacheInterval: c.config.CleanIntervalSec,
@@ -173,7 +166,7 @@ func (c *VCenterScraper) Start(logger *slog.Logger) {
 	}
 
 	if c.config.DatastoreCollectorEnabled {
-		c.Datastore = NewAutoRefreshSensor(newDatastoreRefreshFunc(ctx), cacheConfig{
+		c.Datastore = NewAutoRefreshSensor(newDatastoreRefreshFunc(ctx, c), sensorConfig{
 			MaxAge:             c.config.DatastoreMaxAgeSec,
 			RefreshInterval:    c.config.DatastoreRefreshIntervalSec,
 			CleanCacheInterval: c.config.CleanIntervalSec,
@@ -183,7 +176,7 @@ func (c *VCenterScraper) Start(logger *slog.Logger) {
 	}
 
 	if c.config.SpodCollectorEnabled {
-		c.SPOD = NewAutoRefreshSensor(newSpodRefreshFunc(ctx), cacheConfig{
+		c.SPOD = NewAutoRefreshSensor(newSpodRefreshFunc(ctx, c), sensorConfig{
 			MaxAge:             c.config.SpodMaxAgeSec,
 			RefreshInterval:    c.config.SpodRefreshIntervalSec,
 			CleanCacheInterval: c.config.CleanIntervalSec,
@@ -193,7 +186,7 @@ func (c *VCenterScraper) Start(logger *slog.Logger) {
 	}
 
 	if c.config.ResourcePoolCollectorEnabled {
-		c.ResourcePool = NewAutoRefreshSensor(newResourcePoolRefreshFunc(ctx), cacheConfig{
+		c.ResourcePool = NewAutoRefreshSensor(newResourcePoolRefreshFunc(ctx, c), sensorConfig{
 			MaxAge:             c.config.SpodMaxAgeSec,
 			RefreshInterval:    c.config.SpodRefreshIntervalSec,
 			CleanCacheInterval: c.config.CleanIntervalSec,
@@ -202,7 +195,7 @@ func (c *VCenterScraper) Start(logger *slog.Logger) {
 		logger.Info("ResourcePool sensor started")
 	}
 
-	c.Remain = NewOnDemandSensor(NewManagedEntityGetFunc(ctx), cacheConfig{
+	c.Remain = NewOnDemandSensor(NewManagedEntityGetFunc(ctx, c), sensorConfig{
 		MaxAge:             c.config.OnDemandCacheMaxAge,
 		RefreshInterval:    0,
 		CleanCacheInterval: c.config.CleanIntervalSec,
@@ -244,7 +237,7 @@ func (c *VCenterScraper) Stop(logger *slog.Logger) {
 	c.Remain.Stop(logger)
 	logger.Info("OnDemand sensor stopped")
 
-	c.clientPool.Close()
+	c.clientPool.Destroy()
 	logger.Info("Close client pool")
 }
 

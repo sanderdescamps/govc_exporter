@@ -18,3 +18,15 @@ func tcpConnectionCheck(endpoint string) (bool, error) {
 	}
 	return true, nil
 }
+
+func avgDuration(d []time.Duration) time.Duration {
+	var total int64 = 0
+	length := len(d)
+	if length == 0 {
+		return 0
+	}
+	for _, i := range d {
+		total += i.Nanoseconds()
+	}
+	return time.Duration(total / int64(len(d)))
+}

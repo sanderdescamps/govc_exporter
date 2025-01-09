@@ -2,7 +2,6 @@ package scraper
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 
 	"github.com/vmware/govmomi/vim25/soap"
@@ -68,11 +67,8 @@ func (c ScraperConfig) URL() (*url.URL, error) {
 		return nil, fmt.Errorf("unable to parse url %s", c.Endpoint)
 	}
 
-	host, port, err := net.SplitHostPort(u.Host)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse host  %s", u.Host)
-	}
-	if port == "" {
+	port := u.Port()
+	if u.Port() == "" {
 		if u.Scheme == "https" {
 			port = "443"
 		} else if u.Scheme == "http" {
@@ -80,7 +76,7 @@ func (c ScraperConfig) URL() (*url.URL, error) {
 		}
 	}
 
-	urlToParse := fmt.Sprintf("%s://%s", u.Scheme, host)
+	urlToParse := fmt.Sprintf("%s://%s", u.Scheme, u.Hostname())
 	if port != "" {
 		urlToParse = fmt.Sprintf("%s:%s", urlToParse, port)
 	}
@@ -94,11 +90,11 @@ func (c ScraperConfig) URL() (*url.URL, error) {
 		urlToParse = fmt.Sprintf("%s#%s", urlToParse, u.Fragment)
 	}
 
-	parseUrl, err := url.Parse(urlToParse)
+	parseURL, err := url.Parse(urlToParse)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse url  %s", urlToParse)
 	}
-	return parseUrl, nil
+	return parseURL, nil
 }
 
 func (c ScraperConfig) SoapURL() (*url.URL, error) {

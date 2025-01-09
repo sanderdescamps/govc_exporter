@@ -31,12 +31,12 @@ const (
 
 type datastoreCollector struct {
 	// vcCollector
-	scraper         *scraper.VCenterScraper
-	capacity        *prometheus.Desc
-	freeSpace       *prometheus.Desc
-	accessible      *prometheus.Desc
-	maintenanceMode *prometheus.Desc
-	overallStatus   *prometheus.Desc
+	scraper       *scraper.VCenterScraper
+	capacity      *prometheus.Desc
+	freeSpace     *prometheus.Desc
+	accessible    *prometheus.Desc
+	maintenance   *prometheus.Desc
+	overallStatus *prometheus.Desc
 }
 
 func NewDatastoreCollector(scraper *scraper.VCenterScraper) *datastoreCollector {
@@ -52,8 +52,8 @@ func NewDatastoreCollector(scraper *scraper.VCenterScraper) *datastoreCollector 
 		capacity: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "total_capacity_bytes"),
 			"datastore capacity in bytes", labels, nil),
-		maintenanceMode: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "maintenance_mode"),
+		maintenance: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "maintenance"),
 			"datastore in maintenance", labels, nil),
 		overallStatus: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "overall_status"),
@@ -65,7 +65,7 @@ func (c *datastoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.accessible
 	ch <- c.capacity
 	ch <- c.freeSpace
-	ch <- c.maintenanceMode
+	ch <- c.maintenance
 	ch <- c.overallStatus
 }
 
@@ -138,7 +138,7 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 			c.freeSpace, prometheus.GaugeValue, float64(summary.FreeSpace), labelValues...,
 		)
 		ch <- prometheus.MustNewConstMetric(
-			c.maintenanceMode, prometheus.GaugeValue, ConvertDatastoreMaintenanceModeStateToValue(summary.MaintenanceMode), labelValues...,
+			c.maintenance, prometheus.GaugeValue, ConvertDatastoreMaintenanceModeStateToValue(summary.MaintenanceMode), labelValues...,
 		)
 		ch <- prometheus.MustNewConstMetric(
 			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(d.OverallStatus), labelValues...,

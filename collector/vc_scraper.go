@@ -31,7 +31,7 @@ type scraperCollector struct {
 	sensorRefreshQueryTime *prometheus.Desc
 	sensorClientWaitTime   *prometheus.Desc
 	sensorRefreshStatus    *prometheus.Desc
-	sensorRefreshAvailable *prometheus.Desc
+	sensorAvailable        *prometheus.Desc
 	tcpConnectionCheck     *prometheus.Desc
 }
 
@@ -41,22 +41,22 @@ func NewScraperCollector(scraper *scraper.VCenterScraper) *scraperCollector {
 		scraper: scraper,
 		sensorRefreshTime: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "refresh_time"),
-			"total time to refresh sensor info", sensorLabels, nil),
+			"total time to refresh sensor info in ms", sensorLabels, nil),
 		sensorRefreshQueryTime: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "refresh_query_time"),
-			"time to query vcenter", sensorLabels, nil),
+			"time to query vcenter in ms", sensorLabels, nil),
 		sensorClientWaitTime: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "client_wait_time"),
-			"time sensor need to wait for a client", sensorLabels, nil),
+			"time sensor need to wait for a client in ms", sensorLabels, nil),
 		sensorRefreshStatus: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "refresh_status"),
-			"time to refresh sensor info", sensorLabels, nil),
-		sensorRefreshAvailable: prometheus.NewDesc(
+			"refresh status", sensorLabels, nil),
+		sensorAvailable: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "sensor_available"),
-			"time to refresh sensor info", sensorLabels, nil),
+			"is sensor enabled", sensorLabels, nil),
 		tcpConnectionCheck: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "tcp_connection_check"),
-			"time to refresh sensor info", []string{"url", "err"}, nil),
+			"tcp connection check with vcenter", []string{"url", "err"}, nil),
 	}
 }
 
@@ -66,7 +66,7 @@ func (c *scraperCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.sensorRefreshQueryTime
 	ch <- c.sensorClientWaitTime
 	ch <- c.sensorRefreshStatus
-	ch <- c.sensorRefreshAvailable
+	ch <- c.sensorAvailable
 }
 
 func (c *scraperCollector) Collect(ch chan<- prometheus.Metric) {
@@ -78,19 +78,19 @@ func (c *scraperCollector) Collect(ch chan<- prometheus.Metric) {
 
 	for k, v := range status.SensorAvailable {
 		ch <- prometheus.MustNewConstMetric(
-			c.sensorRefreshAvailable, prometheus.GaugeValue, b2f(v), k,
+			c.sensorAvailable, prometheus.GaugeValue, b2f(v), k,
 		)
 	}
 
-	for k, v := range status.SensorMetric {
+	for _, m := range status.SensorMetric {
 		ch <- prometheus.MustNewConstMetric(
-			c.sensorRefreshTime, prometheus.GaugeValue, float64(v.TotalRefreshTime()), k,
+			c.sensorRefreshTime, prometheus.GaugeValue, float64(m.TotalRefreshTime().Milliseconds()), m.Name,
 		)
 		ch <- prometheus.MustNewConstMetric(
-			c.sensorRefreshQueryTime, prometheus.GaugeValue, float64(v.QueryTime), k,
+			c.sensorRefreshQueryTime, prometheus.GaugeValue, float64(m.QueryTime.Milliseconds()), m.Name,
 		)
 		ch <- prometheus.MustNewConstMetric(
-			c.sensorClientWaitTime, prometheus.GaugeValue, float64(v.ClientWaitTime), k,
+			c.sensorClientWaitTime, prometheus.GaugeValue, float64(m.ClientWaitTime.Milliseconds()), m.Name,
 		)
 	}
 
