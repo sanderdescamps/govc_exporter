@@ -12,15 +12,6 @@ type MultiAccessPool[T any] struct {
 	atExit     func() error
 }
 
-func NewMultiAccessPoolFromCreatorFunc[T any](creator func() *T, max int) Pool[T] {
-	multiPool := MultiAccessPool[T]{
-		poolObject: creator(),
-		max:        max,
-	}
-
-	return &multiPool
-}
-
 func NewMultiAccessPool[T any](item *T, max int, atExit func() error) Pool[T] {
 	multiPool := MultiAccessPool[T]{
 		poolObject: item,

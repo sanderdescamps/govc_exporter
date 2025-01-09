@@ -7,7 +7,7 @@
 _obj
 _test
 /dist
-/debug-collector
+/out
 
 # Architecture specific extensions/prefixes
 *.[568vq]
@@ -38,7 +38,5 @@ dependencies-stamp
 # VSCode
 */__debug_bin*
 
-# Test files extracted from ttar
-collector/fixtures/sys/
 
 

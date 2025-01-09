@@ -1,18 +1,18 @@
 ---
+version: 2
 before:
   hooks:
     - go mod tidy
 builds:
   - id: govc_exporter
+    main: ./cmd/exporter
     goos:
       - linux
       - windows
     goarch:
       - amd64
-      - arm
       - arm64
     flags:
-      # trims path
       - -trimpath
     ldflags:
     #   # use commit date instead of current date as main.date
@@ -25,10 +25,20 @@ builds:
         -X github.com/prometheus/common/version.Version={{.Version}}
         -X github.com/prometheus/common/version.Branch={{.Branch}}
         -X github.com/prometheus/common/version.BuildDate={{ .CommitDate }}
+  - id: vcenter-object-exporter
+    binary: vcenter-object-exporter
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+    main: ./cmd/vcenter-object-exporter
 env:
   - CGO_ENABLED=0
 archives:
-  - format: tar.gz
+  - id: govc_exporter
+    builds: [govc_exporter]
+    format: tar.gz
     name_template: >-
       {{ .ProjectName }}-v{{ .Version }}-
       {{- .Os }}-
@@ -39,8 +49,19 @@ archives:
     format_overrides:
     - goos: windows
       format: zip
-# checksum:
-#   name_template: "checksums.txt"
+  - id: vcenter-object-exporter
+    builds: [vcenter-object-exporter]
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}-v{{ .Version }}-
+      {{- .Os }}-
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+    - goos: windows
+      format: zip
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
