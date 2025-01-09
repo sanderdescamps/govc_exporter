@@ -39,7 +39,7 @@ const (
 )
 
 func TestGeneralExporter(t *testing.T) {
-	collectorConf := collector.CollectorConf{
+	collectorConf := collector.CollectorConfig{
 		UseIsecSpecifics:       false,
 		CollectVMNetworks:      true,
 		CollectVMDisks:         true,

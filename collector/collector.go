@@ -31,14 +31,22 @@ import (
 // Namespace defines the common namespace to be used by all metrics.
 const namespace = "govc"
 
+type CollectorConfig struct {
+	CollectVMNetworks      bool
+	CollectVMDisks         bool
+	UseIsecSpecifics       bool
+	DisableExporterMetrics bool
+	MaxRequests            int
+}
+
 type VCCollector struct {
 	scraper    *scraper.VCenterScraper
 	logger     *slog.Logger
-	conf       CollectorConf
+	conf       CollectorConfig
 	collectors map[*helper.Matcher]prometheus.Collector
 }
 
-func NewVCCollector(conf CollectorConf, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
+func NewVCCollector(conf CollectorConfig, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
 	collectors := map[*helper.Matcher]prometheus.Collector{}
 	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper)
 	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper)
