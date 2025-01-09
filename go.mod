@@ -6,7 +6,7 @@ require (
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/prometheus/client_golang v1.20.5
 	github.com/prometheus/common v0.61.0
-	github.com/prometheus/procfs v0.15.1
+	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/vmware/govmomi v0.47.1
 	golang.org/x/sys v0.29.0 // indirect
 )

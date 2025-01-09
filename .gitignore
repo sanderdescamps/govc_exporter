@@ -8,6 +8,7 @@ _obj
 _test
 /dist
 /out
+/vendor
 
 # Architecture specific extensions/prefixes
 *.[568vq]
