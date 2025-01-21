@@ -32,11 +32,14 @@ import (
 const namespace = "govc"
 
 type CollectorConfig struct {
-	CollectVMNetworks      bool
-	CollectVMDisks         bool
+	CollectVMNetworks         bool
+	CollectVMDisks            bool
+	CollectHostStorageMetrics bool
+
 	UseIsecSpecifics       bool
 	DisableExporterMetrics bool
-	MaxRequests            int
+
+	MaxRequests int
 }
 
 type VCCollector struct {
@@ -48,7 +51,7 @@ type VCCollector struct {
 
 func NewVCCollector(conf CollectorConfig, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
 	collectors := map[*helper.Matcher]prometheus.Collector{}
-	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper)
+	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper, conf.CollectHostStorageMetrics)
 	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper)
 	collectors[helper.NewMatcher("resourcepool", "rp")] = NewResourcePoolCollector(scraper)
 	collectors[helper.NewMatcher("cluster", "host")] = NewClusterCollector(scraper)

@@ -47,15 +47,19 @@ func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Requ
 func main() {
 	config := LoadConfig()
 	logger := promslog.New(config.PromlogConfig)
-	logger.Info("Starting govc_exporter", "version", version.Info())
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
 	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "user", version.BuildUser, "date", version.BuildDate, "tags", version.GetTags())
 
 	scraper, err := scraper.NewVCenterScraper(*config.ScraperConfig)
 	if err != nil {
-		logger.Error("Failed to create VCenterScraper", "err", err.Error())
+		logger.Error("Failed to create VCenterScraper", "err", err)
+		return
 	}
-	scraper.Start(logger)
+	err = scraper.Start(logger)
+	if err != nil {
+		logger.Error("Failed to start VCenterScraper", "err", err)
+		return
+	}
 
 	collector := collector.NewVCCollector(*config.CollectorConfig, scraper, logger)
 

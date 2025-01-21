@@ -17,6 +17,9 @@
 package collector
 
 import (
+	"fmt"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,28 +34,44 @@ const (
 
 type esxCollector struct {
 	// vcCollector
-	scraper                   *scraper.VCenterScraper
-	powerState                *prometheus.Desc
-	connectionState           *prometheus.Desc
-	maintenance               *prometheus.Desc
-	uptimeSeconds             *prometheus.Desc
-	rebootRequired            *prometheus.Desc
-	cpuCoresTotal             *prometheus.Desc
-	availCPUMhz               *prometheus.Desc
-	usedCPUMhz                *prometheus.Desc
-	availMemBytes             *prometheus.Desc
-	usedMemBytes              *prometheus.Desc
-	overallStatus             *prometheus.Desc
-	systemHealthNumericSensor *prometheus.Desc
-	systemHealthStatusSensor  *prometheus.Desc
+	advancedStorageMetrics         bool
+	scraper                        *scraper.VCenterScraper
+	powerState                     *prometheus.Desc
+	connectionState                *prometheus.Desc
+	maintenance                    *prometheus.Desc
+	uptimeSeconds                  *prometheus.Desc
+	rebootRequired                 *prometheus.Desc
+	cpuCoresTotal                  *prometheus.Desc
+	availCPUMhz                    *prometheus.Desc
+	usedCPUMhz                     *prometheus.Desc
+	availMemBytes                  *prometheus.Desc
+	usedMemBytes                   *prometheus.Desc
+	overallStatus                  *prometheus.Desc
+	systemHealthNumericSensorValue *prometheus.Desc
+	systemHealthNumericSensorState *prometheus.Desc
+	systemHealthStatusSensor       *prometheus.Desc
+
+	// only used when advancedStorageMetrics == true
+	hbaStatus                *prometheus.Desc
+	hbaIscsiSendTargetInfo   *prometheus.Desc
+	hbaIscsiStaticTargetInfo *prometheus.Desc
+	multipathPathState       *prometheus.Desc
+	iscsiDiskInfo            *prometheus.Desc
 }
 
-func NewEsxCollector(scraper *scraper.VCenterScraper) *esxCollector {
+func NewEsxCollector(scraper *scraper.VCenterScraper, advancedStorageMetrics bool) *esxCollector {
 	labels := []string{"id", "name", "datacenter", "cluster"}
 	sysNumLabels := append(labels, "sensor_id", "sensor_name", "sensor_type", "sensor_unit")
-	sysStatusLabels := append(labels, "sensor_name")
+	sysStatusLabels := append(labels, "sensor_type", "sensor_name")
+	hbaLabels := append(labels, "adapter_name", "src_name", "driver", "model")
+	iscsiHbaSendTargetLabels := append(hbaLabels, "target_address")
+	iscsiHbaStaticTargetLabels := append(hbaLabels, "target_address", "target_name", "discovery_method")
+	multipathLabels := append(labels, "path_name", "adapter_name", "target_address", "target_name", "disk_name", "datastore")
+	iscsiLabels := append(labels, "vendor", "model", "disk_name", "ssd", "local", "datastore")
+
 	return &esxCollector{
-		scraper: scraper,
+		scraper:                scraper,
+		advancedStorageMetrics: advancedStorageMetrics,
 		powerState: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "power_state"),
 			"esx host powerstate", labels, nil),
@@ -86,13 +105,32 @@ func NewEsxCollector(scraper *scraper.VCenterScraper) *esxCollector {
 		overallStatus: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "overall_status"),
 			"overall health status", labels, nil),
-		systemHealthNumericSensor: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "system_health_numeric_sensor"),
+		systemHealthNumericSensorValue: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "system_health_numeric_sensor_value"),
+			"Numeric system hardware sensors", sysNumLabels, nil),
+		systemHealthNumericSensorState: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "system_health_numeric_sensor_state"),
 			"Numeric system hardware sensors", sysNumLabels, nil),
 		systemHealthStatusSensor: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "system_health_status_sensor"),
 			"system hardware status sensors", sysStatusLabels, nil),
+		hbaStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_status"),
+			"HBA status", hbaLabels, nil),
+		hbaIscsiSendTargetInfo: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_iscsi_send_target_info"),
+			"The configured iSCSI send target entries", iscsiHbaSendTargetLabels, nil),
+		hbaIscsiStaticTargetInfo: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_iscsi_static_target_info"),
+			"The configured iSCSI static target entries.", iscsiHbaStaticTargetLabels, nil),
+		multipathPathState: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "multipath_path_state"),
+			"Multipath path state", multipathLabels, nil),
+		iscsiDiskInfo: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "iscsi_disk_info"),
+			"Multipath path state", iscsiLabels, nil),
 	}
+
 }
 
 func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -107,8 +145,14 @@ func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.availMemBytes
 	ch <- c.usedMemBytes
 	ch <- c.overallStatus
-	ch <- c.systemHealthNumericSensor
+	ch <- c.systemHealthNumericSensorState
+	ch <- c.systemHealthNumericSensorValue
 	ch <- c.systemHealthStatusSensor
+	ch <- c.iscsiDiskInfo
+	ch <- c.hbaIscsiSendTargetInfo
+	ch <- c.hbaIscsiStaticTargetInfo
+	ch <- c.hbaStatus
+	ch <- c.multipathPathState
 }
 
 func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
@@ -134,19 +178,28 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 					}
 					ch <- prometheus.NewMetricWithTimestamp(timestamp,
 						prometheus.MustNewConstMetric(
-							c.systemHealthNumericSensor, prometheus.GaugeValue, float64(info.CurrentReading), sysLabelsValues...,
+							c.systemHealthNumericSensorValue, prometheus.GaugeValue, float64(info.CurrentReading), sysLabelsValues...,
 						))
+					ch <- prometheus.NewMetricWithTimestamp(timestamp,
+						prometheus.MustNewConstMetric(
+							c.systemHealthNumericSensorState, prometheus.GaugeValue, ConvertHostSystemHardwareStateToValue(info.HealthState.GetElementDescription()), sysLabelsValues...,
+						))
+
 				}
 			}
 			if h.Runtime.HealthSystemRuntime.HardwareStatusInfo != nil {
-				systemSensors := append(
-					h.Runtime.HealthSystemRuntime.HardwareStatusInfo.MemoryStatusInfo,
-					h.Runtime.HealthSystemRuntime.HardwareStatusInfo.CpuStatusInfo...,
-				)
-				for _, info := range systemSensors {
+				for _, info := range h.Runtime.HealthSystemRuntime.HardwareStatusInfo.MemoryStatusInfo {
 					elementInfo := info.GetHostHardwareElementInfo()
-					sysLabelsValues := append(labelValues, elementInfo.Name)
-					status := ConvertHostSystemHardwareElementDescriptionToValue(*elementInfo.Status.GetElementDescription())
+					sysLabelsValues := append(labelValues, "memory", elementInfo.Name)
+					status := ConvertHostSystemHardwareStateToValue(elementInfo.Status.GetElementDescription())
+					ch <- prometheus.MustNewConstMetric(
+						c.systemHealthStatusSensor, prometheus.GaugeValue, status, sysLabelsValues...,
+					)
+				}
+				for _, info := range h.Runtime.HealthSystemRuntime.HardwareStatusInfo.CpuStatusInfo {
+					elementInfo := info.GetHostHardwareElementInfo()
+					sysLabelsValues := append(labelValues, "cpu", elementInfo.Name)
+					status := ConvertHostSystemHardwareStateToValue(elementInfo.Status.GetElementDescription())
 					ch <- prometheus.MustNewConstMetric(
 						c.systemHealthStatusSensor, prometheus.GaugeValue, status, sysLabelsValues...,
 					)
@@ -187,8 +240,149 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(
 			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(h.OverallStatus), labelValues...,
 		)
-	}
 
+		if c.advancedStorageMetrics {
+			if h.Config != nil {
+				hbaDeviceLookup := map[string]string{}
+				if h.Config.StorageDevice != nil {
+					for _, adapter := range h.Config.StorageDevice.HostBusAdapter {
+						hbaDeviceLookup[adapter.GetHostHostBusAdapter().Key] = adapter.GetHostHostBusAdapter().Device
+
+						hbaInterface := reflect.ValueOf(adapter).Elem().Interface()
+						switch hba := hbaInterface.(type) {
+						case types.HostInternetScsiHba:
+							hbaLabelValues := append(labelValues, hba.Device, hba.IScsiName, hba.Driver, cleanString(hba.Model))
+							ch <- prometheus.MustNewConstMetric(
+								c.hbaStatus, prometheus.GaugeValue, ConvertHBAStatusToValue(hba.Status), hbaLabelValues...,
+							)
+							for _, target := range hba.ConfiguredSendTarget {
+								iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port))
+								ch <- prometheus.MustNewConstMetric(
+									c.hbaIscsiSendTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
+								)
+							}
+							for _, target := range hba.ConfiguredStaticTarget {
+								iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port), target.IScsiName, target.DiscoveryMethod)
+								ch <- prometheus.MustNewConstMetric(
+									c.hbaIscsiStaticTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
+								)
+							}
+						// case types.HostBlockHba:
+						// case types.HostFibreChannelHba:
+						// case types.HostParallelScsiHba:
+						// case types.HostPcieHba:
+						// case types.HostRdmaDevice:
+						// case types.HostSerialAttachedHba:
+						// case types.HostTcpHba:
+						default:
+							baseAdapter := adapter.GetHostHostBusAdapter()
+							hbaLabelValues := append(labelValues, baseAdapter.Device, "", baseAdapter.Driver, cleanString(baseAdapter.Model))
+							status := adapter.GetHostHostBusAdapter().Status
+							ch <- prometheus.MustNewConstMetric(
+								c.hbaStatus, prometheus.GaugeValue, ConvertHBAStatusToValue(status), hbaLabelValues...,
+							)
+
+						}
+					}
+
+					for _, logicalUnit := range h.Config.StorageDevice.MultipathInfo.Lun {
+						for _, path := range logicalUnit.Path {
+							device := ""
+							if d, ok := hbaDeviceLookup[path.Adapter]; ok {
+								device = d
+							}
+
+							uuid := logicalUnit.Id
+							naa := func() string {
+								for _, lun := range h.Config.StorageDevice.ScsiLun {
+									if lun.GetScsiLun().Uuid == uuid {
+										return lun.GetScsiLun().CanonicalName
+									}
+								}
+								return ""
+							}()
+
+							datastoreName := func() string {
+								if h.Config.FileSystemVolume != nil {
+									for _, mountInfo := range h.Config.FileSystemVolume.MountInfo {
+										volumeInterface := reflect.ValueOf(mountInfo.Volume).Elem().Interface()
+										switch volume := volumeInterface.(type) {
+										case types.HostVmfsVolume:
+											for _, extend := range volume.Extent {
+												if extend.DiskName == naa {
+													return volume.Name
+												}
+											}
+										default:
+											continue
+										}
+
+									}
+								}
+								return "unknown"
+							}()
+
+							transportInterface := reflect.ValueOf(path.Transport).Elem().Interface()
+							switch transport := transportInterface.(type) {
+							case types.HostInternetScsiTargetTransport:
+								for _, address := range transport.Address {
+									pathLabelValues := append(labelValues, path.Name, device, address, transport.IScsiName, naa, datastoreName)
+									ch <- prometheus.MustNewConstMetric(
+										c.multipathPathState, prometheus.GaugeValue, ConvertMultipathStateToValue(types.MultipathState(path.State)), pathLabelValues...,
+									)
+								}
+							default:
+								pathLabelValues := append(labelValues, path.Name, device, "", "", naa, datastoreName)
+								ch <- prometheus.MustNewConstMetric(
+									c.multipathPathState, prometheus.GaugeValue, ConvertMultipathStateToValue(types.MultipathState(path.State)), pathLabelValues...,
+								)
+							}
+						}
+
+					}
+
+					for _, baseScsiLun := range h.Config.StorageDevice.ScsiLun {
+						canonicalName := baseScsiLun.GetScsiLun().CanonicalName
+						datastoreName := func() string {
+							if h.Config.FileSystemVolume != nil {
+								for _, mountInfo := range h.Config.FileSystemVolume.MountInfo {
+									volumeInterface := reflect.ValueOf(mountInfo.Volume).Elem().Interface()
+									switch volume := volumeInterface.(type) {
+									case types.HostVmfsVolume:
+										for _, extend := range volume.Extent {
+											if extend.DiskName == canonicalName {
+												return volume.Name
+											}
+										}
+									default:
+										continue
+									}
+
+								}
+							}
+							return "unknown"
+						}()
+
+						scsiLunInterface := reflect.ValueOf(baseScsiLun).Elem().Interface()
+						switch scsiLun := scsiLunInterface.(type) {
+						case types.HostScsiDisk:
+							iscsiLabelValues := append(labelValues, cleanString(scsiLun.Vendor), cleanString(scsiLun.Model), cleanString(scsiLun.CanonicalName), strconv.FormatBool(*scsiLun.Ssd), strconv.FormatBool(*scsiLun.LocalDisk), datastoreName)
+							ch <- prometheus.MustNewConstMetric(
+								c.iscsiDiskInfo, prometheus.GaugeValue, 1, iscsiLabelValues...,
+							)
+						default:
+							lun := baseScsiLun.GetScsiLun()
+							scsiLabelValues := append(labelValues, cleanString(lun.Vendor), cleanString(lun.Model), cleanString(lun.CanonicalName), "", "", datastoreName)
+							ch <- prometheus.MustNewConstMetric(
+								c.iscsiDiskInfo, prometheus.GaugeValue, 1, scsiLabelValues...,
+							)
+						}
+					}
+				}
+
+			}
+		}
+	}
 }
 
 func ConvertHostSystemPowerStateToValue(s types.HostSystemPowerState) float64 {
@@ -220,12 +414,39 @@ func ConvertHostSystemStandbyModeToValue(s types.HostStandbyMode) float64 {
 	return 0
 }
 
-func ConvertHostSystemHardwareElementDescriptionToValue(s types.ElementDescription) float64 {
-	if strings.EqualFold(s.Key, "Red") {
+func ConvertHostSystemHardwareStateToValue(s *types.ElementDescription) float64 {
+	if s == nil {
+		return 0
+	} else if strings.EqualFold(s.Key, "Red") {
 		return 1.0
 	} else if strings.EqualFold(s.Key, "Yellow") {
 		return 2.0
 	} else if strings.EqualFold(s.Key, "Green") {
+		return 3.0
+	}
+	return 0
+}
+
+func ConvertMultipathStateToValue(s types.MultipathState) float64 {
+	if s == types.MultipathStateDead {
+		return 1.0
+	} else if s == types.MultipathStateDisabled {
+		return 2.0
+	} else if s == types.MultipathStateStandby {
+		return 3.0
+	} else if s == types.MultipathStateActive {
+		return 4.0
+	}
+	return 0
+}
+
+func ConvertHBAStatusToValue(status string) float64 {
+	// Valid values include "online", "offline", "unbound", and "unknown".
+	if strings.EqualFold(status, "unbound") {
+		return 1.0
+	} else if strings.EqualFold(status, "offline") {
+		return 2.0
+	} else if strings.EqualFold(status, "online") {
 		return 3.0
 	}
 	return 0

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
+	"sync"
 
 	"github.com/intrinsec/govc_exporter/collector/pool"
 	"github.com/vmware/govmomi"
@@ -26,6 +26,7 @@ type VCenterScraper struct {
 	clientPool       pool.Pool[govmomi.Client]
 	config           ScraperConfig
 	metrics          map[string]*SensorMetric
+	metricsLock      sync.RWMutex
 	Host             *AutoRefreshSensor[mo.HostSystem]
 	Cluster          *AutoRefreshSensor[mo.ComputeResource]
 	ComputeResources *AutoRefreshSensor[mo.ComputeResource]
@@ -37,23 +38,28 @@ type VCenterScraper struct {
 }
 
 func NewVCenterScraper(conf ScraperConfig) (*VCenterScraper, error) {
-	cache := VCenterScraper{
+
+	scraper := VCenterScraper{
 		// clientPool: pool,
 		config:  conf,
 		metrics: make(map[string]*SensorMetric),
 	}
 
-	return &cache, nil
+	return &scraper, nil
 }
 
 func (c *VCenterScraper) dispatchMetrics(m SensorMetric) {
 	if m.Name == "on_demand" {
 		if current, ok := c.metrics[m.Name]; ok {
 			newMean := current.RollingMean(m, 10)
+			c.metricsLock.Lock()
+			defer c.metricsLock.Unlock()
 			c.metrics[m.Name] = &newMean
 			return
 		}
 	}
+	c.metricsLock.Lock()
+	defer c.metricsLock.Unlock()
 	c.metrics[m.Name] = &m
 }
 
@@ -94,6 +100,8 @@ func (c *VCenterScraper) Status() ScraperStatus {
 	}
 
 	sensorMetrics := []SensorMetric{}
+	c.metricsLock.RLock()
+	defer c.metricsLock.RUnlock()
 	for _, m := range c.metrics {
 		sensorMetrics = append(sensorMetrics, *m)
 	}
@@ -108,34 +116,20 @@ func (c *VCenterScraper) Status() ScraperStatus {
 	}
 }
 
-func (c *VCenterScraper) startClientPool(ctx context.Context) error {
-	client, err := NewVMwareClient(ctx, ClientConf{
-		Endpoint: c.config.Endpoint,
-		Username: c.config.Username,
-		Password: c.config.Password,
-	})
+func (c *VCenterScraper) Start(logger *slog.Logger) error {
+	ctx := context.Background()
+	pool, err := pool.NewVCenterClientPoolWithLogger(
+		ctx,
+		c.config.Endpoint,
+		c.config.Username,
+		c.config.Password,
+		c.config.ClientPoolSize,
+		logger,
+	)
 	if err != nil {
 		return err
 	}
-
-	atExitFunc := func() error {
-		return client.Logout(ctx)
-	}
-	c.clientPool = pool.NewMultiAccessPool(client, c.config.ClientPoolSize, atExitFunc)
-	return nil
-}
-
-func (c *VCenterScraper) Start(logger *slog.Logger) {
-	ctx := context.Background()
-	for {
-		err := c.startClientPool(ctx)
-		if err != nil {
-			logger.Error("failed to start client pool", "err", err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		break
-	}
+	c.clientPool = pool
 
 	c.Host = NewAutoRefreshSensor(newHostRefreshFunc(ctx, c), sensorConfig{
 		MaxAge:             c.config.HostMaxAgeSec,
@@ -195,13 +189,14 @@ func (c *VCenterScraper) Start(logger *slog.Logger) {
 		logger.Info("ResourcePool sensor started")
 	}
 
-	c.Remain = NewOnDemandSensor(NewManagedEntityGetFunc(ctx, c), sensorConfig{
+	c.Remain = NewOnDemandSensor(NewManagedEntityGetFunc(ctx, c, logger), sensorConfig{
 		MaxAge:             c.config.OnDemandCacheMaxAge,
 		RefreshInterval:    0,
 		CleanCacheInterval: c.config.CleanIntervalSec,
 	})
 	c.Remain.Start(c.clientPool, logger)
 	logger.Info("OnDemand sensor started")
+	return nil
 }
 
 func (c *VCenterScraper) Stop(logger *slog.Logger) {

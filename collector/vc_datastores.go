@@ -19,6 +19,7 @@ package collector
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 
 	"github.com/intrinsec/govc_exporter/collector/scraper"
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,16 +32,22 @@ const (
 
 type datastoreCollector struct {
 	// vcCollector
-	scraper       *scraper.VCenterScraper
-	capacity      *prometheus.Desc
-	freeSpace     *prometheus.Desc
-	accessible    *prometheus.Desc
-	maintenance   *prometheus.Desc
-	overallStatus *prometheus.Desc
+	scraper          *scraper.VCenterScraper
+	capacity         *prometheus.Desc
+	freeSpace        *prometheus.Desc
+	accessible       *prometheus.Desc
+	maintenance      *prometheus.Desc
+	overallStatus    *prometheus.Desc
+	hostAccessible   *prometheus.Desc
+	hostMounted      *prometheus.Desc
+	hostVmknicActive *prometheus.Desc
+	vmfsInfo         *prometheus.Desc
 }
 
 func NewDatastoreCollector(scraper *scraper.VCenterScraper) *datastoreCollector {
 	labels := []string{"id", "name", "cluster", "kind"}
+	hostLables := append(labels, "esx", "esx_id")
+	vmfsLabels := append(labels, "uuid", "naa", "ssh", "local")
 	return &datastoreCollector{
 		scraper: scraper,
 		accessible: prometheus.NewDesc(
@@ -58,6 +65,18 @@ func NewDatastoreCollector(scraper *scraper.VCenterScraper) *datastoreCollector 
 		overallStatus: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "overall_status"),
 			"overall health status", labels, nil),
+		hostAccessible: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "host_accessible"),
+			"if datastore is accessible for host", hostLables, nil),
+		hostMounted: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "host_mounted"),
+			"if datastore is mounted to host", hostLables, nil),
+		hostVmknicActive: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "host_vmk_nic_active"),
+			"Indicates whether vmknic is active or inactive", hostLables, nil),
+		vmfsInfo: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, datastoreCollectorSubsystem, "vmfs_info"),
+			"Info in case datastore is of type vmsf", vmfsLabels, nil),
 	}
 }
 
@@ -67,6 +86,10 @@ func (c *datastoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.freeSpace
 	ch <- c.maintenance
 	ch <- c.overallStatus
+	ch <- c.hostAccessible
+	ch <- c.hostMounted
+	ch <- c.hostVmknicActive
+	ch <- c.vmfsInfo
 }
 
 func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
@@ -75,43 +98,17 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 		summary := d.Summary
 
 		kind := "NONE"
+		var vmfsInfo *types.HostVmfsVolume = nil
 
 		if d.Info != nil {
-			// func() {
-			// 	b, err := json.Marshal(info)
-			// 	if err != nil {
-			// 		return
-			// 	}
-			// 	var vmfsInfo types.VmfsDatastoreInfo
-			// 	err = json.Unmarshal(b, &vmfsInfo)
-			// 	if err != nil {
-			// 		return
-			// 	}
-			// 	if vmfsInfo.Vmfs != nil {
-			// 		isLocal = strconv.FormatBool(*vmfsInfo.Vmfs.Local)
-			// 		isSSD = strconv.FormatBool(*vmfsInfo.Vmfs.Ssd)
-			// 	}
-			// }()
-
 			iInfo := reflect.ValueOf(d.Info).Elem().Interface()
-			switch pInfo := iInfo.(type) {
+			switch parsedInfo := iInfo.(type) {
 			case types.LocalDatastoreInfo:
 				kind = "local"
 			case types.VmfsDatastoreInfo:
-				if pInfo.Vmfs != nil {
-					var ssd string
-					if *pInfo.Vmfs.Ssd {
-						ssd = "ssd"
-					} else {
-						ssd = "hdd"
-					}
-					var local string
-					if pInfo.Vmfs.Local == nil || *pInfo.Vmfs.Local {
-						local = "local"
-					} else {
-						local = "non-local"
-					}
-					kind = fmt.Sprintf("vmfs-%s-%s", local, ssd)
+				kind = "vmfs"
+				if parsedInfo.Vmfs != nil {
+					vmfsInfo = parsedInfo.Vmfs
 				}
 			case types.NasDatastoreInfo:
 				kind = "nas"
@@ -128,6 +125,7 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 
 		parentChain := c.scraper.GetParentChain(d.Self)
 		labelValues := []string{me2id(d.ManagedEntity), summary.Name, parentChain.SPOD, kind}
+
 		ch <- prometheus.MustNewConstMetric(
 			c.accessible, prometheus.GaugeValue, b2f(summary.Accessible), labelValues...,
 		)
@@ -143,6 +141,43 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(
 			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(d.OverallStatus), labelValues...,
 		)
+
+		for _, host := range d.Host {
+			hostEntity := c.scraper.Host.Get(host.Key)
+			if hostEntity != nil {
+				hostLabelValues := append(labelValues, hostEntity.Name, hostEntity.Self.Value)
+				ch <- prometheus.MustNewConstMetric(
+					c.hostAccessible, prometheus.GaugeValue, b2f(*host.MountInfo.Accessible), hostLabelValues...,
+				)
+				ch <- prometheus.MustNewConstMetric(
+					c.hostMounted, prometheus.GaugeValue, b2f(*host.MountInfo.Mounted), hostLabelValues...,
+				)
+				ch <- prometheus.MustNewConstMetric(
+					c.hostVmknicActive, prometheus.GaugeValue, b2f(*host.MountInfo.VmknicActive), hostLabelValues...,
+				)
+			}
+
+		}
+
+		if kind == "vmfs" {
+			if vmfsInfo != nil {
+				vmfsLabelValues := append(
+					labelValues,
+					vmfsInfo.Uuid,
+					func() string {
+						for _, extent := range vmfsInfo.Extent {
+							return extent.DiskName
+						}
+						return ""
+					}(),
+					strconv.FormatBool(*vmfsInfo.Ssd),
+					strconv.FormatBool(*vmfsInfo.Local),
+				)
+				ch <- prometheus.MustNewConstMetric(
+					c.vmfsInfo, prometheus.GaugeValue, 1, vmfsLabelValues...,
+				)
+			}
+		}
 	}
 
 }

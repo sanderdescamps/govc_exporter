@@ -71,14 +71,16 @@ type virtualMachineCollector struct {
 	guestHeartbeatStatus *prometheus.Desc
 	toolsStatus          *prometheus.Desc
 	vmInfo               *prometheus.Desc
+	hostInfo             *prometheus.Desc
 }
 
 func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, options virtualMachineCollectorOptions) *virtualMachineCollector {
-	labels := []string{"uuid", "name", "datacenter", "cluster", "esx", "pool", "hostname"}
+	labels := []string{"uuid", "name", "hostname"}
 	if options.UseIsecSpecifics {
 		labels = append(labels, "crit", "responsable", "service")
 	}
 	infoLabels := append(labels, "guest_id", "tools_version")
+	hostLabels := append(labels, "pool", "datacenter", "cluster", "esx")
 	diskLabels := append(labels, "disk_uuid", "thin_provisioned")
 	networkLabels := append(labels, "network", "mac", "ip")
 	ethernetDevLabels := append(labels, "driver_model", "driver_mac", "driver_status")
@@ -204,6 +206,9 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, options virtual
 		vmInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "info"),
 			"Info about vm", infoLabels, nil),
+		hostInfo: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "host_info"),
+			"Info about the host", hostLabels, nil),
 	}
 }
 
@@ -238,6 +243,7 @@ func (c *virtualMachineCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.guestHeartbeatStatus
 	ch <- c.toolsStatus
 	ch <- c.vmInfo
+	ch <- c.hostInfo
 }
 
 func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
@@ -270,7 +276,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			parentChain = c.scraper.GetParentChain(vm.Self)
 		}
 
-		labelValues := []string{vm.Config.Uuid, vm.Name, parentChain.DC, parentChain.Cluster, esxName, poolName, summary.Guest.HostName}
+		labelValues := []string{vm.Config.Uuid, vm.Name, summary.Guest.HostName}
 		if c.options.UseIsecSpecifics {
 			annotation := GetIsecAnnotation(vm)
 			labelValues = append(
@@ -280,6 +286,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 				annotation.Service,
 			)
 		}
+		hostLabelValues := append(labelValues, poolName, parentChain.DC, parentChain.Cluster, esxName)
 
 		ch <- prometheus.MustNewConstMetric(
 			c.numCPU, prometheus.GaugeValue, float64(vm.Config.Hardware.NumCPU), labelValues...,
@@ -390,6 +397,10 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		infoLabelValues := append(labelValues, vm.Config.GuestId, vm.Guest.ToolsVersion)
 		ch <- prometheus.MustNewConstMetric(
 			c.vmInfo, prometheus.GaugeValue, 0, infoLabelValues...,
+		)
+
+		ch <- prometheus.MustNewConstMetric(
+			c.hostInfo, prometheus.GaugeValue, 1, hostLabelValues...,
 		)
 	}
 }

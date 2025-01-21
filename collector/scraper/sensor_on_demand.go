@@ -14,14 +14,13 @@ import (
 type OnDemandSensor struct {
 	objects       map[types.ManagedObjectReference]VMwareCacheItem[mo.ManagedEntity]
 	lock          sync.Mutex
-	getFunc       func(types.ManagedObjectReference, pool.Pool[govmomi.Client], *slog.Logger) (*mo.ManagedEntity, error)
+	getFunc       func(types.ManagedObjectReference, pool.Pool[govmomi.Client]) (*mo.ManagedEntity, error)
 	config        sensorConfig
-	logger        *slog.Logger
 	cleanupTicker *time.Ticker
 	clientPool    *pool.Pool[govmomi.Client]
 }
 
-func NewOnDemandSensor(getFunc func(types.ManagedObjectReference, pool.Pool[govmomi.Client], *slog.Logger) (*mo.ManagedEntity, error), conf sensorConfig) *OnDemandSensor {
+func NewOnDemandSensor(getFunc func(types.ManagedObjectReference, pool.Pool[govmomi.Client]) (*mo.ManagedEntity, error), conf sensorConfig) *OnDemandSensor {
 	return &OnDemandSensor{
 		objects: map[types.ManagedObjectReference]VMwareCacheItem[mo.ManagedEntity]{},
 		getFunc: getFunc,
@@ -74,7 +73,7 @@ func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity
 		return entity
 	}
 
-	entity, err := o.getFunc(ref, *o.clientPool, o.logger)
+	entity, err := o.getFunc(ref, *o.clientPool)
 	if err != nil {
 		return nil
 	}
@@ -97,7 +96,6 @@ func (o *OnDemandSensor) clean() {
 }
 
 func (o *OnDemandSensor) Start(clientPool pool.Pool[govmomi.Client], logger *slog.Logger) {
-	o.logger = logger
 	o.clientPool = &clientPool
 
 	o.cleanupTicker = time.NewTicker(time.Duration(o.config.CleanCacheInterval) * time.Second)

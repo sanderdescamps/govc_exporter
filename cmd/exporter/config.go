@@ -73,6 +73,7 @@ func LoadConfig() Config {
 		useIsecSpecifics                 = kingpin.Flag("collector.intrinsec", "Enable intrinsec specific features").Default("false").Bool()
 		collectVMDisks                   = kingpin.Flag("collector.vm.disk", "Collect vm disk metrics").Default("false").Bool()
 		collectVMNetwork                 = kingpin.Flag("collector.vm.network", "Collect vm network metrics").Default("false").Bool()
+		CollectHostStorageMetrics        = kingpin.Flag("collector.host.storage", "Collect host storage metrics").Default("true").Bool()
 	)
 
 	promlogConfig := &promslog.Config{}
@@ -112,11 +113,12 @@ func LoadConfig() Config {
 			ClientPoolSize:                   *clientPoolSize,
 		},
 		CollectorConfig: &collector.CollectorConfig{
-			UseIsecSpecifics:       *useIsecSpecifics,
-			CollectVMNetworks:      *collectVMNetwork,
-			CollectVMDisks:         *collectVMDisks,
-			DisableExporterMetrics: *disableExporterMetrics,
-			MaxRequests:            *maxRequests,
+			UseIsecSpecifics:          *useIsecSpecifics,
+			CollectVMNetworks:         *collectVMNetwork,
+			CollectVMDisks:            *collectVMDisks,
+			CollectHostStorageMetrics: *CollectHostStorageMetrics,
+			DisableExporterMetrics:    *disableExporterMetrics,
+			MaxRequests:               *maxRequests,
 		},
 	}
 }

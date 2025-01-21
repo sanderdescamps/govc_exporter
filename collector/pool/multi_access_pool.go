@@ -1,49 +1,41 @@
 package pool
 
-import (
-	"sync"
-)
+import "sync"
 
 type MultiAccessPool[T any] struct {
 	poolObject *T
-	counter    int
-	max        int
-	lock       sync.Mutex
+	available  chan int
 	atExit     func() error
+	max        int
+	blockLock  sync.Mutex
 }
 
-func NewMultiAccessPool[T any](item *T, max int, atExit func() error) Pool[T] {
+func NewMultiAccessPool[T any](item *T, max int, atExit func() error) *MultiAccessPool[T] {
+	available := make(chan int, max)
+	for i := 0; i < max; i++ {
+		available <- i
+	}
+
 	multiPool := MultiAccessPool[T]{
 		poolObject: item,
 		max:        max,
-		counter:    0,
+		available:  available,
 	}
 	multiPool.SetAtExit(atExit)
 
 	return &multiPool
 }
 
-func (p *MultiAccessPool[T]) Acquire() (*T, int) {
+func (p *MultiAccessPool[T]) Acquire() (object *T, release func(), err error) {
 	for {
-		raised := func() bool {
-			p.lock.Lock()
-			defer p.lock.Unlock()
-			if p.counter < p.max {
-				p.counter += 1
-				return true
+		select {
+		case id := <-p.available:
+			release := func() {
+				p.available <- id
 			}
-			return false
-		}()
-		if raised {
-			return p.poolObject, 1
+			return p.poolObject, release, nil
 		}
 	}
-}
-
-func (p *MultiAccessPool[T]) Release(id int) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-	p.counter -= 1
 }
 
 func (p *MultiAccessPool[T]) SetAtExit(f func() error) {
@@ -52,6 +44,7 @@ func (p *MultiAccessPool[T]) SetAtExit(f func() error) {
 
 func (p *MultiAccessPool[T]) Destroy() error {
 	if p.atExit != nil {
+		close(p.available)
 		return p.atExit()
 	}
 	return nil

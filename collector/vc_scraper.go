@@ -41,13 +41,13 @@ func NewScraperCollector(scraper *scraper.VCenterScraper) *scraperCollector {
 		scraper: scraper,
 		sensorRefreshTime: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "refresh_time"),
-			"total time to refresh sensor info in ms", sensorLabels, nil),
+			"total time to refresh sensor info in µs", sensorLabels, nil),
 		sensorRefreshQueryTime: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "refresh_query_time"),
-			"time to query vcenter in ms", sensorLabels, nil),
+			"time to query vcenter in µs", sensorLabels, nil),
 		sensorClientWaitTime: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "client_wait_time"),
-			"time sensor need to wait for a client in ms", sensorLabels, nil),
+			"time sensor need to wait for a client in µs", sensorLabels, nil),
 		sensorRefreshStatus: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, generalCollectorSubsystem, "refresh_status"),
 			"refresh status", sensorLabels, nil),
@@ -84,13 +84,13 @@ func (c *scraperCollector) Collect(ch chan<- prometheus.Metric) {
 
 	for _, m := range status.SensorMetric {
 		ch <- prometheus.MustNewConstMetric(
-			c.sensorRefreshTime, prometheus.GaugeValue, float64(m.TotalRefreshTime().Milliseconds()), m.Name,
+			c.sensorRefreshTime, prometheus.GaugeValue, float64(m.TotalRefreshTime().Microseconds()), m.Name,
 		)
 		ch <- prometheus.MustNewConstMetric(
-			c.sensorRefreshQueryTime, prometheus.GaugeValue, float64(m.QueryTime.Milliseconds()), m.Name,
+			c.sensorRefreshQueryTime, prometheus.GaugeValue, float64(m.QueryTime.Microseconds()), m.Name,
 		)
 		ch <- prometheus.MustNewConstMetric(
-			c.sensorClientWaitTime, prometheus.GaugeValue, float64(m.ClientWaitTime.Milliseconds()), m.Name,
+			c.sensorClientWaitTime, prometheus.GaugeValue, float64(m.ClientWaitTime.Microseconds()), m.Name,
 		)
 	}
 

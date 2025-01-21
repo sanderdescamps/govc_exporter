@@ -1,7 +1,6 @@
 package pool
 
 type Pool[T any] interface {
-	Acquire() (*T, int)
-	Release(id int)
+	Acquire() (*T, func(), error)
 	Destroy() error
 }
