@@ -50,10 +50,10 @@ func LoadConfig() Config {
 
 		// hostEnabled           = kingpin.Flag("scraper.esx", "Enable host metrics").Default("True").String() //Host always required
 		datastoreEnabled      = kingpin.Flag("scraper.ds", "Enable datastore metrics").Default("True").String()
-		repoolEnabled         = kingpin.Flag("scraper.repool", "Enable datastore metrics").Default("True").String()
-		storagePodEnabled     = kingpin.Flag("scraper.spod", "Enable datastore metrics").Default("True").String()
-		virtualMachineEnabled = kingpin.Flag("scraper.vm", "Enable datastore metrics").Default("True").String()
-		clusterEnabled        = kingpin.Flag("scraper.cluster", "Enable datastore metrics").Default("True").String()
+		repoolEnabled         = kingpin.Flag("scraper.repool", "Enable resource pool metrics").Default("True").String()
+		storagePodEnabled     = kingpin.Flag("scraper.spod", "Enable datastore cluster metrics").Default("True").String()
+		virtualMachineEnabled = kingpin.Flag("scraper.vm", "Enable virtualmachine metrics").Default("True").String()
+		clusterEnabled        = kingpin.Flag("scraper.cluster", "Enable cluster metrics").Default("True").String()
 		tagsEnabled           = kingpin.Flag("scraper.tags", "Collect tags").Default("True").String()
 
 		hostMaxAgeSec                    = kingpin.Flag("scraper.host.max_age", "time in seconds hosts are cached").Default("60").Int64()
