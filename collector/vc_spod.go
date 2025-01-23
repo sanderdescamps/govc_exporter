@@ -27,15 +27,23 @@ const (
 
 type storagePodCollector struct {
 	scraper       *scraper.VCenterScraper
+	extraLabels   []string
 	capacity      *prometheus.Desc
 	freeSpace     *prometheus.Desc
 	overallStatus *prometheus.Desc
 }
 
-func NewStoragePodCollector(scraper *scraper.VCenterScraper) *storagePodCollector {
+func NewStoragePodCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *storagePodCollector {
 	labels := []string{"id", "name", "datacenter"}
+
+	extraLabels := cConf.StoragePodTagLabels
+	if len(extraLabels) != 0 {
+		labels = append(labels, extraLabels...)
+	}
+
 	return &storagePodCollector{
-		scraper: scraper,
+		scraper:     scraper,
+		extraLabels: extraLabels,
 		capacity: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, storagePodCollectorSubsystem, "capacity_bytes"),
 			"storagePod capacity in bytes", labels, nil),
@@ -55,20 +63,40 @@ func (c *storagePodCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *storagePodCollector) Collect(ch chan<- prometheus.Metric) {
-	storagePods := c.scraper.SPOD.GetAll()
-	for _, s := range storagePods {
+	if c.scraper.SPOD == nil {
+		return
+	}
+
+	storagePodData := c.scraper.SPOD.GetAllSnapshots()
+	for _, snap := range storagePodData {
+		timestamp, s := snap.Timestamp, snap.Item
 		summary := s.Summary
 		parentChain := c.scraper.GetParentChain(s.Self)
 
+		extraLabelValues := func() []string {
+			result := []string{}
+
+			for _, tagCat := range c.extraLabels {
+				tag := c.scraper.Tags.GetTag(s.Self, tagCat)
+				if tag != nil {
+					result = append(result, tag.Name)
+				} else {
+					result = append(result, "")
+				}
+			}
+			return result
+		}()
+
 		labelValues := []string{me2id(s.ManagedEntity), s.Name, parentChain.DC}
-		ch <- prometheus.MustNewConstMetric(
+		labelValues = append(labelValues, extraLabelValues...)
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.capacity, prometheus.GaugeValue, float64(summary.Capacity), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.freeSpace, prometheus.GaugeValue, float64(summary.FreeSpace), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(s.OverallStatus), labelValues...,
-		)
+		))
 	}
 }

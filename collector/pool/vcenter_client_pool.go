@@ -59,7 +59,7 @@ func NewVCenterClientFunc(ctx context.Context, endpoint string, username string,
 	}
 }
 
-func NewVCenterClientPoolWithLogger(ctx context.Context, endpoint string, username string, password string, size int, logger *slog.Logger) (Pool[govmomi.Client], error) {
+func NewVCenterClientPoolWithLogger(ctx context.Context, endpoint string, username string, password string, size int, logger *slog.Logger) (*VCenterClientPool, error) {
 	userInfo := func() *url.Userinfo {
 		return url.UserPassword(username, password)
 	}

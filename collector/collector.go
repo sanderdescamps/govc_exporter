@@ -32,14 +32,46 @@ import (
 const namespace = "govc"
 
 type CollectorConfig struct {
-	CollectVMNetworks         bool
-	CollectVMDisks            bool
 	CollectHostStorageMetrics bool
 
 	UseIsecSpecifics       bool
 	DisableExporterMetrics bool
 
 	MaxRequests int
+
+	ClusterTagLabels      []string
+	DatastoreTagLabels    []string
+	HostTagLabels         []string
+	ResourcePoolTagLabels []string
+	StoragePodTagLabels   []string
+
+	VMAdvancedNetworkMetrics bool
+	VMAdvancedStorageMetrics bool
+	VMTagLabels              []string
+
+	HostStorageMetrics bool
+}
+
+func DefaultCollectorConf() *CollectorConfig {
+	return &CollectorConfig{
+		CollectHostStorageMetrics: false,
+		UseIsecSpecifics:          false,
+		DisableExporterMetrics:    false,
+
+		MaxRequests: 10,
+
+		ClusterTagLabels:      []string{},
+		DatastoreTagLabels:    []string{},
+		HostTagLabels:         []string{},
+		ResourcePoolTagLabels: []string{},
+		StoragePodTagLabels:   []string{},
+
+		VMAdvancedNetworkMetrics: false,
+		VMAdvancedStorageMetrics: false,
+		VMTagLabels:              []string{},
+
+		HostStorageMetrics: false,
+	}
 }
 
 type VCCollector struct {
@@ -49,24 +81,24 @@ type VCCollector struct {
 	collectors map[*helper.Matcher]prometheus.Collector
 }
 
-func NewVCCollector(conf CollectorConfig, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
+func NewVCCollector(conf *CollectorConfig, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
+	if conf == nil {
+		conf = DefaultCollectorConf()
+	}
+
 	collectors := map[*helper.Matcher]prometheus.Collector{}
-	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper, conf.CollectHostStorageMetrics)
-	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper)
-	collectors[helper.NewMatcher("resourcepool", "rp")] = NewResourcePoolCollector(scraper)
-	collectors[helper.NewMatcher("cluster", "host")] = NewClusterCollector(scraper)
-	collectors[helper.NewMatcher("vm", "virtualmachine")] = NewVirtualMachineCollector(scraper, virtualMachineCollectorOptions{
-		CollectNetworks:  conf.CollectVMNetworks,
-		CollectDisks:     conf.CollectVMDisks,
-		UseIsecSpecifics: conf.UseIsecSpecifics,
-	})
-	collectors[helper.NewMatcher("spod", "storagepod")] = NewStoragePodCollector(scraper)
+	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper, *conf)
+	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper, *conf)
+	collectors[helper.NewMatcher("resourcepool", "rp")] = NewResourcePoolCollector(scraper, *conf)
+	collectors[helper.NewMatcher("cluster", "host")] = NewClusterCollector(scraper, *conf)
+	collectors[helper.NewMatcher("vm", "virtualmachine")] = NewVirtualMachineCollector(scraper, *conf)
+	collectors[helper.NewMatcher("spod", "storagepod")] = NewStoragePodCollector(scraper, *conf)
 	collectors[helper.NewMatcher("scraper")] = NewScraperCollector(scraper)
 
 	return &VCCollector{
 		scraper:    scraper,
 		logger:     logger,
-		conf:       conf,
+		conf:       *conf,
 		collectors: collectors,
 	}
 }

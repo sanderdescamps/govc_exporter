@@ -10,7 +10,8 @@ _test
 /out
 /vendor
 /external
-/tests/data/gi*
+/tests/gi-vcenter-data
+gi-*
 
 # Architecture specific extensions/prefixes
 *.[568vq]

@@ -50,7 +50,7 @@ func main() {
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
 	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "user", version.BuildUser, "date", version.BuildDate, "tags", version.GetTags())
 
-	scraper, err := scraper.NewVCenterScraper(*config.ScraperConfig)
+	scraper, err := scraper.NewVCenterScraper(*config.ScraperConfig, logger)
 	if err != nil {
 		logger.Error("Failed to create VCenterScraper", "err", err)
 		return
@@ -61,7 +61,7 @@ func main() {
 		return
 	}
 
-	collector := collector.NewVCCollector(*config.CollectorConfig, scraper, logger)
+	collector := collector.NewVCCollector(config.CollectorConfig, scraper, logger)
 
 	server := &http.Server{
 		Addr: config.ListenAddress,
@@ -104,4 +104,14 @@ func string2bool(s string) bool {
 		return b
 	}
 	return false
+}
+
+func mergeLists[T any](l ...*[]T) []T {
+	result := []T{}
+	for _, i := range l {
+		if i != nil && len(*i) != 0 {
+			result = append(result, *i...)
+		}
+	}
+	return result
 }

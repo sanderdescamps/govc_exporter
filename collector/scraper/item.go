@@ -4,18 +4,31 @@ import (
 	"time"
 )
 
-type VMwareCacheItem[t VMwareResource] struct {
-	Item       *t
-	expireTime time.Time
+type CacheItem[T any] struct {
+	Item     *T
+	creation time.Time
 }
 
-func NewVMwareCacheItem[T VMwareResource](item *T, maxAge time.Duration) *VMwareCacheItem[T] {
-	return &VMwareCacheItem[T]{
-		Item:       item,
-		expireTime: time.Now().Add(maxAge),
+type Snapshot[T any] struct {
+	Timestamp time.Time
+	Item      T
+}
+
+func NewCacheItem[T any](item *T) *CacheItem[T] {
+	return &CacheItem[T]{
+		Item:     item,
+		creation: time.Now(),
 	}
 }
 
-func (s *VMwareCacheItem[T]) Expired() bool {
-	return time.Now().After(s.expireTime)
+func (s CacheItem[T]) Expired(maxAge time.Duration) bool {
+	expireTime := s.creation.Add(maxAge)
+	return time.Now().After(expireTime)
+}
+
+func (s CacheItem[T]) ToSnapshot() Snapshot[T] {
+	return Snapshot[T]{
+		Timestamp: s.creation,
+		Item:      *s.Item,
+	}
 }

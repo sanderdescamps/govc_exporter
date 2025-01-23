@@ -3,19 +3,26 @@ package scraper_test
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/url"
 	"reflect"
+	"slices"
 	"testing"
+	"time"
 
+	"github.com/intrinsec/govc_exporter/collector/scraper"
+	"github.com/prometheus/common/promslog"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/property"
+	"github.com/vmware/govmomi/vapi/rest"
+	"github.com/vmware/govmomi/vapi/tags"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/soap"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
-func GetClient(t *testing.T) *govmomi.Client {
+func GetClient(ctx context.Context, t *testing.T) *govmomi.Client {
 	endpoint := "https://localhost:8989"
 	username := "testuser"
 	password := "testpass"
@@ -25,104 +32,79 @@ func GetClient(t *testing.T) *govmomi.Client {
 		panic(err)
 	}
 	u.User = url.UserPassword(username, password)
-	client, err := govmomi.NewClient(context.Background(), u, true)
+	client, err := govmomi.NewClient(ctx, u, true)
 	if err != nil {
 		t.Fatalf("Client creation failed: %v", err)
 	}
 	return client
 }
 
-// func TestVCenterScraper(t *testing.T) {
+func TestVCenterScraper(t *testing.T) {
 
-// 	conf := scraper.NewDefaultScraperConfig()
-// 	conf.Endpoint = "https://localhost:8989"
-// 	conf.Username = "testuser"
-// 	conf.Password = "testpass"
+	conf := scraper.NewDefaultScraperConfig()
+	conf.Endpoint = "https://localhost:8989"
+	conf.Username = "testuser"
+	conf.Password = "testpass"
+	conf.TagsCategoryToCollect = []string{"tenants"}
 
-// 	aCache, _ := scraper.NewVCenterScraper(conf)
+	promlogConfig := &promslog.Config{
+		// Level:
+	}
+	logger := promslog.New(promlogConfig)
+	ctx := context.Background()
 
-// 	promlogConfig := &promslog.Config{
-// 		// Level:
-// 	}
-// 	logger := promslog.New(promlogConfig)
+	aCache, _ := scraper.NewVCenterScraper(conf, logger)
 
-// 	t1 := time.Now()
-// 	aCache.Host.Refresh(logger)
-// 	t2 := time.Now()
-// 	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
+	t1 := time.Now()
+	aCache.Host.Refresh(ctx, logger)
+	t2 := time.Now()
+	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
 
-// 	aCache.Datastore.Refresh(logger)
-// 	t3 := time.Now()
-// 	fmt.Printf("fetching all datastores took %dms\n", t3.Sub(t2).Milliseconds())
+	aCache.Datastore.Refresh(ctx, logger)
+	t3 := time.Now()
+	fmt.Printf("fetching all datastores took %dms\n", t3.Sub(t2).Milliseconds())
 
-// 	aCache.SPOD.Refresh(logger)
-// 	t4 := time.Now()
-// 	fmt.Printf("fetching all spod took %dms\n", t4.Sub(t3).Milliseconds())
+	aCache.SPOD.Refresh(ctx, logger)
+	t4 := time.Now()
+	fmt.Printf("fetching all spod took %dms\n", t4.Sub(t3).Milliseconds())
 
-// 	aCache.VM.Refresh(logger)
-// 	t5 := time.Now()
-// 	fmt.Printf("fetching all VMs took %dms\n", t5.Sub(t4).Milliseconds())
+	aCache.VM.Refresh(ctx, logger)
+	t5 := time.Now()
+	fmt.Printf("fetching all VMs took %dms\n", t5.Sub(t4).Milliseconds())
 
-// 	aCache.Cluster.Refresh(logger)
-// 	t6 := time.Now()
-// 	fmt.Printf("fetching all clusters took %dms\n", t6.Sub(t5).Milliseconds())
+	aCache.Cluster.Refresh(ctx, logger)
+	t6 := time.Now()
+	fmt.Printf("fetching all clusters took %dms\n", t6.Sub(t5).Milliseconds())
 
-// 	aCache.Start(logger)
+	aCache.Tags.Refresh(ctx, logger)
+	t7 := time.Now()
+	fmt.Printf("fetching all tags took %dms\n", t7.Sub(t6).Milliseconds())
+	// for _, cat := range conf.TagsCategoryToCollect {
+	// 	catID := aCache.Tags.GetCategoryID(cat)
+	// 	for _, ref := range aCache.Tags.GetAllRefs() {
+	// 		tags := aCache.Tags.Get(ref)
+	// 		tagString := []string{}
+	// 		for _, tag := range tags {
+	// 			tagString = append(tagString)
+	// 		}
+	// 		fmt.Printf("tags for %s\n", ref)
+	// 	}
+	// }
 
-// 	ticker := time.NewTicker(10 * time.Second)
-
-// 	for t := range ticker.C {
-// 		fmt.Printf("Metrics at: %s\n", t.String())
-// 		// clusters := aCache.Cluster.GetAll()
-// 		// for _, c := range clusters {
-// 		// 	fmt.Printf("cluster: %s\n", c.ManagedEntity.Name)
-// 		// }
-
-// 		// hosts := aCache.Host.GetAll()
-// 		// for _, h := range hosts {
-// 		// 	fmt.Printf("host: Name=%s Self.Type=%s Self.Value=%s\n", h.Name, h.Self.Type, h.Self.Value)
-// 		// 	pc := aCache.GetParentChain(h.Self)
-// 		// 	fmt.Printf("host: Name=%s chain=%s\n", h.Name, strings.Join(pc.Chain, ","))
-// 		// 	fmt.Printf("host: Name=%s Self.Type=%s Self.Value=%s Cluster=%s Datacenter=%s\n", h.Name, h.Self.Type, h.Self.Value, pc.Cluster, pc.DC)
-// 		// }
-
-// 		// // vms := aCache.VM.GetAll()
-// 		// // for _, vm := range vms {
-// 		// // 	fmt.Printf("virtual-machine: Name=%s Self.Type=%s Self.Value=%s\n", vm.Name, vm.Self.Type, vm.Self.Value)
-// 		// // }
-
-// 		// datastores := aCache.Datastore.GetAll()
-// 		// for _, d := range datastores {
-// 		// 	pc := aCache.GetParentChain(d.Self)
-// 		// 	fmt.Printf("datastore: Name=%s chain=%s\n", d.Name, strings.Join(pc.Chain, ","))
-// 		// 	fmt.Printf("datastore: Name=%s Self.Type=%s Self.Value=%s SPOD=%s Datacenter=%s\n", d.Name, d.Self.Type, d.Self.Value, pc.SPOD, pc.DC)
-// 		// }
-
-// 		// spods := aCache.SPOD.GetAll()
-// 		// for _, s := range spods {
-// 		// 	fmt.Printf("storage-pods: Name=%s Self.Type=%s Self.Value=%s\n", s.Name, s.Self.Type, s.Self.Value)
-// 		// }
-
-// 		fmt.Print()
-// 	}
-
-// 	// time.Sleep(60 * time.Second)
-// 	// ticker.Stop()
-
-// 	fmt.Print("end")
-// }
+	fmt.Print("end")
+}
 
 func TestVMwareHost(t *testing.T) {
 
 	var hss []mo.HostSystem
 
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
 		client.ServiceContent.RootFolder,
-		[]string{"HostSystem"},
+		[]string{"InventoryServiceCategory"},
 		true,
 	)
 	if err != nil {
@@ -138,6 +120,8 @@ func TestVMwareHost(t *testing.T) {
 			"summary",
 			"runtime",
 			"name",
+			"config.storageDevice",
+			"config.network.vswitch",
 			// "vm",
 			"network",
 		},
@@ -155,12 +139,79 @@ func TestVMwareHost(t *testing.T) {
 
 }
 
+func TestVMwareVMTags(t *testing.T) {
+
+	catsToObserve := []string{"tenants"}
+	ctx := context.Background()
+	client := GetClient(ctx, t)
+
+	re := rest.NewClient(client.Client)
+	_, err := re.Session(ctx)
+	if err != nil {
+		log.Print(err)
+		t.Fatalf(err.Error())
+	}
+	username := "testuser"
+	password := "testpass"
+	userPass := url.UserPassword(username, password)
+	re.Login(ctx, userPass)
+	m := tags.NewManager(re)
+
+	catList := []tags.Category{}
+	allCats, err := m.GetCategories(ctx)
+	if err != nil {
+		log.Print(err)
+		t.Fatalf(err.Error())
+	}
+	for _, cat := range allCats {
+		if len(catsToObserve) == 0 || slices.Contains(catsToObserve, cat.Name) {
+			catList = append(catList, cat)
+			func() {
+				//store cats in cache
+			}()
+		}
+	}
+
+	tagList := []tags.Tag{}
+	for _, cat := range catList {
+		tags, err := m.GetTagsForCategory(ctx, cat.ID)
+		if err != nil {
+			log.Print(err)
+			t.Fatalf(err.Error())
+		}
+		tagList = append(tagList, tags...)
+	}
+
+	objectTags := make(map[types.ManagedObjectReference][]*tags.Tag)
+	for _, tag := range tagList {
+		attachObjs, err := m.GetAttachedObjectsOnTags(ctx, []string{tag.ID})
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+
+		// tag2, err := m.GetTag(ctx, tag)
+		for _, attachObj := range attachObjs {
+			for _, elem := range attachObj.ObjectIDs {
+				objectTags[elem.Reference()] = append(objectTags[elem.Reference()], attachObj.Tag)
+			}
+		}
+	}
+
+	for name, tags := range objectTags {
+		fmt.Printf(" %s", name)
+		for _, tag := range tags {
+			fmt.Printf("   name: %s", tag.Name)
+			fmt.Printf("   Description: %s", tag.Description)
+		}
+	}
+}
+
 func TestVMwareNetwork(t *testing.T) {
 
 	var items []mo.Network
 
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -200,8 +251,8 @@ func TestVMwareCluster(t *testing.T) {
 
 	var clusters []mo.ClusterComputeResource
 
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -237,8 +288,8 @@ func TestVMwareComputeResource(t *testing.T) {
 
 	var compResources []mo.ComputeResource
 
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -272,8 +323,8 @@ func TestVMwareFolder(t *testing.T) {
 
 	var folders []mo.Folder
 
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -307,8 +358,8 @@ func TestVMwareDatastore(t *testing.T) {
 
 	var items []mo.Datastore
 
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -379,8 +430,8 @@ func TestVMwareDatacenter(t *testing.T) {
 
 	var datacenters []mo.Datacenter
 
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -414,8 +465,8 @@ func TestVMwareResourcePool(t *testing.T) {
 
 	var items []mo.ResourcePool
 
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -447,8 +498,8 @@ func TestVMwareResourcePool(t *testing.T) {
 
 func TestVMwareVM(t *testing.T) {
 	var items []mo.VirtualMachine
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -497,8 +548,8 @@ func TestVMwareVMperHost(t *testing.T) {
 	}
 
 	var items []mo.VirtualMachine
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -547,8 +598,8 @@ func TestVMwareVMperCluster(t *testing.T) {
 	}
 
 	var items []mo.VirtualMachine
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -601,8 +652,8 @@ func TestVMwareVMperHost2(t *testing.T) {
 	// }
 
 	var items []mo.VirtualMachine
-	client := GetClient(t)
 	ctx := context.Background()
+	client := GetClient(ctx, t)
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,

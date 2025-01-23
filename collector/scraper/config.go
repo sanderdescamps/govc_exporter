@@ -8,36 +8,40 @@ import (
 )
 
 type ScraperConfig struct {
-	Endpoint                         string `json:"endpoint"`
-	Username                         string `json:"username"`
-	Password                         string `json:"password"`
-	HostCollectorEnabled             bool   `json:"host_collector_enabled"`
-	HostMaxAgeSec                    int    `json:"host_max_age_sec"`
-	HostRefreshIntervalSec           int    `json:"host_refresh_interval_sec"`
-	ClusterCollectorEnabled          bool   `json:"cluster_collector_enabled"`
-	ClusterMaxAgeSec                 int    `json:"cluster_max_age_sec"`
-	ClusterRefreshIntervalSec        int    `json:"cluster_refresh_interval_sec"`
-	VirtualMachineCollectorEnabled   bool   `json:"virtual_machine_collector_enabled"`
-	VirtualMachineMaxAgeSec          int    `json:"virtual_machine_max_age_sec"`
-	VirtualMachineRefreshIntervalSec int    `json:"virtual_machine_refresh_interval_sec"`
-	DatastoreCollectorEnabled        bool   `json:"datastore_collector_enabled"`
-	DatastoreMaxAgeSec               int    `json:"datastore_max_age_sec"`
-	DatastoreRefreshIntervalSec      int    `json:"datastore_refresh_interval_sec"`
-	SpodCollectorEnabled             bool   `json:"storagepod_collector_enabled"`
-	SpodMaxAgeSec                    int    `json:"storagepod_max_age_sec"`
-	SpodRefreshIntervalSec           int    `json:"storagepod_refresh_interval_sec"`
-	ResourcePoolCollectorEnabled     bool   `json:"resource_pool_collector_enabled"`
-	ResourcePoolMaxAgeSec            int    `json:"resource_pool_max_age_sec"`
-	ResourcePoolRefreshIntervalSec   int    `json:"resource_pool_refresh_interval_sec"`
+	Endpoint string `json:"endpoint"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	// HostCollectorEnabled             bool   `json:"host_collector_enabled"`
+	HostMaxAgeSec                    int64    `json:"host_max_age_sec"`
+	HostRefreshIntervalSec           int64    `json:"host_refresh_interval_sec"`
+	ClusterCollectorEnabled          bool     `json:"cluster_collector_enabled"`
+	ClusterMaxAgeSec                 int64    `json:"cluster_max_age_sec"`
+	ClusterRefreshIntervalSec        int64    `json:"cluster_refresh_interval_sec"`
+	VirtualMachineCollectorEnabled   bool     `json:"virtual_machine_collector_enabled"`
+	VirtualMachineMaxAgeSec          int64    `json:"virtual_machine_max_age_sec"`
+	VirtualMachineRefreshIntervalSec int64    `json:"virtual_machine_refresh_interval_sec"`
+	DatastoreCollectorEnabled        bool     `json:"datastore_collector_enabled"`
+	DatastoreMaxAgeSec               int64    `json:"datastore_max_age_sec"`
+	DatastoreRefreshIntervalSec      int64    `json:"datastore_refresh_interval_sec"`
+	SpodCollectorEnabled             bool     `json:"storagepod_collector_enabled"`
+	SpodMaxAgeSec                    int64    `json:"storagepod_max_age_sec"`
+	SpodRefreshIntervalSec           int64    `json:"storagepod_refresh_interval_sec"`
+	ResourcePoolCollectorEnabled     bool     `json:"resource_pool_collector_enabled"`
+	ResourcePoolMaxAgeSec            int64    `json:"resource_pool_max_age_sec"`
+	ResourcePoolRefreshIntervalSec   int64    `json:"resource_pool_refresh_interval_sec"`
+	TagsCollectorEnbled              bool     `json:"tags_collector_enabled"`
+	TagsCategoryToCollect            []string `json:"tags_to_collect"`
+	TagsMaxAgeSec                    int64    `json:"tags_max_age_sec"`
+	TagsRefreshIntervalSec           int64    `json:"tags_refresh_interval_sec"`
 
-	OnDemandCacheMaxAge int `json:"on_demand_cache_max_age_sec"`
-	CleanIntervalSec    int `json:"clean_interval_sec"`
-	ClientPoolSize      int `json:"client_pool_size"`
+	OnDemandCacheMaxAge int64 `json:"on_demand_cache_max_age_sec"`
+	CleanIntervalSec    int64 `json:"clean_interval_sec"`
+	ClientPoolSize      int   `json:"client_pool_size"`
 }
 
 func NewDefaultScraperConfig() ScraperConfig {
 	return ScraperConfig{
-		HostCollectorEnabled:             true,
+		// HostCollectorEnabled:             true,
 		HostMaxAgeSec:                    120,
 		HostRefreshIntervalSec:           60,
 		ClusterCollectorEnabled:          true,
@@ -55,6 +59,10 @@ func NewDefaultScraperConfig() ScraperConfig {
 		ResourcePoolCollectorEnabled:     true,
 		ResourcePoolMaxAgeSec:            120,
 		ResourcePoolRefreshIntervalSec:   60,
+		TagsCollectorEnbled:              true,
+		TagsCategoryToCollect:            []string{},
+		TagsMaxAgeSec:                    600,
+		TagsRefreshIntervalSec:           290,
 		OnDemandCacheMaxAge:              300,
 		CleanIntervalSec:                 5,
 		ClientPoolSize:                   5,

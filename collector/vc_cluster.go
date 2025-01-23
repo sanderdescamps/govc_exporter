@@ -26,7 +26,8 @@ const (
 )
 
 type clusterCollector struct {
-	scraper *scraper.VCenterScraper
+	scraper     *scraper.VCenterScraper
+	extraLabels []string
 
 	totalCPU          *prometheus.Desc
 	effectiveCPU      *prometheus.Desc
@@ -39,10 +40,17 @@ type clusterCollector struct {
 	overallStatus     *prometheus.Desc
 }
 
-func NewClusterCollector(scraper *scraper.VCenterScraper) *clusterCollector {
+func NewClusterCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *clusterCollector {
 	labels := []string{"id", "name", "datacenter"}
+
+	extraLabels := cConf.ClusterTagLabels
+	if len(extraLabels) != 0 {
+		labels = append(labels, extraLabels...)
+	}
+
 	return &clusterCollector{
-		scraper: scraper,
+		scraper:     scraper,
+		extraLabels: extraLabels,
 		totalCPU: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, clusterCollectorSubsystem, "total_cpu_mhz"),
 			"Aggregated CPU resources of all hosts, in MHz", labels, nil),
@@ -89,42 +97,60 @@ func (c *clusterCollector) Collect(ch chan<- prometheus.Metric) {
 	if c.scraper.Cluster == nil {
 		return
 	}
-	clusters := c.scraper.Cluster.GetAll()
-	for _, p := range clusters {
+	clusterData := c.scraper.Cluster.GetAllSnapshots()
+	for _, snap := range clusterData {
+		timestamp, p := snap.Timestamp, snap.Item
 		summary := p.Summary.GetComputeResourceSummary()
 		if summary == nil {
 			continue
 		}
 		parentChain := c.scraper.GetParentChain(p.Self)
 		mb := int64(1024 * 1024)
+
+		extraLabelValues := func() []string {
+			result := []string{}
+
+			for _, tagCat := range c.extraLabels {
+				tag := c.scraper.Tags.GetTag(p.Self, tagCat)
+				if tag != nil {
+					result = append(result, tag.Name)
+				} else {
+					result = append(result, "")
+				}
+			}
+			return result
+		}()
+
 		labelValues := []string{me2id(p.ManagedEntity), p.Name, parentChain.DC}
-		ch <- prometheus.MustNewConstMetric(
+		labelValues = append(labelValues, extraLabelValues...)
+
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.totalCPU, prometheus.GaugeValue, float64(summary.TotalCpu), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.effectiveCPU, prometheus.GaugeValue, float64(summary.EffectiveCpu), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.totalMemory, prometheus.GaugeValue, float64(summary.TotalMemory), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.effectiveMemory, prometheus.GaugeValue, float64(summary.EffectiveMemory*mb), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.numCPUCores, prometheus.GaugeValue, float64(summary.NumCpuCores), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.numCPUThreads, prometheus.GaugeValue, float64(summary.NumCpuThreads), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.numEffectiveHosts, prometheus.GaugeValue, float64(summary.NumEffectiveHosts), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.numHosts, prometheus.GaugeValue, float64(summary.NumHosts), labelValues...,
-		)
-		ch <- prometheus.MustNewConstMetric(
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(summary.OverallStatus), labelValues...,
-		)
+		))
 	}
 
 }
