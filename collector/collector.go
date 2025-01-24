@@ -32,8 +32,6 @@ import (
 const namespace = "govc"
 
 type CollectorConfig struct {
-	CollectHostStorageMetrics bool
-
 	UseIsecSpecifics       bool
 	DisableExporterMetrics bool
 
@@ -54,9 +52,8 @@ type CollectorConfig struct {
 
 func DefaultCollectorConf() *CollectorConfig {
 	return &CollectorConfig{
-		CollectHostStorageMetrics: false,
-		UseIsecSpecifics:          false,
-		DisableExporterMetrics:    false,
+		UseIsecSpecifics:       false,
+		DisableExporterMetrics: false,
 
 		MaxRequests: 10,
 

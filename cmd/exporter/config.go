@@ -74,11 +74,11 @@ func LoadConfig() Config {
 		onDemandCacheMaxAge           = kingpin.Flag("scraper.on_demand_cache.max_age", "time in seconds the scraper keeps all non-cache data. Used to get parent objects").Default("300").Int64()
 		cleanIntervalSec              = kingpin.Flag("scraper.clean_interval", "interval the scraper cleans up old data").Default("5").Int64()
 		clientPoolSize                = kingpin.Flag("scraper.client_pool_size", "number of simultanious requests to vCenter api").Default("5").Int()
-		useIsecSpecifics              = kingpin.Flag("collector.intrinsec", "Enable intrinsec specific features").Default("false").Bool()
-		virtualMachineAdvancedStorage = kingpin.Flag("collector.vm.disk", "Collect extra vm disk metrics").Default("false").Bool()
-		virtualMachineAdvancedNetwork = kingpin.Flag("collector.vm.network", "Collect extra vm network metrics").Default("false").Bool()
+		useIsecSpecifics              = kingpin.Flag("collector.intrinsec", "Enable intrinsec specific features").Bool()
+		virtualMachineAdvancedStorage = kingpin.Flag("collector.vm.disk", "Collect extra vm disk metrics").Default("false").String()
+		virtualMachineAdvancedNetwork = kingpin.Flag("collector.vm.network", "Collect extra vm network metrics").Default("false").String()
 
-		hostStorage = kingpin.Flag("collector.host.storage", "Collect host storage metrics").Default("true").Bool()
+		hostStorage = kingpin.Flag("collector.host.storage", "Collect host storage metrics").Default("false").String()
 
 		clusterTagLabel        = kingpin.Flag("collector.cluster.tag_label", "List of vmware tag categories to collect which will be added as label in metrics").Strings()
 		datastoreTagLabel      = kingpin.Flag("collector.datastore.tag_label", "List of vmware tag categories to collect which will be added as label in metrics").Strings()
@@ -139,12 +139,12 @@ func LoadConfig() Config {
 			ClientPoolSize:      *clientPoolSize,
 		},
 		CollectorConfig: &collector.CollectorConfig{
-			UseIsecSpecifics:          *useIsecSpecifics,
-			VMAdvancedNetworkMetrics:  *virtualMachineAdvancedNetwork,
-			VMAdvancedStorageMetrics:  *virtualMachineAdvancedStorage,
-			CollectHostStorageMetrics: *hostStorage,
-			DisableExporterMetrics:    *disableExporterMetrics,
-			MaxRequests:               *maxRequests,
+			UseIsecSpecifics:         *useIsecSpecifics,
+			VMAdvancedNetworkMetrics: string2bool(*virtualMachineAdvancedNetwork),
+			VMAdvancedStorageMetrics: string2bool(*virtualMachineAdvancedStorage),
+			HostStorageMetrics:       string2bool(*hostStorage),
+			DisableExporterMetrics:   *disableExporterMetrics,
+			MaxRequests:              *maxRequests,
 
 			ClusterTagLabels:      mergeLists(clusterTagLabel),
 			DatastoreTagLabels:    mergeLists(datastoreTagLabel),
