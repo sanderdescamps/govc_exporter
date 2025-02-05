@@ -3,70 +3,108 @@ package scraper
 import (
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/vmware/govmomi/vim25/soap"
 )
 
 type ScraperConfig struct {
-	Endpoint string `json:"endpoint"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	// HostCollectorEnabled             bool   `json:"host_collector_enabled"`
-	HostMaxAgeSec                    int64    `json:"host_max_age_sec"`
-	HostRefreshIntervalSec           int64    `json:"host_refresh_interval_sec"`
-	ClusterCollectorEnabled          bool     `json:"cluster_collector_enabled"`
-	ClusterMaxAgeSec                 int64    `json:"cluster_max_age_sec"`
-	ClusterRefreshIntervalSec        int64    `json:"cluster_refresh_interval_sec"`
-	VirtualMachineCollectorEnabled   bool     `json:"virtual_machine_collector_enabled"`
-	VirtualMachineMaxAgeSec          int64    `json:"virtual_machine_max_age_sec"`
-	VirtualMachineRefreshIntervalSec int64    `json:"virtual_machine_refresh_interval_sec"`
-	DatastoreCollectorEnabled        bool     `json:"datastore_collector_enabled"`
-	DatastoreMaxAgeSec               int64    `json:"datastore_max_age_sec"`
-	DatastoreRefreshIntervalSec      int64    `json:"datastore_refresh_interval_sec"`
-	SpodCollectorEnabled             bool     `json:"storagepod_collector_enabled"`
-	SpodMaxAgeSec                    int64    `json:"storagepod_max_age_sec"`
-	SpodRefreshIntervalSec           int64    `json:"storagepod_refresh_interval_sec"`
-	ResourcePoolCollectorEnabled     bool     `json:"resource_pool_collector_enabled"`
-	ResourcePoolMaxAgeSec            int64    `json:"resource_pool_max_age_sec"`
-	ResourcePoolRefreshIntervalSec   int64    `json:"resource_pool_refresh_interval_sec"`
-	TagsCollectorEnbled              bool     `json:"tags_collector_enabled"`
-	TagsCategoryToCollect            []string `json:"tags_to_collect"`
-	TagsMaxAgeSec                    int64    `json:"tags_max_age_sec"`
-	TagsRefreshIntervalSec           int64    `json:"tags_refresh_interval_sec"`
+	Endpoint                        string
+	Username                        string
+	Password                        string
+	HostCollectorEnabled            bool
+	HostMaxAge                      time.Duration
+	HostRefreshInterval             time.Duration
+	ClusterCollectorEnabled         bool
+	ClusterMaxAge                   time.Duration
+	ClusterRefreshInterval          time.Duration
+	ComputeResourceCollectorEnabled bool
+	ComputeResourceMaxAge           time.Duration
+	ComputeResourceRefreshInterval  time.Duration
+	VirtualMachineCollectorEnabled  bool
+	VirtualMachineMaxAge            time.Duration
+	VirtualMachineRefreshInterval   time.Duration
+	DatastoreCollectorEnabled       bool
+	DatastoreMaxAge                 time.Duration
+	DatastoreRefreshInterval        time.Duration
+	SpodCollectorEnabled            bool
+	SpodMaxAge                      time.Duration
+	SpodRefreshInterval             time.Duration
+	ResourcePoolCollectorEnabled    bool
+	ResourcePoolMaxAge              time.Duration
+	ResourcePoolRefreshInterval     time.Duration
+	TagsCollectorEnbled             bool
+	TagsCategoryToCollect           []string
+	TagsMaxAge                      time.Duration
+	TagsRefreshInterval             time.Duration
 
-	OnDemandCacheMaxAge int64 `json:"on_demand_cache_max_age_sec"`
-	CleanIntervalSec    int64 `json:"clean_interval_sec"`
-	ClientPoolSize      int   `json:"client_pool_size"`
+	OnDemandCacheMaxAge time.Duration
+	CleanInterval       time.Duration
+	ClientPoolSize      int
 }
 
 func NewDefaultScraperConfig() ScraperConfig {
 	return ScraperConfig{
-		// HostCollectorEnabled:             true,
-		HostMaxAgeSec:                    120,
-		HostRefreshIntervalSec:           60,
-		ClusterCollectorEnabled:          true,
-		ClusterMaxAgeSec:                 300,
-		ClusterRefreshIntervalSec:        30,
-		VirtualMachineCollectorEnabled:   true,
-		VirtualMachineMaxAgeSec:          120,
-		VirtualMachineRefreshIntervalSec: 60,
-		DatastoreCollectorEnabled:        true,
-		DatastoreMaxAgeSec:               120,
-		DatastoreRefreshIntervalSec:      30,
-		SpodCollectorEnabled:             true,
-		SpodMaxAgeSec:                    120,
-		SpodRefreshIntervalSec:           60,
-		ResourcePoolCollectorEnabled:     true,
-		ResourcePoolMaxAgeSec:            120,
-		ResourcePoolRefreshIntervalSec:   60,
-		TagsCollectorEnbled:              true,
-		TagsCategoryToCollect:            []string{},
-		TagsMaxAgeSec:                    600,
-		TagsRefreshIntervalSec:           290,
-		OnDemandCacheMaxAge:              300,
-		CleanIntervalSec:                 5,
-		ClientPoolSize:                   5,
+		HostCollectorEnabled:           true,
+		HostMaxAge:                     time.Duration(120) * time.Second,
+		HostRefreshInterval:            time.Duration(60) * time.Second,
+		ClusterCollectorEnabled:        true,
+		ClusterMaxAge:                  time.Duration(300) * time.Second,
+		ClusterRefreshInterval:         time.Duration(30) * time.Second,
+		VirtualMachineCollectorEnabled: true,
+		VirtualMachineMaxAge:           time.Duration(120) * time.Second,
+		VirtualMachineRefreshInterval:  time.Duration(60) * time.Second,
+		DatastoreCollectorEnabled:      true,
+		DatastoreMaxAge:                time.Duration(120) * time.Second,
+		DatastoreRefreshInterval:       time.Duration(30) * time.Second,
+		SpodCollectorEnabled:           true,
+		SpodMaxAge:                     time.Duration(120) * time.Second,
+		SpodRefreshInterval:            time.Duration(60) * time.Second,
+		ResourcePoolCollectorEnabled:   true,
+		ResourcePoolMaxAge:             time.Duration(120) * time.Second,
+		ResourcePoolRefreshInterval:    time.Duration(60) * time.Second,
+		TagsCollectorEnbled:            true,
+		TagsCategoryToCollect:          []string{},
+		TagsMaxAge:                     time.Duration(600) * time.Second,
+		TagsRefreshInterval:            time.Duration(290) * time.Second,
+		OnDemandCacheMaxAge:            300,
+		CleanInterval:                  time.Duration(5) * time.Second,
+		ClientPoolSize:                 5,
 	}
+}
+
+func (c ScraperConfig) Validate() error {
+	if !c.HostCollectorEnabled && c.VirtualMachineCollectorEnabled {
+		return fmt.Errorf(`HostCollectorEnabled must be enabled when 
+VirtualMachineCollectorEnabled is enabled because scraper needs the hosts 
+when it queries the vm's`)
+	}
+
+	if c.ClusterMaxAge.Seconds()+5 <= c.ClusterRefreshInterval.Seconds() {
+		return fmt.Errorf("ClusterMaxAge must be more than 5sec bigger than ClusterRefreshInterval")
+	}
+	if c.ComputeResourceMaxAge.Seconds()+5 <= c.ComputeResourceRefreshInterval.Seconds() {
+		return fmt.Errorf("ComputeResourceMaxAge must be more than 5sec bigger than ComputeResourceRefreshInterval")
+	}
+	if c.DatastoreMaxAge.Seconds()+5 <= c.DatastoreRefreshInterval.Seconds() {
+		return fmt.Errorf("DatastoreMaxAge must be more than 5sec bigger than DatastoreRefreshInterval")
+	}
+	if c.HostMaxAge.Seconds()+5 <= c.HostRefreshInterval.Seconds() {
+		return fmt.Errorf("HostMaxAge must be more than 5sec bigger than HostRefreshInterval")
+	}
+	if c.ResourcePoolMaxAge.Seconds()+5 <= c.ResourcePoolRefreshInterval.Seconds() {
+		return fmt.Errorf("ResourcePoolMaxAge must be more than 5sec bigger than ResourcePoolRefreshInterval")
+	}
+	if c.SpodMaxAge.Seconds()+5 <= c.SpodRefreshInterval.Seconds() {
+		return fmt.Errorf("SpodMaxAge must be more than 5sec bigger than SpodRefreshInterval")
+	}
+	if c.TagsMaxAge.Seconds()+5 <= c.TagsRefreshInterval.Seconds() {
+		return fmt.Errorf("TagsMaxAge must be more than 5sec bigger than TagsRefreshInterval")
+	}
+	if c.VirtualMachineMaxAge.Seconds()+5 <= c.VirtualMachineRefreshInterval.Seconds() {
+		return fmt.Errorf("VirtualMachineMaxAge must be more than 5sec bigger than VirtualMachineRefreshInterval")
+	}
+	return nil
 }
 
 func (c ScraperConfig) URL() (*url.URL, error) {

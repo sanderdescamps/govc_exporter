@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	kingpin "github.com/alecthomas/kingpin/v2"
 	"github.com/intrinsec/govc_exporter/collector"
 	"github.com/intrinsec/govc_exporter/collector/scraper"
@@ -48,37 +50,40 @@ func LoadConfig() Config {
 		username = kingpin.Flag("collector.vc.username", "vc api username").Envar("VC_USERNAME").Required().String()
 		password = kingpin.Flag("collector.vc.password", "vc api password").Envar("VC_PASSWORD").Required().String()
 
-		// hostEnabled           = kingpin.Flag("scraper.esx", "Enable host metrics").Default("True").String() //Host always required
-		datastoreEnabled      = kingpin.Flag("scraper.ds", "Enable datastore metrics").Default("True").String()
-		repoolEnabled         = kingpin.Flag("scraper.repool", "Enable resource pool metrics").Default("True").String()
-		storagePodEnabled     = kingpin.Flag("scraper.spod", "Enable datastore cluster metrics").Default("True").String()
-		virtualMachineEnabled = kingpin.Flag("scraper.vm", "Enable virtualmachine metrics").Default("True").String()
-		clusterEnabled        = kingpin.Flag("scraper.cluster", "Enable cluster metrics").Default("True").String()
-		tagsEnabled           = kingpin.Flag("scraper.tags", "Collect tags").Default("True").String()
+		hostEnabled            = kingpin.Flag("scraper.esx", "Enable host scraper").Default("True").Bool()
+		datastoreEnabled       = kingpin.Flag("scraper.ds", "Enable datastore scraper").Default("True").Bool()
+		repoolEnabled          = kingpin.Flag("scraper.repool", "Enable resource pool scraper").Default("True").Bool()
+		storagePodEnabled      = kingpin.Flag("scraper.spod", "Enable datastore cluster scraper").Default("True").Bool()
+		virtualMachineEnabled  = kingpin.Flag("scraper.vm", "Enable virtualmachine scraper").Default("True").Bool()
+		computeResourceEnabled = kingpin.Flag("scraper.cluster", "Enable cluster scraper").Default("True").Bool()
+		clusterEnabled         = kingpin.Flag("scraper.compute_resource", "Enable compute_resource scraper").Default("True").Bool()
+		tagsEnabled            = kingpin.Flag("scraper.tags", "Collect tags").Default("True").Bool()
 
-		hostMaxAgeSec                    = kingpin.Flag("scraper.host.max_age", "time in seconds hosts are cached").Default("60").Int64()
-		hostRefreshIntervalSec           = kingpin.Flag("scraper.host.refresh_interval", "interval hosts are refreshed").Default("25").Int64()
-		clusterMaxAgeSec                 = kingpin.Flag("scraper.cluster.max_age", "time in seconds clusters are cached").Default("300").Int64()
-		clusterRefreshIntervalSec        = kingpin.Flag("scraper.cluster.refresh_interval", "interval clusters are refreshed").Default("25").Int64()
-		virtualMachineMaxAgeSec          = kingpin.Flag("scraper.vm.max_age", "time in seconds vm's are cached").Default("120").Int64()
-		virtualMachineRefreshIntervalSec = kingpin.Flag("scraper.vm.refresh_interval", "interval vm's are refreshed").Default("55").Int64()
-		datastoreMaxAgeSec               = kingpin.Flag("scraper.datastore.max_age", "time in seconds datastores are cached").Default("120").Int64()
-		datastoreRefreshIntervalSec      = kingpin.Flag("scraper.datastore.refresh_interval", "interval datastores are refreshed").Default("55").Int64()
-		spodMaxAgeSec                    = kingpin.Flag("scraper.spod.max_age", "time in seconds spods are cached").Default("120").Int64()
-		spodRefreshIntervalSec           = kingpin.Flag("scraper.spod.refresh_interval", "interval spods are refreshed").Default("55").Int64()
-		resourcePoolMaxAgeSec            = kingpin.Flag("scraper.repool.max_age", "time in seconds resource pools are cached").Default("120").Int64()
-		resourcePoolRefreshIntervalSec   = kingpin.Flag("scraper.repool.refresh_interval", "interval resource pools are refreshed").Default("55").Int64()
-		tagsMaxAgeSec                    = kingpin.Flag("scraper.tags.max_age", "time in seconds tags are cached").Default("600").Int64()
-		tagsRefreshIntervalSec           = kingpin.Flag("scraper.tags.refresh_interval", "interval tags are refreshed").Default("290").Int64()
+		hostMaxAgeSec                     = kingpin.Flag("scraper.host.max_age", "time in seconds hosts are cached").Default("60").Int64()
+		hostRefreshIntervalSec            = kingpin.Flag("scraper.host.refresh_interval", "interval hosts are refreshed").Default("25").Int64()
+		computeResourceMaxAgeSec          = kingpin.Flag("scraper.compute_resource.max_age", "time in seconds clusters are cached").Default("300").Int64()
+		computeResourceRefreshIntervalSec = kingpin.Flag("scraper.compute_resource.refresh_interval", "interval clusters are refreshed").Default("25").Int64()
+		clusterMaxAgeSec                  = kingpin.Flag("scraper.cluster.max_age", "time in seconds clusters are cached").Default("300").Int64()
+		clusterRefreshIntervalSec         = kingpin.Flag("scraper.cluster.refresh_interval", "interval clusters are refreshed").Default("25").Int64()
+		virtualMachineMaxAgeSec           = kingpin.Flag("scraper.vm.max_age", "time in seconds vm's are cached").Default("120").Int64()
+		virtualMachineRefreshIntervalSec  = kingpin.Flag("scraper.vm.refresh_interval", "interval vm's are refreshed").Default("55").Int64()
+		datastoreMaxAgeSec                = kingpin.Flag("scraper.datastore.max_age", "time in seconds datastores are cached").Default("120").Int64()
+		datastoreRefreshIntervalSec       = kingpin.Flag("scraper.datastore.refresh_interval", "interval datastores are refreshed").Default("55").Int64()
+		spodMaxAgeSec                     = kingpin.Flag("scraper.spod.max_age", "time in seconds spods are cached").Default("120").Int64()
+		spodRefreshIntervalSec            = kingpin.Flag("scraper.spod.refresh_interval", "interval spods are refreshed").Default("55").Int64()
+		resourcePoolMaxAgeSec             = kingpin.Flag("scraper.repool.max_age", "time in seconds resource pools are cached").Default("120").Int64()
+		resourcePoolRefreshIntervalSec    = kingpin.Flag("scraper.repool.refresh_interval", "interval resource pools are refreshed").Default("55").Int64()
+		tagsMaxAgeSec                     = kingpin.Flag("scraper.tags.max_age", "time in seconds tags are cached").Default("600").Int64()
+		tagsRefreshIntervalSec            = kingpin.Flag("scraper.tags.refresh_interval", "interval tags are refreshed").Default("290").Int64()
 
 		onDemandCacheMaxAge           = kingpin.Flag("scraper.on_demand_cache.max_age", "time in seconds the scraper keeps all non-cache data. Used to get parent objects").Default("300").Int64()
 		cleanIntervalSec              = kingpin.Flag("scraper.clean_interval", "interval the scraper cleans up old data").Default("5").Int64()
 		clientPoolSize                = kingpin.Flag("scraper.client_pool_size", "number of simultanious requests to vCenter api").Default("5").Int()
-		useIsecSpecifics              = kingpin.Flag("collector.intrinsec", "Enable intrinsec specific features").Bool()
-		virtualMachineAdvancedStorage = kingpin.Flag("collector.vm.disk", "Collect extra vm disk metrics").Default("false").String()
-		virtualMachineAdvancedNetwork = kingpin.Flag("collector.vm.network", "Collect extra vm network metrics").Default("false").String()
+		useIsecSpecifics              = kingpin.Flag("collector.intrinsec", "Enable intrinsec specific features").Default("false").Bool()
+		virtualMachineAdvancedStorage = kingpin.Flag("collector.vm.disk", "Collect extra vm disk metrics").Default("false").Bool()
+		virtualMachineAdvancedNetwork = kingpin.Flag("collector.vm.network", "Collect extra vm network metrics").Default("false").Bool()
 
-		hostStorage = kingpin.Flag("collector.host.storage", "Collect host storage metrics").Default("false").String()
+		hostStorage = kingpin.Flag("collector.host.storage", "Collect host storage metrics").Default("false").Bool()
 
 		clusterTagLabel        = kingpin.Flag("collector.cluster.tag_label", "List of vmware tag categories to collect which will be added as label in metrics").Strings()
 		datastoreTagLabel      = kingpin.Flag("collector.datastore.tag_label", "List of vmware tag categories to collect which will be added as label in metrics").Strings()
@@ -109,40 +114,44 @@ func LoadConfig() Config {
 		MetricPath:    *metricsPath,
 		PromlogConfig: promlogConfig,
 		ScraperConfig: &scraper.ScraperConfig{
-			Endpoint:                         *endpoint,
-			Username:                         *username,
-			Password:                         *password,
-			HostMaxAgeSec:                    *hostMaxAgeSec,
-			HostRefreshIntervalSec:           *hostRefreshIntervalSec,
-			ClusterCollectorEnabled:          string2bool(*clusterEnabled),
-			ClusterMaxAgeSec:                 *clusterMaxAgeSec,
-			ClusterRefreshIntervalSec:        *clusterRefreshIntervalSec,
-			VirtualMachineCollectorEnabled:   string2bool(*virtualMachineEnabled),
-			VirtualMachineMaxAgeSec:          *virtualMachineMaxAgeSec,
-			VirtualMachineRefreshIntervalSec: *virtualMachineRefreshIntervalSec,
-			DatastoreCollectorEnabled:        string2bool(*datastoreEnabled),
-			DatastoreMaxAgeSec:               *datastoreMaxAgeSec,
-			DatastoreRefreshIntervalSec:      *datastoreRefreshIntervalSec,
-			SpodCollectorEnabled:             string2bool(*storagePodEnabled),
-			SpodMaxAgeSec:                    *spodMaxAgeSec,
-			SpodRefreshIntervalSec:           *spodRefreshIntervalSec,
-			ResourcePoolCollectorEnabled:     string2bool(*repoolEnabled),
-			ResourcePoolMaxAgeSec:            *resourcePoolMaxAgeSec,
-			ResourcePoolRefreshIntervalSec:   *resourcePoolRefreshIntervalSec,
-			TagsCollectorEnbled:              string2bool(*tagsEnabled),
-			TagsCategoryToCollect:            scraperLabelCats,
-			TagsMaxAgeSec:                    *tagsMaxAgeSec,
-			TagsRefreshIntervalSec:           *tagsRefreshIntervalSec,
+			Endpoint:                        *endpoint,
+			Username:                        *username,
+			Password:                        *password,
+			HostCollectorEnabled:            *hostEnabled,
+			HostMaxAge:                      time.Duration(*hostMaxAgeSec) * time.Second,
+			HostRefreshInterval:             time.Duration(*hostRefreshIntervalSec) * time.Second,
+			ComputeResourceCollectorEnabled: *computeResourceEnabled,
+			ComputeResourceMaxAge:           time.Duration(*computeResourceMaxAgeSec) * time.Second,
+			ComputeResourceRefreshInterval:  time.Duration(*computeResourceRefreshIntervalSec) * time.Second,
+			ClusterCollectorEnabled:         *clusterEnabled,
+			ClusterMaxAge:                   time.Duration(*clusterMaxAgeSec) * time.Second,
+			ClusterRefreshInterval:          time.Duration(*clusterRefreshIntervalSec) * time.Second,
+			VirtualMachineCollectorEnabled:  *virtualMachineEnabled,
+			VirtualMachineMaxAge:            time.Duration(*virtualMachineMaxAgeSec) * time.Second,
+			VirtualMachineRefreshInterval:   time.Duration(*virtualMachineRefreshIntervalSec) * time.Second,
+			DatastoreCollectorEnabled:       *datastoreEnabled,
+			DatastoreMaxAge:                 time.Duration(*datastoreMaxAgeSec) * time.Second,
+			DatastoreRefreshInterval:        time.Duration(*datastoreRefreshIntervalSec) * time.Second,
+			SpodCollectorEnabled:            *storagePodEnabled,
+			SpodMaxAge:                      time.Duration(*spodMaxAgeSec) * time.Second,
+			SpodRefreshInterval:             time.Duration(*spodRefreshIntervalSec) * time.Second,
+			ResourcePoolCollectorEnabled:    *repoolEnabled,
+			ResourcePoolMaxAge:              time.Duration(*resourcePoolMaxAgeSec) * time.Second,
+			ResourcePoolRefreshInterval:     time.Duration(*resourcePoolRefreshIntervalSec) * time.Second,
+			TagsCollectorEnbled:             *tagsEnabled,
+			TagsCategoryToCollect:           scraperLabelCats,
+			TagsMaxAge:                      time.Duration(*tagsMaxAgeSec) * time.Second,
+			TagsRefreshInterval:             time.Duration(*tagsRefreshIntervalSec) * time.Second,
 
-			OnDemandCacheMaxAge: *onDemandCacheMaxAge,
-			CleanIntervalSec:    *cleanIntervalSec,
+			OnDemandCacheMaxAge: time.Duration(*onDemandCacheMaxAge) * time.Second,
+			CleanInterval:       time.Duration(*cleanIntervalSec) * time.Second,
 			ClientPoolSize:      *clientPoolSize,
 		},
 		CollectorConfig: &collector.CollectorConfig{
 			UseIsecSpecifics:         *useIsecSpecifics,
-			VMAdvancedNetworkMetrics: string2bool(*virtualMachineAdvancedNetwork),
-			VMAdvancedStorageMetrics: string2bool(*virtualMachineAdvancedStorage),
-			HostStorageMetrics:       string2bool(*hostStorage),
+			VMAdvancedNetworkMetrics: *virtualMachineAdvancedNetwork,
+			VMAdvancedStorageMetrics: *virtualMachineAdvancedStorage,
+			HostStorageMetrics:       *hostStorage,
 			DisableExporterMetrics:   *disableExporterMetrics,
 			MaxRequests:              *maxRequests,
 

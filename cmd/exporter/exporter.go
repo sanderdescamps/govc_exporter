@@ -50,6 +50,11 @@ func main() {
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
 	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "user", version.BuildUser, "date", version.BuildDate, "tags", version.GetTags())
 
+	if err := config.ScraperConfig.Validate(); err != nil {
+		logger.Error("invalid scraper config", "err", err)
+		os.Exit(1)
+	}
+
 	scraper, err := scraper.NewVCenterScraper(*config.ScraperConfig, logger)
 	if err != nil {
 		logger.Error("Failed to create VCenterScraper", "err", err)

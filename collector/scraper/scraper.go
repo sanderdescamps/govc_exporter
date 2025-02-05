@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/intrinsec/govc_exporter/collector/pool"
+	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
@@ -60,65 +60,64 @@ func NewVCenterScraper(conf ScraperConfig, logger *slog.Logger) (*VCenterScraper
 		refreshers: []*AutoRefresh{},
 		cleaners:   []*AutoClean{},
 	}
-	cleanupInterval := time.Duration(conf.CleanIntervalSec) * time.Second
 
 	if conf.ClusterCollectorEnabled {
 		scraper.Cluster = NewClusterSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Cluster, time.Duration(conf.ClusterRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Cluster, cleanupInterval, time.Duration(conf.ClusterMaxAgeSec)))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Cluster, conf.ClusterRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Cluster, conf.CleanInterval, conf.ClusterMaxAge))
 	}
 
-	if true {
+	if conf.ComputeResourceCollectorEnabled {
 		scraper.ComputeResources = NewComputeResourceSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.ComputeResources, time.Duration(conf.ClusterRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.ComputeResources, cleanupInterval, time.Duration(conf.ClusterMaxAgeSec)*time.Second))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.ComputeResources, conf.ComputeResourceRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.ComputeResources, conf.CleanInterval, conf.ComputeResourceMaxAge))
 	}
 
 	if conf.DatastoreCollectorEnabled {
 		scraper.Datastore = NewDatastoreSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Datastore, time.Duration(conf.DatastoreRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Datastore, cleanupInterval, time.Duration(conf.DatastoreMaxAgeSec)*time.Second))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Datastore, conf.DatastoreRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Datastore, conf.CleanInterval, conf.DatastoreMaxAge))
 	}
 
-	if true {
+	if conf.HostCollectorEnabled {
 		scraper.Host = NewHostSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Host, time.Duration(conf.HostRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Host, cleanupInterval, time.Duration(conf.HostMaxAgeSec)*time.Second))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Host, conf.HostRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Host, conf.CleanInterval, conf.HostMaxAge))
 	}
 
 	if conf.ResourcePoolCollectorEnabled {
 		scraper.ResourcePool = NewResourcePoolSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.ResourcePool, time.Duration(conf.ResourcePoolRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.ResourcePool, cleanupInterval, time.Duration(conf.ResourcePoolMaxAgeSec)*time.Second))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.ResourcePool, conf.ResourcePoolRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.ResourcePool, conf.CleanInterval, conf.ResourcePoolMaxAge))
 	}
 
 	if conf.SpodCollectorEnabled {
 		scraper.SPOD = NewStoragePodSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.SPOD, time.Duration(conf.SpodRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.SPOD, cleanupInterval, time.Duration(conf.SpodMaxAgeSec)*time.Second))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.SPOD, conf.SpodRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.SPOD, conf.CleanInterval, conf.SpodMaxAge))
 	}
 
 	if conf.VirtualMachineCollectorEnabled {
 		scraper.VM = NewVirtualMachineSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.VM, time.Duration(conf.VirtualMachineRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.VM, cleanupInterval, time.Duration(conf.VirtualMachineMaxAgeSec)*time.Second))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.VM, conf.VirtualMachineRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.VM, conf.CleanInterval, conf.VirtualMachineMaxAge))
 	}
 
 	if conf.SpodCollectorEnabled {
 		scraper.SPOD = NewStoragePodSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.SPOD, time.Duration(conf.SpodRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.SPOD, cleanupInterval, time.Duration(conf.SpodMaxAgeSec)*time.Second))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.SPOD, conf.SpodRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.SPOD, conf.CleanInterval, conf.SpodMaxAge))
 	}
 
 	if conf.TagsCollectorEnbled {
 		logger.Info("Create TagsSensor", "TagsCategoryToCollect", conf.TagsCategoryToCollect)
 		scraper.Tags = NewTagsSensorWithTaglist(&scraper, conf.TagsCategoryToCollect)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Tags, time.Duration(conf.TagsRefreshIntervalSec)*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Tags, cleanupInterval, time.Duration(conf.TagsMaxAgeSec)*time.Second))
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Tags, conf.TagsRefreshInterval))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Tags, conf.CleanInterval, conf.TagsMaxAge))
 	}
 
 	scraper.Remain = NewOnDemandSensor(&scraper, logger)
-	scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Remain, cleanupInterval, time.Duration(conf.OnDemandCacheMaxAge)*time.Second))
+	scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Remain, conf.CleanInterval, conf.OnDemandCacheMaxAge))
 
 	return &scraper, nil
 }
