@@ -272,19 +272,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 
-		poolName := "NONE"
-		var parentChain scraper.ParentChain
-		var pool *mo.ResourcePool
-		rePoolRef := vm.ResourcePool
-		if rePoolRef != nil {
-			pool = c.scraper.ResourcePool.Get(*rePoolRef)
-		}
-		if pool != nil {
-			poolName = pool.Name
-			parentChain = c.scraper.GetParentChain(*pool.Parent)
-		} else {
-			parentChain = c.scraper.GetParentChain(vm.Self)
-		}
+		parentChain := c.scraper.GetParentChain(vm.Self)
 
 		extraLabelValues := func() []string {
 			result := []string{}
@@ -311,7 +299,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 				annotation.Service,
 			)
 		}
-		hostLabelValues := append(labelValues, poolName, parentChain.DC, parentChain.Cluster, esxName)
+		hostLabelValues := append(labelValues, parentChain.ResourcePool, parentChain.DC, parentChain.Cluster, esxName)
 
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.numCPU, prometheus.GaugeValue, float64(vm.Config.Hardware.NumCPU), labelValues...,

@@ -240,84 +240,112 @@ func (c *VCenterScraper) Stop(logger *slog.Logger) {
 }
 
 type ParentChain struct {
-	DC      string
-	Cluster string
-	SPOD    string
-	Chain   []string
+	DC           string
+	Cluster      string
+	ResourcePool string
+	SPOD         string
+	Chain        []string
 }
 
 func (c *VCenterScraper) GetParentChain(ref types.ManagedObjectReference) ParentChain {
 	return c.walkParentChain(&ref, nil)
 }
 
+func (c *VCenterScraper) GetManagedEntity(ref *types.ManagedObjectReference) *mo.ManagedEntity {
+	if ref == nil {
+		return nil
+	} else if c.Cluster != nil && ref.Type == string(types.ManagedObjectTypesClusterComputeResource) {
+		return &(c.Cluster.Get(*ref).ManagedEntity)
+	} else if c.ComputeResources != nil && ref.Type == string(types.ManagedObjectTypesComputeResource) {
+		return &(c.ComputeResources.Get(*ref).ManagedEntity)
+	} else if c.Datastore != nil && ref.Type == string(types.ManagedObjectTypesDatastore) {
+		return &(c.Datastore.Get(*ref).ManagedEntity)
+	} else if c.Host != nil && ref.Type == string(types.ManagedObjectTypesHostSystem) {
+		return &(c.Host.Get(*ref).ManagedEntity)
+	} else if c.SPOD != nil && ref.Type == string(types.ManagedObjectTypesStoragePod) {
+		return &(c.SPOD.Get(*ref).ManagedEntity)
+	} else if c.ResourcePool != nil && ref.Type == string(types.ManagedObjectTypesResourcePool) {
+		return &(c.ResourcePool.Get(*ref).ManagedEntity)
+	} else if c.VM != nil && ref.Type == string(types.ManagedObjectTypesVirtualMachine) {
+		return &(c.VM.Get(*ref).ManagedEntity)
+	} else {
+		return c.Remain.Get(*ref)
+	}
+}
+
 func (c *VCenterScraper) walkParentChain(ref *types.ManagedObjectReference, chain *ParentChain) ParentChain {
 
 	if chain == nil {
-		chain = &ParentChain{}
+		chain = &ParentChain{
+			DC:           "",
+			Cluster:      "",
+			SPOD:         "",
+			ResourcePool: "",
+			Chain:        []string{},
+		}
 	}
 
 	if ref == nil {
 		return *chain
-	} else if ref.Type == "StoragePod" && c.SPOD != nil {
-		entity := c.SPOD.Get(*ref)
-		if entity != nil {
-			chain.SPOD = entity.Name
-			chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else if ref.Type == "HostSystem" && c.Host != nil {
-		entity := c.Host.Get(*ref)
-		if entity != nil {
-			chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else if ref.Type == "ClusterComputeResource" && c.Cluster != nil {
+	}
+
+	chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
+
+	if c.Cluster != nil && ref.Type == string(types.ManagedObjectTypesClusterComputeResource) {
 		entity := c.Cluster.Get(*ref)
 		if entity != nil {
 			chain.Cluster = entity.Name
-			chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
 			return c.walkParentChain(entity.Parent, chain)
 		}
-	} else if ref.Type == "ComputeResource" && c.ComputeResources != nil {
+	} else if c.ComputeResources != nil && ref.Type == string(types.ManagedObjectTypesComputeResource) {
 		entity := c.ComputeResources.Get(*ref)
 		if entity != nil {
-			chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
 			return c.walkParentChain(entity.Parent, chain)
 		}
-	} else if ref.Type == "VirtualMachine" && c.VM != nil {
+	} else if c.SPOD != nil && ref.Type == string(types.ManagedObjectTypesStoragePod) {
+		entity := c.SPOD.Get(*ref)
+		if entity != nil {
+			chain.SPOD = entity.Name
+			return c.walkParentChain(entity.Parent, chain)
+		}
+	} else if c.ResourcePool != nil && ref.Type == string(types.ManagedObjectTypesResourcePool) {
+		entity := c.ResourcePool.Get(*ref)
+		if entity != nil {
+			chain.ResourcePool = entity.Name
+			return c.walkParentChain(entity.Parent, chain)
+		}
+	} else if c.Host != nil && ref.Type == string(types.ManagedObjectTypesHostSystem) {
+		entity := c.Host.Get(*ref)
+		if entity != nil {
+			return c.walkParentChain(entity.Parent, chain)
+		}
+	} else if c.VM != nil && ref.Type == string(types.ManagedObjectTypesVirtualMachine) {
 		entity := c.VM.Get(*ref)
 		if entity != nil {
-			chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else if ref.Type == "Datastore" && c.Datastore != nil {
-		entity := c.Datastore.Get(*ref)
-		if entity != nil && c.SPOD != nil {
-			chain.SPOD = func() string {
-				for _, spod := range c.SPOD.GetAll() {
-					for _, child := range spod.ChildEntity {
-						if child == *ref {
-							return spod.Name
-						}
-					}
-				}
-				return "NONE"
-			}()
+			if entity.ResourcePool != nil {
+				return c.walkParentChain(entity.ResourcePool, chain)
+			} else {
+				return c.walkParentChain(entity.Parent, chain)
+			}
 
-			chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
+		}
+	} else if c.Datastore != nil && ref.Type == string(types.ManagedObjectTypesDatastore) {
+		entity := c.Datastore.Get(*ref)
+		if entity != nil {
 			return c.walkParentChain(entity.Parent, chain)
 		}
 	} else {
 		entity := c.Remain.Get(*ref)
 		if entity != nil {
-			if entity.Self.Type == "Datacenter" {
+			if entity.Self.Type == string(types.ManagedObjectTypesDatacenter) {
 				chain.DC = entity.Name
-			} else if entity.Self.Type == "ClusterComputeResource" {
+			} else if entity.Self.Type == string(types.ManagedObjectTypesClusterComputeResource) {
 				chain.Cluster = entity.Name
-			} else if entity.Self.Type == "StoragePod" {
+			} else if entity.Self.Type == string(types.ManagedObjectTypesResourcePool) {
+				chain.ResourcePool = entity.Name
+			} else if entity.Self.Type == string(types.ManagedObjectTypesStoragePod) {
 				chain.SPOD = entity.Name
 			}
-			chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
 			return c.walkParentChain(entity.Parent, chain)
 		}
 	}
