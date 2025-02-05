@@ -17,7 +17,6 @@
 package collector
 
 import (
-	"fmt"
 	"reflect"
 	"strconv"
 
@@ -131,8 +130,6 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 			case types.VvolDatastoreInfo:
 				kind = "vvol"
 			}
-		} else {
-			fmt.Printf("info is nil")
 		}
 
 		parentChain := c.scraper.GetParentChain(d.Self)

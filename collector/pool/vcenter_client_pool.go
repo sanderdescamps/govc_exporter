@@ -120,7 +120,6 @@ func (p *VCenterClientPool) Acquire() (*govmomi.Client, func(), error) {
 	client, release, err := p.MultiAccessPool.Acquire()
 	ctx := context.Background()
 	if session, _ := client.SessionManager.UserSession(ctx); session == nil {
-		fmt.Println("client not valid")
 		release()
 		err := p.reInit()
 		if err != nil {
