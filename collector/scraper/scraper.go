@@ -61,55 +61,55 @@ func NewVCenterScraper(conf ScraperConfig, logger *slog.Logger) (*VCenterScraper
 		cleaners:   []*AutoClean{},
 	}
 
-	if conf.ClusterCollectorEnabled {
+	if conf.ClusterScraperEnabled {
 		scraper.Cluster = NewClusterSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Cluster, conf.ClusterRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Cluster, conf.CleanInterval, conf.ClusterMaxAge))
 	}
 
-	if conf.ComputeResourceCollectorEnabled {
+	if conf.ComputeResourceScraperEnabled {
 		scraper.ComputeResources = NewComputeResourceSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.ComputeResources, conf.ComputeResourceRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.ComputeResources, conf.CleanInterval, conf.ComputeResourceMaxAge))
 	}
 
-	if conf.DatastoreCollectorEnabled {
+	if conf.DatastoreScraperEnabled {
 		scraper.Datastore = NewDatastoreSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Datastore, conf.DatastoreRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Datastore, conf.CleanInterval, conf.DatastoreMaxAge))
 	}
 
-	if conf.HostCollectorEnabled {
+	if conf.HostScraperEnabled {
 		scraper.Host = NewHostSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Host, conf.HostRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Host, conf.CleanInterval, conf.HostMaxAge))
 	}
 
-	if conf.ResourcePoolCollectorEnabled {
+	if conf.ResourcePoolScraperEnabled {
 		scraper.ResourcePool = NewResourcePoolSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.ResourcePool, conf.ResourcePoolRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.ResourcePool, conf.CleanInterval, conf.ResourcePoolMaxAge))
 	}
 
-	if conf.SpodCollectorEnabled {
+	if conf.SpodScraperEnabled {
 		scraper.SPOD = NewStoragePodSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.SPOD, conf.SpodRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.SPOD, conf.CleanInterval, conf.SpodMaxAge))
 	}
 
-	if conf.VirtualMachineCollectorEnabled {
+	if conf.VirtualMachineScraperEnabled {
 		scraper.VM = NewVirtualMachineSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.VM, conf.VirtualMachineRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.VM, conf.CleanInterval, conf.VirtualMachineMaxAge))
 	}
 
-	if conf.SpodCollectorEnabled {
+	if conf.SpodScraperEnabled {
 		scraper.SPOD = NewStoragePodSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.SPOD, conf.SpodRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.SPOD, conf.CleanInterval, conf.SpodMaxAge))
 	}
 
-	if conf.TagsCollectorEnbled {
+	if conf.TagsScraperEnabled {
 		logger.Info("Create TagsSensor", "TagsCategoryToCollect", conf.TagsCategoryToCollect)
 		scraper.Tags = NewTagsSensorWithTaglist(&scraper, conf.TagsCategoryToCollect)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Tags, conf.TagsRefreshInterval))
@@ -156,13 +156,13 @@ func (c *VCenterScraper) Status() ScraperStatus {
 
 	sensorEnabled := map[string]bool{
 		"host":             true,
-		"cluster":          c.config.ClusterCollectorEnabled,
-		"compute_resource": c.config.ClusterCollectorEnabled,
-		"datastore":        c.config.DatastoreCollectorEnabled,
-		"vm":               c.config.VirtualMachineCollectorEnabled,
-		"spod":             c.config.SpodCollectorEnabled,
-		"repool":           c.config.ResourcePoolCollectorEnabled,
-		"tags":             c.config.TagsCollectorEnbled,
+		"cluster":          c.config.ClusterScraperEnabled,
+		"compute_resource": c.config.ClusterScraperEnabled,
+		"datastore":        c.config.DatastoreScraperEnabled,
+		"vm":               c.config.VirtualMachineScraperEnabled,
+		"spod":             c.config.SpodScraperEnabled,
+		"repool":           c.config.ResourcePoolScraperEnabled,
+		"tags":             c.config.TagsScraperEnabled,
 	}
 
 	sensorAvailable := map[string]bool{
