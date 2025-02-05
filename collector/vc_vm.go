@@ -72,7 +72,7 @@ type virtualMachineCollector struct {
 }
 
 func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *virtualMachineCollector {
-	labels := []string{"uuid", "name", "hostname"}
+	labels := []string{"uuid", "name", "guestname", "template"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {
 		labels = append(labels, extraLabels...)
@@ -288,7 +288,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			return result
 		}()
 
-		labelValues := []string{vm.Config.Uuid, vm.Name, summary.Guest.HostName}
+		labelValues := []string{vm.Config.Uuid, vm.Name, summary.Guest.HostName, strconv.FormatBool(vm.Config.Template)}
 		labelValues = append(labelValues, extraLabelValues...)
 		if c.useIsecSpecifics {
 			annotation := GetIsecAnnotation(vm)
@@ -458,10 +458,12 @@ func GetIsecAnnotation(vm mo.VirtualMachine) IsecAnnotation {
 }
 
 func ConvertVirtualMachinePowerStateToValue(s types.VirtualMachinePowerState) float64 {
-	if s == types.VirtualMachinePowerStateSuspended {
+	if s == types.VirtualMachinePowerStatePoweredOff {
 		return 1.0
-	} else if s == types.VirtualMachinePowerStatePoweredOn {
+	} else if s == types.VirtualMachinePowerStateSuspended {
 		return 2.0
+	} else if s == types.VirtualMachinePowerStatePoweredOn {
+		return 3.0
 	}
 	return 0
 }
