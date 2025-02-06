@@ -75,6 +75,6 @@ func (s *ComputeResourceSensor) Refresh(ctx context.Context, logger *slog.Logger
 	return nil
 }
 
-func (s *ComputeResourceSensor) Clean(maxAge time.Duration) {
-	s.BaseSensor.Clean(maxAge)
+func (s *ComputeResourceSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+	s.BaseSensor.Clean(maxAge, logger)
 }

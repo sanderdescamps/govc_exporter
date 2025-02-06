@@ -7,7 +7,7 @@ import (
 )
 
 type Cleanable interface {
-	Clean(maxAge time.Duration)
+	Clean(maxAge time.Duration, logger *slog.Logger)
 }
 
 type AutoClean struct {
@@ -29,8 +29,7 @@ func (o *AutoClean) Start(logger *slog.Logger) {
 
 	go func() {
 		for ; true; <-o.cleanupTicker.C {
-
-			o.sensor.Clean(o.maxAge)
+			o.sensor.Clean(o.maxAge, logger)
 			logger.Debug("clean successfull", "sensor_type", sensorKind)
 
 		}

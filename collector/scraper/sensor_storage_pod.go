@@ -75,6 +75,6 @@ func (s *StoragePodSensor) Refresh(ctx context.Context, logger *slog.Logger) err
 	return nil
 }
 
-func (s *StoragePodSensor) Clean(maxAge time.Duration) {
-	s.BaseSensor.Clean(maxAge)
+func (s *StoragePodSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+	s.BaseSensor.Clean(maxAge, logger)
 }

@@ -73,6 +73,6 @@ func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity
 	return &entity
 }
 
-func (s *OnDemandSensor) Clean(maxAge time.Duration) {
-	s.BaseSensor.Clean(maxAge)
+func (s *OnDemandSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+	s.BaseSensor.Clean(maxAge, logger)
 }

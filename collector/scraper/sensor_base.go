@@ -1,6 +1,7 @@
 package scraper
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -25,13 +26,15 @@ type BaseSensor[K comparable, T any] struct {
 	metrics    *SensorMetric
 }
 
-func (s *BaseSensor[K, T]) Clean(maxAge time.Duration) {
+func (s *BaseSensor[K, T]) Clean(maxAge time.Duration, logger *slog.Logger) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	cleanCache := map[K]*CacheItem[T]{}
 	for k, v := range s.cache {
 		if !v.Expired(maxAge) {
 			cleanCache[k] = v
+		} else {
+			logger.Debug("Cleanup metric from sensor", "ref", k)
 		}
 	}
 	s.cache = cleanCache

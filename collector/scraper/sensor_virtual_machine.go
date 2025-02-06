@@ -176,6 +176,6 @@ func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger)
 	return nil
 }
 
-func (s *VirtualMachineSensor) Clean(maxAge time.Duration) {
-	s.BaseSensor.Clean(maxAge)
+func (s *VirtualMachineSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+	s.BaseSensor.Clean(maxAge, logger)
 }

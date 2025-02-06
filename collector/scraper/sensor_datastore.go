@@ -76,6 +76,6 @@ func (s *DatastoreSensor) Refresh(ctx context.Context, logger *slog.Logger) erro
 	return nil
 }
 
-func (s *DatastoreSensor) Clean(maxAge time.Duration) {
-	s.BaseSensor.Clean(maxAge)
+func (s *DatastoreSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+	s.BaseSensor.Clean(maxAge, logger)
 }

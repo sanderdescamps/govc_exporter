@@ -117,8 +117,8 @@ func (s *TagsSensor) UpdateCatCache(cats []tags.Category) {
 	s.catCache = newCatCache
 }
 
-func (s *TagsSensor) Clean(maxAge time.Duration) {
-	s.BaseSensor.Clean(maxAge)
+func (s *TagsSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+	s.BaseSensor.Clean(maxAge, logger)
 }
 
 func (s *TagsSensor) GetCategoryID(cat string) string {

@@ -73,6 +73,6 @@ func (s *ClusterSensor) Refresh(ctx context.Context, logger *slog.Logger) error 
 	return nil
 }
 
-func (s *ClusterSensor) Clean(maxAge time.Duration) {
-	s.BaseSensor.Clean(maxAge)
+func (s *ClusterSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+	s.BaseSensor.Clean(maxAge, logger)
 }

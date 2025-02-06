@@ -80,6 +80,6 @@ func (s *HostSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
 	return nil
 }
 
-func (s *HostSensor) Clean(maxAge time.Duration) {
-	s.BaseSensor.Clean(maxAge)
+func (s *HostSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+	s.BaseSensor.Clean(maxAge, logger)
 }
