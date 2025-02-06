@@ -136,7 +136,6 @@ func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger)
 			}
 		}()
 	}
-	vms := []mo.VirtualMachine{}
 
 	readyChan := make(chan bool)
 	failed := false
@@ -146,7 +145,9 @@ func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger)
 		for {
 			select {
 			case r := <-resultChan:
-				vms = append(vms, *r...)
+				for _, vm := range *r {
+					s.Update(vm.Self, &vm)
+				}
 			case m := <-metricChan:
 				allClientWaitTimes = append(allClientWaitTimes, m.ClientWaitTime)
 				allQueryTimes = append(allQueryTimes, m.QueryTime)
@@ -168,10 +169,6 @@ func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger)
 		ClientWaitTime: avgDuration(allQueryTimes),
 		Status:         !failed,
 	})
-
-	for _, vm := range vms {
-		s.Update(vm.Self, &vm)
-	}
 
 	return nil
 }

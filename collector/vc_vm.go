@@ -72,7 +72,7 @@ type virtualMachineCollector struct {
 }
 
 func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *virtualMachineCollector {
-	labels := []string{"uuid", "name", "guestname", "template"}
+	labels := []string{"uuid", "name", "guestname", "template", "vm_id"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {
 		labels = append(labels, extraLabels...)
@@ -288,7 +288,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			return result
 		}()
 
-		labelValues := []string{vm.Config.Uuid, vm.Name, summary.Guest.HostName, strconv.FormatBool(vm.Config.Template)}
+		labelValues := []string{vm.Config.Uuid, vm.Name, summary.Guest.HostName, strconv.FormatBool(vm.Config.Template), vm.Self.Value}
 		labelValues = append(labelValues, extraLabelValues...)
 		if c.useIsecSpecifics {
 			annotation := GetIsecAnnotation(vm)
