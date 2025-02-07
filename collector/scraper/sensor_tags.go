@@ -3,6 +3,7 @@ package scraper
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -14,7 +15,6 @@ import (
 type TagsSensor struct {
 	BaseSensor[types.ManagedObjectReference, []*tags.Tag]
 	Refreshable
-	Cleanable
 	TagCatsToObserve []string
 	catCacheLock     sync.Mutex
 	catCache         map[string]tags.Category
@@ -43,6 +43,17 @@ func NewTagsSensorWithTaglist(scraper *VCenterScraper, t []string) *TagsSensor {
 }
 
 func (s *TagsSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+	sensorKind := reflect.TypeOf(s).String()
+	if hasLock := s.refreshLock.TryLock(); hasLock {
+		defer s.refreshLock.Unlock()
+		return s.unsafeRefresh(ctx, logger)
+	} else {
+		logger.Info("Sensor Refresh already running", "sensor_type", sensorKind)
+	}
+	return nil
+}
+
+func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
 	t1 := time.Now()
 
 	restclient, release, err := s.scraper.clientPool.AcquireRest()
@@ -115,10 +126,6 @@ func (s *TagsSensor) UpdateCatCache(cats []tags.Category) {
 	s.catCacheLock.Lock()
 	defer s.catCacheLock.Unlock()
 	s.catCache = newCatCache
-}
-
-func (s *TagsSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
-	s.BaseSensor.Clean(maxAge, logger)
 }
 
 func (s *TagsSensor) GetCategoryID(cat string) string {

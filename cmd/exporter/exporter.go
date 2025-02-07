@@ -21,7 +21,6 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -72,7 +71,15 @@ func main() {
 		Addr: config.ListenAddress,
 	}
 
-	http.HandleFunc(config.MetricPath, collector.GetMetricHandler())
+	http.HandleFunc(config.MetricPath, collector.GetMetricHandler(logger))
+	if config.AllowManualRefresh {
+		http.HandleFunc("/refresh/{sensor}", collector.GetRefreshHandler(logger))
+	}
+	if config.AllowDumps {
+		http.HandleFunc("/dump", collector.GetDumpHandler(logger))
+		http.HandleFunc("/dump/{sensor}", collector.GetDumpHandler(logger))
+	}
+
 	http.HandleFunc("/", defaultHandler(config.MetricPath))
 
 	shutdownChan := make(chan bool, 1)
@@ -102,13 +109,6 @@ func main() {
 
 	<-shutdownChan
 	logger.Info("Graceful shutdown complete.")
-}
-
-func string2bool(s string) bool {
-	if b, err := strconv.ParseBool(s); err == nil {
-		return b
-	}
-	return false
 }
 
 func mergeLists[T any](l ...*[]T) []T {

@@ -3,6 +3,7 @@ package scraper
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/vmware/govmomi/view"
@@ -13,7 +14,6 @@ import (
 type HostSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.HostSystem]
 	Refreshable
-	Cleanable
 }
 
 func NewHostSensor(scraper *VCenterScraper) *HostSensor {
@@ -27,6 +27,17 @@ func NewHostSensor(scraper *VCenterScraper) *HostSensor {
 }
 
 func (s *HostSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+	sensorKind := reflect.TypeOf(s).String()
+	if hasLock := s.refreshLock.TryLock(); hasLock {
+		defer s.refreshLock.Unlock()
+		return s.unsafeRefresh(ctx, logger)
+	} else {
+		logger.Info("Sensor Refresh already running", "sensor_type", sensorKind)
+	}
+	return nil
+}
+
+func (s *HostSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
 	t1 := time.Now()
 
 	client, release, err := s.scraper.clientPool.Acquire()
@@ -78,8 +89,4 @@ func (s *HostSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	return nil
-}
-
-func (s *HostSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
-	s.BaseSensor.Clean(maxAge, logger)
 }

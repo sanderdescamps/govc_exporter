@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sync"
 	"time"
 
@@ -15,7 +16,6 @@ import (
 type VirtualMachineSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.VirtualMachine]
 	Refreshable
-	Cleanable
 }
 
 func NewVirtualMachineSensor(scraper *VCenterScraper) *VirtualMachineSensor {
@@ -29,6 +29,17 @@ func NewVirtualMachineSensor(scraper *VCenterScraper) *VirtualMachineSensor {
 }
 
 func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+	sensorKind := reflect.TypeOf(s).String()
+	if hasLock := s.refreshLock.TryLock(); hasLock {
+		defer s.refreshLock.Unlock()
+		return s.unsafeRefresh(ctx, logger)
+	} else {
+		logger.Info("Sensor Refresh already running", "sensor_type", sensorKind)
+	}
+	return nil
+}
+
+func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
 	var hostRefs []types.ManagedObjectReference
 	hostRefs, err := func() ([]types.ManagedObjectReference, error) {
 		resultChan := make(chan *[]types.ManagedObjectReference)
@@ -171,8 +182,4 @@ func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger)
 	})
 
 	return nil
-}
-
-func (s *VirtualMachineSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
-	s.BaseSensor.Clean(maxAge, logger)
 }

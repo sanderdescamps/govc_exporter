@@ -11,6 +11,7 @@ _test
 /vendor
 /external
 /tests/gi-vcenter-data
+/dumps
 gi-*
 
 # Architecture specific extensions/prefixes

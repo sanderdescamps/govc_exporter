@@ -3,6 +3,7 @@ package scraper
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/vmware/govmomi/view"
@@ -13,7 +14,6 @@ import (
 type StoragePodSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.StoragePod]
 	Refreshable
-	Cleanable
 }
 
 func NewStoragePodSensor(scraper *VCenterScraper) *StoragePodSensor {
@@ -27,6 +27,17 @@ func NewStoragePodSensor(scraper *VCenterScraper) *StoragePodSensor {
 }
 
 func (s *StoragePodSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+	sensorKind := reflect.TypeOf(s).String()
+	if hasLock := s.refreshLock.TryLock(); hasLock {
+		defer s.refreshLock.Unlock()
+		return s.unsafeRefresh(ctx, logger)
+	} else {
+		logger.Info("Sensor Refresh already running", "sensor_type", sensorKind)
+	}
+	return nil
+}
+
+func (s *StoragePodSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
 	t1 := time.Now()
 	client, release, err := s.scraper.clientPool.Acquire()
 	if err != nil {
@@ -73,8 +84,4 @@ func (s *StoragePodSensor) Refresh(ctx context.Context, logger *slog.Logger) err
 	}
 
 	return nil
-}
-
-func (s *StoragePodSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
-	s.BaseSensor.Clean(maxAge, logger)
 }

@@ -31,7 +31,6 @@ func (o *AutoClean) Start(logger *slog.Logger) {
 		for ; true; <-o.cleanupTicker.C {
 			o.sensor.Clean(o.maxAge, logger)
 			logger.Debug("clean successfull", "sensor_type", sensorKind)
-
 		}
 	}()
 

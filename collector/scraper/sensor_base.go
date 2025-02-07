@@ -1,9 +1,14 @@
 package scraper
 
 import (
+	"encoding/json"
 	"log/slog"
+	"reflect"
 	"sync"
 	"time"
+
+	"github.com/intrinsec/govc_exporter/collector/helper"
+	"github.com/vmware/govmomi/vim25/types"
 )
 
 type HasMetrics interface {
@@ -19,11 +24,12 @@ type Sensor[K comparable, T any] interface {
 type BaseSensor[K comparable, T any] struct {
 	Sensor[K, T]
 	HasMetrics
-	cache      map[K]*CacheItem[T]
-	scraper    *VCenterScraper
-	lock       sync.Mutex
-	metricLock sync.Mutex
-	metrics    *SensorMetric
+	cache       map[K]*CacheItem[T]
+	scraper     *VCenterScraper
+	lock        sync.Mutex
+	refreshLock sync.Mutex
+	metricLock  sync.Mutex
+	metrics     *SensorMetric
 }
 
 func (s *BaseSensor[K, T]) Clean(maxAge time.Duration, logger *slog.Logger) {
@@ -104,4 +110,33 @@ func (s *BaseSensor[K, T]) Update(ref K, item *T) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.cache[ref] = NewCacheItem(item)
+}
+
+func (s *BaseSensor[K, T]) GetKind() string {
+	return reflect.ValueOf(s).String()
+}
+
+func (s *BaseSensor[K, T]) GetAllJsons() (map[string][]byte, error) {
+	result := map[string][]byte{}
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	for i, cacheItem := range s.cache {
+		name := ""
+		key := reflect.ValueOf(i).Interface()
+		if ref, ok := key.(types.ManagedObjectReference); ok {
+			name = ref.Value
+		} else {
+			name = helper.RandomString(8)
+		}
+
+		jsonBytes, err := json.MarshalIndent(map[string]any{
+			"time":   cacheItem.creation,
+			"object": cacheItem.Item,
+		}, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		result[name] = jsonBytes
+	}
+	return result, nil
 }

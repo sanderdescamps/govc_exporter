@@ -12,11 +12,13 @@ import (
 )
 
 type Config struct {
-	ListenAddress   string
-	MetricPath      string
-	ScraperConfig   *scraper.ScraperConfig
-	CollectorConfig *collector.CollectorConfig
-	PromlogConfig   *promslog.Config
+	ListenAddress      string
+	MetricPath         string
+	AllowDumps         bool
+	AllowManualRefresh bool
+	ScraperConfig      *scraper.ScraperConfig
+	CollectorConfig    *collector.CollectorConfig
+	PromlogConfig      *promslog.Config
 }
 
 func LoadConfig() Config {
@@ -37,6 +39,14 @@ func LoadConfig() Config {
 			"web.max-requests",
 			"Maximum number of parallel scrape requests. Use 0 to disable.",
 		).Default("40").Int()
+		allowManualRefresh = kingpin.Flag(
+			"web.manual-refresh",
+			"Enable /refresh/{sensor} path to trigger a refresh of a sensor.",
+		).Default("false").Bool()
+		allowDumps = kingpin.Flag(
+			"web.allow-dumps",
+			"Enable /dump path to trigger a dump of the cache data in ./dumps folder on server side. Only enable for debugging.",
+		).Default("false").Bool()
 		// disableDefaultCollectors = kingpin.Flag(
 		// 	"collector.disable-defaults",
 		// 	"Set all collectors to disabled by default.",
@@ -110,9 +120,11 @@ func LoadConfig() Config {
 	)
 
 	return Config{
-		ListenAddress: *listenAddress,
-		MetricPath:    *metricsPath,
-		PromlogConfig: promlogConfig,
+		ListenAddress:      *listenAddress,
+		MetricPath:         *metricsPath,
+		PromlogConfig:      promlogConfig,
+		AllowDumps:         *allowDumps,
+		AllowManualRefresh: *allowManualRefresh,
 		ScraperConfig: &scraper.ScraperConfig{
 			Endpoint:                       *endpoint,
 			Username:                       *username,
