@@ -112,6 +112,12 @@ func (s *BaseSensor[K, T]) Update(ref K, item *T) {
 	s.cache[ref] = NewCacheItem(item)
 }
 
+func (s *BaseSensor[K, T]) UpdateCacheItem(ref K, item *CacheItem[T]) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.cache[ref] = item
+}
+
 func (s *BaseSensor[K, T]) GetKind() string {
 	return reflect.ValueOf(s).String()
 }

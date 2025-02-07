@@ -152,12 +152,39 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 	failed := false
 	var allClientWaitTimes []time.Duration
 	var allQueryTimes []time.Duration
+	allVMs := map[types.ManagedObjectReference]*CacheItem[mo.VirtualMachine]{}
 	go func() {
 		for {
 			select {
 			case r := <-resultChan:
 				for _, vm := range *r {
-					s.Update(vm.Self, &vm)
+					if entityA, exist := allVMs[vm.Self]; exist {
+						timestampA := func() time.Time {
+							if entityA.Item.Config != nil {
+								timestamp, err := time.Parse(time.RFC3339Nano, entityA.Item.Config.ChangeVersion)
+								if err == nil {
+									return timestamp
+								}
+							}
+							return time.Now()
+						}()
+
+						timestampB := func() time.Time {
+							if vm.Config != nil {
+								timestamp, err := time.Parse(time.RFC3339Nano, vm.Config.ChangeVersion)
+								if err == nil {
+									return timestamp
+								}
+							}
+							return time.Now()
+						}()
+						// time comparison to prevent inconsistent data during vmotion
+						if timestampB.After(timestampA) {
+							allVMs[vm.Self] = NewCacheItem(&vm)
+						}
+					} else {
+						allVMs[vm.Self] = NewCacheItem(&vm)
+					}
 				}
 			case m := <-metricChan:
 				allClientWaitTimes = append(allClientWaitTimes, m.ClientWaitTime)
@@ -173,6 +200,10 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 
 	wg.Wait()
 	readyChan <- true
+
+	for ref, cacheItem := range allVMs {
+		s.UpdateCacheItem(ref, cacheItem)
+	}
 
 	s.setMetrics(&SensorMetric{
 		Name:           "vm",
