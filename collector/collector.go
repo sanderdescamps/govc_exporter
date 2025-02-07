@@ -130,7 +130,7 @@ func (c *VCCollector) GetMetricHandler() func(w http.ResponseWriter, r *http.Req
 			)
 		}
 		for matcher, collector := range c.collectors {
-			if (len(filters) == 0 || slices.ContainsFunc(filters, matcher.Match)) && !excludeMatcher.MatchAny(matcher.Kewords...) {
+			if (len(filters) == 0 || slices.ContainsFunc(filters, matcher.Match)) && !excludeMatcher.MatchAny(matcher.Keywords...) {
 				c.logger.Debug(fmt.Sprintf("register %s collector", matcher.First()))
 				err := registry.Register(collector)
 				if err != nil {

@@ -3,24 +3,24 @@ package helper
 import "strings"
 
 type Matcher struct {
-	Kewords []string
+	Keywords []string
 }
 
 func (m *Matcher) First() string {
-	if len(m.Kewords) > 0 {
-		return m.Kewords[0]
+	if len(m.Keywords) > 0 {
+		return m.Keywords[0]
 	}
 	return "none"
 }
 
-func NewMatcher(Kewords ...string) *Matcher {
+func NewMatcher(keywords ...string) *Matcher {
 	return &Matcher{
-		Kewords: Kewords,
+		Keywords: keywords,
 	}
 }
 
 func (m Matcher) Match(s string) bool {
-	for _, keyword := range m.Kewords {
+	for _, keyword := range m.Keywords {
 		if strings.EqualFold(keyword, s) || strings.ToLower(s) == "all" || s == "*" {
 			return true
 		}
@@ -29,7 +29,7 @@ func (m Matcher) Match(s string) bool {
 }
 
 func (m Matcher) MatchAny(s ...string) bool {
-	for _, keyword := range m.Kewords {
+	for _, keyword := range m.Keywords {
 		for _, s := range s {
 			if strings.EqualFold(keyword, s) || strings.ToLower(s) == "all" || s == "*" {
 				return true
@@ -40,7 +40,7 @@ func (m Matcher) MatchAny(s ...string) bool {
 }
 
 func (m Matcher) MatchAll(s ...string) bool {
-	for _, keyword := range m.Kewords {
+	for _, keyword := range m.Keywords {
 		match := true
 		for _, s := range s {
 			if !(strings.EqualFold(keyword, s) || strings.ToLower(s) == "all" || s == "*") {
