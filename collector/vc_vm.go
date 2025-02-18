@@ -42,6 +42,7 @@ type virtualMachineCollector struct {
 	memoryBytes                  *prometheus.Desc
 	overallCPUUsage              *prometheus.Desc
 	overallCPUDemand             *prometheus.Desc
+	maximumCPUUsage              *prometheus.Desc
 	guestMemoryUsage             *prometheus.Desc
 	hostMemoryUsage              *prometheus.Desc
 	distributedCPUEntitlement    *prometheus.Desc
@@ -111,6 +112,10 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf Collector
 		overallCPUDemand: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "overall_cpu_demand_mhz"),
 			"vm overall CPU demand in MHz", labels, nil),
+
+		maximumCPUUsage: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "max_cpu_usage_mhz"),
+			"maximum CPU usage in MHz", labels, nil),
 
 		guestMemoryUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "guest_memory_usage_bytes"),
@@ -223,6 +228,7 @@ func (c *virtualMachineCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.memoryBytes
 	ch <- c.overallCPUUsage
 	ch <- c.overallCPUDemand
+	ch <- c.maximumCPUUsage
 	ch <- c.guestMemoryUsage
 	ch <- c.hostMemoryUsage
 	ch <- c.distributedCPUEntitlement
@@ -315,6 +321,9 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		))
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.overallCPUDemand, prometheus.GaugeValue, float64(qs.OverallCpuDemand), labelValues...,
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+			c.maximumCPUUsage, prometheus.GaugeValue, float64(vm.Runtime.MaxCpuUsage), labelValues...,
 		))
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.guestMemoryUsage, prometheus.GaugeValue, float64(int64(qs.GuestMemoryUsage)*mb), labelValues...,
