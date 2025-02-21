@@ -42,11 +42,13 @@ type esxCollector struct {
 	uptimeSeconds                  *prometheus.Desc
 	rebootRequired                 *prometheus.Desc
 	cpuCoresTotal                  *prometheus.Desc
+	cpuThreadsTotal                *prometheus.Desc
 	availCPUMhz                    *prometheus.Desc
 	usedCPUMhz                     *prometheus.Desc
 	availMemBytes                  *prometheus.Desc
 	usedMemBytes                   *prometheus.Desc
 	overallStatus                  *prometheus.Desc
+	info                           *prometheus.Desc
 	systemHealthNumericSensorValue *prometheus.Desc
 	systemHealthNumericSensorState *prometheus.Desc
 	systemHealthStatusSensor       *prometheus.Desc
@@ -67,6 +69,8 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 	if len(extraLabels) != 0 {
 		labels = append(labels, extraLabels...)
 	}
+
+	infoLabels := append(labels, "os_version", "vendor", "model", "asset_tag", "service_tag")
 
 	sysNumLabels := append(labels, "sensor_id", "sensor_name", "sensor_type", "sensor_unit")
 	sysStatusLabels := append(labels, "sensor_type", "sensor_name")
@@ -95,21 +99,29 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 		rebootRequired: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "reboot_required"),
 			"esx reboot required", labels, nil),
+
+		//CPU
 		cpuCoresTotal: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "cpu_cores_total"),
 			"esx number of  cores", labels, nil),
+		cpuThreadsTotal: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "cpu_threads_total"),
+			"esx number of threads", labels, nil),
 		availCPUMhz: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "avail_cpu_mhz"),
 			"esx total cpu in mhz", labels, nil),
 		usedCPUMhz: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "used_cpu_mhz"),
 			"esx cpu usage in mhz", labels, nil),
+
+		//MEMORY
 		availMemBytes: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "avail_mem_bytes"),
 			"esx total memory in bytes", labels, nil),
 		usedMemBytes: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "used_mem_bytes"),
 			"esx used memory in bytes", labels, nil),
+
 		overallStatus: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "overall_status"),
 			"overall health status", labels, nil),
@@ -140,6 +152,9 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 		vmNumTotal: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "num_vms"),
 			"Total number of VM's on the host", labels, nil),
+		info: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "info"),
+			"Additional information", infoLabels, nil),
 	}
 
 }
@@ -151,6 +166,7 @@ func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.uptimeSeconds
 	ch <- c.rebootRequired
 	ch <- c.cpuCoresTotal
+	ch <- c.cpuThreadsTotal
 	ch <- c.availCPUMhz
 	ch <- c.usedCPUMhz
 	ch <- c.availMemBytes
@@ -165,6 +181,7 @@ func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.hbaStatus
 	ch <- c.multipathPathState
 	ch <- c.vmNumTotal
+	ch <- c.info
 }
 
 func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
@@ -197,6 +214,21 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 		}()
 		labelValues := []string{me2id(h.ManagedEntity), h.Name, parentChain.DC, parentChain.Cluster}
 		labelValues = append(labelValues, extraLabelValues...)
+
+		os_version := summary.Config.Product.FullName
+		vendor := summary.Hardware.Vendor
+		model := summary.Hardware.Model
+		asset_tag := ""
+		service_tag := ""
+		for _, i := range summary.Hardware.OtherIdentifyingInfo {
+			if i.IdentifierType.GetElementDescription().Key == "AssetTag" {
+				asset_tag = i.IdentifierValue
+			}
+			if i.IdentifierType.GetElementDescription().Key == "ServiceTag" {
+				service_tag = i.IdentifierValue
+			}
+		}
+		infoLabelValues := append(labelValues, os_version, vendor, model, asset_tag, service_tag)
 
 		if h.Runtime.HealthSystemRuntime != nil {
 			if h.Runtime.HealthSystemRuntime.SystemHealthInfo != nil {
@@ -234,6 +266,9 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+			c.info, prometheus.GaugeValue, 1, infoLabelValues...,
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.powerState, prometheus.GaugeValue, powerState, labelValues...,
 		))
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
@@ -250,6 +285,9 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 		))
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.cpuCoresTotal, prometheus.GaugeValue, float64(summary.Hardware.NumCpuCores), labelValues...,
+		))
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+			c.cpuThreadsTotal, prometheus.GaugeValue, float64(summary.Hardware.NumCpuThreads), labelValues...,
 		))
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.availCPUMhz, prometheus.GaugeValue, float64(int64(summary.Hardware.NumCpuCores)*int64(summary.Hardware.CpuMhz)), labelValues...,
