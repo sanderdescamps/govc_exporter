@@ -21,7 +21,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/intrinsec/govc_exporter/collector/scraper"
 	"github.com/prometheus/client_golang/prometheus"
@@ -197,10 +196,6 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 			if h.Runtime.HealthSystemRuntime.SystemHealthInfo != nil {
 				for _, info := range h.Runtime.HealthSystemRuntime.SystemHealthInfo.NumericSensorInfo {
 					sysLabelsValues := append(labelValues, info.Id, info.Name, info.SensorType, info.BaseUnits)
-					timestamp, err := time.Parse(time.RFC3339Nano, info.TimeStamp)
-					if err != nil {
-						timestamp = time.Now()
-					}
 					ch <- prometheus.NewMetricWithTimestamp(timestamp,
 						prometheus.MustNewConstMetric(
 							c.systemHealthNumericSensorValue, prometheus.GaugeValue, float64(info.CurrentReading), sysLabelsValues...,
