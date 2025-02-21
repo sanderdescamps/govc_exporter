@@ -214,3 +214,13 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 
 	return nil
 }
+
+func (s *VirtualMachineSensor) GetHostVMs(ref types.ManagedObjectReference) []types.ManagedObjectReference {
+	vmsOnHost := []types.ManagedObjectReference{}
+	for _, vm := range s.GetAll() {
+		if vm.Runtime.Host != nil && *vm.Runtime.Host == ref {
+			vmsOnHost = append(vmsOnHost, vm.Self)
+		}
+	}
+	return vmsOnHost
+}

@@ -57,6 +57,8 @@ type esxCollector struct {
 	hbaIscsiStaticTargetInfo *prometheus.Desc
 	multipathPathState       *prometheus.Desc
 	iscsiDiskInfo            *prometheus.Desc
+
+	vmNumTotal *prometheus.Desc
 }
 
 func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *esxCollector {
@@ -135,6 +137,9 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 		iscsiDiskInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "iscsi_disk_info"),
 			"Multipath path state", iscsiLabels, nil),
+		vmNumTotal: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "num_vms"),
+			"Total number of VM's on the host", labels, nil),
 	}
 
 }
@@ -159,6 +164,7 @@ func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.hbaIscsiStaticTargetInfo
 	ch <- c.hbaStatus
 	ch <- c.multipathPathState
+	ch <- c.vmNumTotal
 }
 
 func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
@@ -261,6 +267,10 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(h.OverallStatus), labelValues...,
 		))
 
+		vmsOnHost := c.scraper.VM.GetHostVMs(snap.Item.Self)
+		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+			c.vmNumTotal, prometheus.GaugeValue, float64(len(vmsOnHost)), labelValues...,
+		))
 		if c.enableStorageMetrics && h.Config != nil {
 			hbaDeviceLookup := map[string]string{}
 			if h.Config.StorageDevice != nil {
