@@ -156,9 +156,6 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 		multipathPathState: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "multipath_path_state"),
 			"Multipath path state", multipathLabels, nil),
-		// iscsiDiskInfo: prometheus.NewDesc(
-		// 	prometheus.BuildFQName(namespace, esxCollectorSubsystem, "iscsi_disk_info"),
-		// 	"Multipath path state", iscsiLabels, nil),
 		scsiLunMounted: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "datastore_mounted"),
 			"VMFS Datastore mount status", vmfsLabels, nil),
@@ -185,7 +182,6 @@ func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.systemHealthNumericSensorState
 	ch <- c.systemHealthNumericSensorValue
 	ch <- c.systemHealthStatusSensor
-	// ch <- c.iscsiDiskInfo
 	ch <- c.scsiLunMounted
 	ch <- c.scsiLunAccessible
 	ch <- c.hbaIscsiSendTargetInfo
@@ -411,30 +407,6 @@ func getHostLunCanonicalNameLookupFunc(host mo.HostSystem) func(lunID string) st
 		return ""
 	}
 }
-
-// func GetHostVMFSDatastoreLookupFunc(host mo.HostSystem) func(naa string) string {
-// 	datastores := map[string]string{}
-// 	if host.Config.FileSystemVolume != nil {
-// 		for _, mountInfo := range host.Config.FileSystemVolume.MountInfo {
-// 			volumeInterface := reflect.ValueOf(mountInfo.Volume).Elem().Interface()
-// 			switch volume := volumeInterface.(type) {
-// 			case types.HostVmfsVolume:
-// 				for _, extend := range volume.Extent {
-// 					datastores[extend.DiskName] = volume.Name
-// 				}
-// 			default:
-// 				continue
-// 			}
-// 		}
-// 	}
-
-// 	return func(naa string) string {
-// 		if val, ok := datastores[naa]; ok {
-// 			return val
-// 		}
-// 		return "unknown"
-// 	}
-// }
 
 func getHostScsiLunLookupFunc(host mo.HostSystem) func(canonicalName string) scsiLun {
 	scsiLuns := map[string]scsiLun{}
