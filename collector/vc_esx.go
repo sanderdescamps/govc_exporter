@@ -19,11 +19,11 @@ package collector
 import (
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/intrinsec/govc_exporter/collector/scraper"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
@@ -58,7 +58,9 @@ type esxCollector struct {
 	hbaIscsiSendTargetInfo   *prometheus.Desc
 	hbaIscsiStaticTargetInfo *prometheus.Desc
 	multipathPathState       *prometheus.Desc
-	iscsiDiskInfo            *prometheus.Desc
+	// iscsiDiskInfo            *prometheus.Desc
+	scsiLunMounted    *prometheus.Desc
+	scsiLunAccessible *prometheus.Desc
 
 	vmNumTotal *prometheus.Desc
 }
@@ -71,19 +73,19 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 	}
 
 	infoLabels := append(labels, "os_version", "vendor", "model", "asset_tag", "service_tag")
-
 	sysNumLabels := append(labels, "sensor_id", "sensor_name", "sensor_type", "sensor_unit")
 	sysStatusLabels := append(labels, "sensor_type", "sensor_name")
 	hbaLabels := append(labels, "adapter_name", "src_name", "driver", "model")
-	iscsiHbaSendTargetLabels := append(hbaLabels, "target_address")
-	iscsiHbaStaticTargetLabels := append(hbaLabels, "target_address", "target_name", "discovery_method")
-	multipathLabels := append(labels, "path_name", "adapter_name", "target_address", "target_name", "disk_name", "datastore")
-	iscsiLabels := append(labels, "vendor", "model", "disk_name", "ssd", "local", "datastore")
+	iscsiHbaSendTargetLabels := append(labels, "adapter_name", "src_name", "driver", "model", "target_address")
+	iscsiHbaStaticTargetLabels := append(labels, "adapter_name", "src_name", "driver", "model", "target_address", "target_name", "discovery_method")
+	multipathLabels := append(labels, "adapter_name", "target_address", "target_name", "disk_name", "datastore")
+	vmfsLabels := append(labels, "vendor", "model", "disk_name", "datastore")
 
 	return &esxCollector{
 		scraper:              scraper,
 		enableStorageMetrics: cConf.HostStorageMetrics,
 		extraLabels:          extraLabels,
+		//GENERAL
 		powerState: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "power_state"),
 			"esx host powerstate", labels, nil),
@@ -99,6 +101,12 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 		rebootRequired: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "reboot_required"),
 			"esx reboot required", labels, nil),
+		vmNumTotal: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "num_vms"),
+			"Total number of VM's on the host", labels, nil),
+		info: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "info"),
+			"Additional information", infoLabels, nil),
 
 		//CPU
 		cpuCoresTotal: prometheus.NewDesc(
@@ -134,6 +142,8 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 		systemHealthStatusSensor: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "system_health_status_sensor"),
 			"system hardware status sensors", sysStatusLabels, nil),
+
+		//STORAGE
 		hbaStatus: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_status"),
 			"HBA status", hbaLabels, nil),
@@ -146,15 +156,15 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 		multipathPathState: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "multipath_path_state"),
 			"Multipath path state", multipathLabels, nil),
-		iscsiDiskInfo: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "iscsi_disk_info"),
-			"Multipath path state", iscsiLabels, nil),
-		vmNumTotal: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "num_vms"),
-			"Total number of VM's on the host", labels, nil),
-		info: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "info"),
-			"Additional information", infoLabels, nil),
+		// iscsiDiskInfo: prometheus.NewDesc(
+		// 	prometheus.BuildFQName(namespace, esxCollectorSubsystem, "iscsi_disk_info"),
+		// 	"Multipath path state", iscsiLabels, nil),
+		scsiLunMounted: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "datastore_mounted"),
+			"VMFS Datastore mount status", vmfsLabels, nil),
+		scsiLunAccessible: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "datastore_accessible"),
+			"VMFS Datastore accessible status", vmfsLabels, nil),
 	}
 
 }
@@ -175,7 +185,9 @@ func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.systemHealthNumericSensorState
 	ch <- c.systemHealthNumericSensorValue
 	ch <- c.systemHealthStatusSensor
-	ch <- c.iscsiDiskInfo
+	// ch <- c.iscsiDiskInfo
+	ch <- c.scsiLunMounted
+	ch <- c.scsiLunAccessible
 	ch <- c.hbaIscsiSendTargetInfo
 	ch <- c.hbaIscsiStaticTargetInfo
 	ch <- c.hbaStatus
@@ -310,11 +322,9 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 			c.vmNumTotal, prometheus.GaugeValue, float64(len(vmsOnHost)), labelValues...,
 		))
 		if c.enableStorageMetrics && h.Config != nil {
-			hbaDeviceLookup := map[string]string{}
 			if h.Config.StorageDevice != nil {
+				//HBA's
 				for _, adapter := range h.Config.StorageDevice.HostBusAdapter {
-					hbaDeviceLookup[adapter.GetHostHostBusAdapter().Key] = adapter.GetHostHostBusAdapter().Device
-
 					hbaInterface := reflect.ValueOf(adapter).Elem().Interface()
 					switch hba := hbaInterface.(type) {
 					case types.HostInternetScsiHba:
@@ -348,108 +358,235 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 						ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 							c.hbaStatus, prometheus.GaugeValue, ConvertHBAStatusToValue(status), hbaLabelValues...,
 						))
-
 					}
 				}
 
-				for _, logicalUnit := range h.Config.StorageDevice.MultipathInfo.Lun {
-					for _, path := range logicalUnit.Path {
-						device := ""
-						if d, ok := hbaDeviceLookup[path.Adapter]; ok {
-							device = d
-						}
-
-						uuid := logicalUnit.Id
-						naa := func() string {
-							for _, lun := range h.Config.StorageDevice.ScsiLun {
-								if lun.GetScsiLun().Uuid == uuid {
-									return lun.GetScsiLun().CanonicalName
-								}
-							}
-							return ""
-						}()
-
-						datastoreName := func() string {
-							if h.Config.FileSystemVolume != nil {
-								for _, mountInfo := range h.Config.FileSystemVolume.MountInfo {
-									volumeInterface := reflect.ValueOf(mountInfo.Volume).Elem().Interface()
-									switch volume := volumeInterface.(type) {
-									case types.HostVmfsVolume:
-										for _, extend := range volume.Extent {
-											if extend.DiskName == naa {
-												return volume.Name
-											}
-										}
-									default:
-										continue
-									}
-
-								}
-							}
-							return "unknown"
-						}()
-
-						transportInterface := reflect.ValueOf(path.Transport).Elem().Interface()
-						switch transport := transportInterface.(type) {
-						case types.HostInternetScsiTargetTransport:
-							for _, address := range transport.Address {
-								pathLabelValues := append(labelValues, path.Name, device, address, transport.IScsiName, naa, datastoreName)
-								ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-									c.multipathPathState, prometheus.GaugeValue, ConvertMultipathStateToValue(types.MultipathState(path.State)), pathLabelValues...,
-								))
-							}
-						default:
-							pathLabelValues := append(labelValues, path.Name, device, "", "", naa, datastoreName)
-							ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-								c.multipathPathState, prometheus.GaugeValue, ConvertMultipathStateToValue(types.MultipathState(path.State)), pathLabelValues...,
-							))
-						}
-					}
-
+				//MultiPath path state
+				multipaths := getHostMultiPathPaths(h)
+				for _, p := range multipaths {
+					pathLabelValues := append(labelValues, p.Device, p.TargetAddress, p.TargetIQN, p.NAA, p.DatastoreName)
+					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+						c.multipathPathState, prometheus.GaugeValue, p.Value(), pathLabelValues...,
+					))
 				}
 
-				for _, baseScsiLun := range h.Config.StorageDevice.ScsiLun {
-					canonicalName := baseScsiLun.GetScsiLun().CanonicalName
-					datastoreName := func() string {
-						if h.Config.FileSystemVolume != nil {
-							for _, mountInfo := range h.Config.FileSystemVolume.MountInfo {
-								volumeInterface := reflect.ValueOf(mountInfo.Volume).Elem().Interface()
-								switch volume := volumeInterface.(type) {
-								case types.HostVmfsVolume:
-									for _, extend := range volume.Extent {
-										if extend.DiskName == canonicalName {
-											return volume.Name
-										}
-									}
-								default:
-									continue
-								}
-
-							}
-						}
-						return "unknown"
-					}()
-
-					scsiLunInterface := reflect.ValueOf(baseScsiLun).Elem().Interface()
-					switch scsiLun := scsiLunInterface.(type) {
-					case types.HostScsiDisk:
-						iscsiLabelValues := append(labelValues, cleanString(scsiLun.Vendor), cleanString(scsiLun.Model), cleanString(scsiLun.CanonicalName), strconv.FormatBool(*scsiLun.Ssd), strconv.FormatBool(*scsiLun.LocalDisk), datastoreName)
-						ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-							c.iscsiDiskInfo, prometheus.GaugeValue, 1, iscsiLabelValues...,
-						))
-					default:
-						lun := baseScsiLun.GetScsiLun()
-						scsiLabelValues := append(labelValues, cleanString(lun.Vendor), cleanString(lun.Model), cleanString(lun.CanonicalName), "", "", datastoreName)
-						ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-							c.iscsiDiskInfo, prometheus.GaugeValue, 1, scsiLabelValues...,
-						))
-					}
+				//Datastore Mount state
+				for _, lun := range getAllScsiLuns(h) {
+					vmfsLabelValues := append(labelValues, lun.Vendor, lun.Model, lun.CanonicalName, lun.Datastore)
+					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+						c.scsiLunMounted, prometheus.GaugeValue, b2f(lun.Mounted), vmfsLabelValues...,
+					))
+					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+						c.scsiLunAccessible, prometheus.GaugeValue, b2f(lun.Accessable), vmfsLabelValues...,
+					))
 				}
 			}
 		}
 	}
 }
 
+func getHostHBADeviceNameLookupFunc(host mo.HostSystem) func(hbaKey string) string {
+	hbaDevices := map[string]string{}
+	for _, adapter := range host.Config.StorageDevice.HostBusAdapter {
+		hbaDevices[adapter.GetHostHostBusAdapter().Key] = adapter.GetHostHostBusAdapter().Device
+	}
+	return func(hbaKey string) string {
+		if val, ok := hbaDevices[hbaKey]; ok {
+			return val
+		}
+		return ""
+	}
+}
+
+func getHostLunCanonicalNameLookupFunc(host mo.HostSystem) func(lunID string) string {
+	naas := map[string]string{}
+	for _, lun := range host.Config.StorageDevice.ScsiLun {
+		naas[lun.GetScsiLun().Uuid] = lun.GetScsiLun().CanonicalName
+	}
+
+	return func(lunID string) string {
+		if val, ok := naas[lunID]; ok {
+			return val
+		}
+		return ""
+	}
+}
+
+// func GetHostVMFSDatastoreLookupFunc(host mo.HostSystem) func(naa string) string {
+// 	datastores := map[string]string{}
+// 	if host.Config.FileSystemVolume != nil {
+// 		for _, mountInfo := range host.Config.FileSystemVolume.MountInfo {
+// 			volumeInterface := reflect.ValueOf(mountInfo.Volume).Elem().Interface()
+// 			switch volume := volumeInterface.(type) {
+// 			case types.HostVmfsVolume:
+// 				for _, extend := range volume.Extent {
+// 					datastores[extend.DiskName] = volume.Name
+// 				}
+// 			default:
+// 				continue
+// 			}
+// 		}
+// 	}
+
+// 	return func(naa string) string {
+// 		if val, ok := datastores[naa]; ok {
+// 			return val
+// 		}
+// 		return "unknown"
+// 	}
+// }
+
+func getHostScsiLunLookupFunc(host mo.HostSystem) func(canonicalName string) scsiLun {
+	scsiLuns := map[string]scsiLun{}
+
+	for _, l := range getAllScsiLuns(host) {
+		scsiLuns[l.CanonicalName] = l
+	}
+
+	return func(canonicalName string) scsiLun {
+		if val, ok := scsiLuns[canonicalName]; ok {
+			return val
+		}
+		return scsiLun{}
+	}
+}
+
+type iscsiPath struct {
+	Device        string
+	NAA           string
+	DatastoreName string
+	TargetAddress string
+	TargetIQN     string
+	State         string
+}
+
+func (p *iscsiPath) Value() float64 {
+	s := types.MultipathState(p.State)
+	if s == types.MultipathStateDead {
+		return 1.0
+	} else if s == types.MultipathStateDisabled {
+		return 2.0
+	} else if s == types.MultipathStateStandby {
+		return 3.0
+	} else if s == types.MultipathStateActive {
+		return 4.0
+	}
+	return 0
+}
+
+func getHostMultiPathPaths(host mo.HostSystem) []iscsiPath {
+	hbaDeviceNameFunc := getHostHBADeviceNameLookupFunc(host)
+	lunCanonnicalNameLookup := getHostLunCanonicalNameLookupFunc(host)
+	scsiLunLookupFunc := getHostScsiLunLookupFunc(host)
+
+	iscsiPaths := []iscsiPath{}
+	for _, logicalUnit := range host.Config.StorageDevice.MultipathInfo.Lun {
+		uuid := logicalUnit.Id
+		naa := lunCanonnicalNameLookup(uuid)
+		scsiLun := scsiLunLookupFunc(naa)
+		for _, path := range logicalUnit.Path {
+			device := hbaDeviceNameFunc(path.Adapter)
+
+			transportInterface := reflect.ValueOf(path.Transport).Elem().Interface()
+			switch transport := transportInterface.(type) {
+			case types.HostInternetScsiTargetTransport:
+				for _, address := range transport.Address {
+					iscsiPaths = append(iscsiPaths, iscsiPath{
+						Device:        device,
+						NAA:           naa,
+						TargetIQN:     transport.IScsiName,
+						TargetAddress: address,
+						DatastoreName: scsiLun.Datastore,
+						State:         path.State,
+					})
+				}
+			default:
+				iscsiPaths = append(iscsiPaths, iscsiPath{
+					Device:        device,
+					NAA:           naa,
+					TargetIQN:     "",
+					TargetAddress: "",
+					DatastoreName: scsiLun.Datastore,
+					State:         path.State,
+				})
+			}
+		}
+	}
+	return iscsiPaths
+}
+
+type scsiLun struct {
+	CanonicalName string
+	Vendor        string
+	Model         string
+	Datastore     string
+	Accessable    bool
+	Mounted       bool
+}
+
+func getAllScsiLuns(host mo.HostSystem) []scsiLun {
+	mountInfoMap := map[string]types.HostFileSystemMountInfo{}
+	if host.Config.FileSystemVolume != nil {
+		for _, info := range host.Config.FileSystemVolume.MountInfo {
+			volumeInterface := reflect.ValueOf(info.Volume).Elem().Interface()
+			switch volume := volumeInterface.(type) {
+			case types.HostVmfsVolume:
+				for _, extend := range volume.Extent {
+					mountInfoMap[extend.DiskName] = info
+				}
+			default:
+				continue
+			}
+		}
+	}
+
+	scsiLuns := map[string]types.ScsiLun{}
+	if host.Config.StorageDevice != nil {
+		for _, l := range host.Config.StorageDevice.ScsiLun {
+			lun := l.GetScsiLun()
+			if lun != nil {
+				scsiLuns[lun.CanonicalName] = *lun
+			}
+		}
+	}
+
+	result := []scsiLun{}
+	if host.Config.StorageDevice != nil {
+		for _, l := range host.Config.StorageDevice.ScsiLun {
+			lun := l.GetScsiLun()
+			if mountInfo, ok := mountInfoMap[lun.CanonicalName]; ok {
+				volume := mountInfo.Volume.GetHostFileSystemVolume()
+				result = append(result, scsiLun{
+					CanonicalName: lun.CanonicalName,
+					Model:         cleanString(lun.Model),
+					Vendor:        cleanString(lun.Vendor),
+					Datastore: func() string {
+						if volume != nil {
+							return volume.Name
+						}
+						return "unknown"
+					}(),
+					Mounted: func() bool {
+						if mountInfo.MountInfo.Mounted != nil {
+							return *mountInfo.MountInfo.Mounted
+						}
+						return false
+					}(),
+					Accessable: func() bool {
+						if mountInfo.MountInfo.Accessible != nil {
+							return *mountInfo.MountInfo.Accessible
+						}
+						return false
+					}(),
+				})
+			}
+
+		}
+	}
+	return result
+}
+
+// Converters
 func ConvertHostSystemPowerStateToValue(s types.HostSystemPowerState) float64 {
 	if s == types.HostSystemPowerStateStandBy {
 		return 1.0
