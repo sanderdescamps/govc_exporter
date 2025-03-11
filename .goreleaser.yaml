@@ -25,34 +25,11 @@ builds:
         -X github.com/prometheus/common/version.Version={{.Version}}
         -X github.com/prometheus/common/version.Branch={{.Branch}}
         -X github.com/prometheus/common/version.BuildDate={{ .CommitDate }}
-  - id: vcenter-object-exporter
-    binary: vcenter-object-exporter
-    goos:
-      - linux
-      - windows
-    goarch:
-      - amd64
-    main: ./cmd/vcenter-object-exporter
 env:
   - CGO_ENABLED=0
 archives:
   - id: govc_exporter
     builds: [govc_exporter]
-    formats:
-      - tar.gz
-    name_template: >-
-      {{ .ProjectName }}-v{{ .Version }}-
-      {{- .Os }}-
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
-      {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
-  - id: vcenter-object-exporter
-    builds: [vcenter-object-exporter]
     formats:
       - tar.gz
     name_template: >-
