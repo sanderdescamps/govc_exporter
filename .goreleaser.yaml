@@ -1,0 +1,60 @@
+---
+version: 2
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: govc_exporter
+    main: ./cmd/exporter
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      #   # use commit date instead of current date as main.date
+      #   # only needed if you actually use those things in your main package, otherwise can be ignored.
+      - |
+        -s -w 
+        -X main.version={{.Version}} 
+        -X main.commit={{.Commit}} 
+        -X main.date={{ .CommitDate }}
+        -X github.com/prometheus/common/version.Version={{.Version}}
+        -X github.com/prometheus/common/version.Branch={{.Branch}}
+        -X github.com/prometheus/common/version.BuildDate={{ .CommitDate }}
+env:
+  - CGO_ENABLED=0
+archives:
+  - id: govc_exporter
+    builds: [govc_exporter]
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}-v{{ .Version }}-
+      {{- .Os }}-
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    include:
+      - "^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style):.*$"
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  name_template: "v{{ .Version }}"

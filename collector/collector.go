@@ -1,192 +1,304 @@
-// Copyright 2015 The Prometheus Authors
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-// Package collector includes all individual collectors to gather and export system metrics.
 package collector
 
 import (
-	"errors"
+	"context"
+	"encoding/json"
 	"fmt"
-	"sync"
+	"log/slog"
+	"net/http"
+	"os"
+	"path"
+	"reflect"
+	"slices"
+	"strings"
 	"time"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
-	kingpin "gopkg.in/alecthomas/kingpin.v2"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
+	"github.com/sanderdescamps/govc_exporter/collector/scraper"
 )
 
 // Namespace defines the common namespace to be used by all metrics.
 const namespace = "govc"
 
-var (
-	scrapeDurationDesc = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "scrape", "collector_duration_seconds"),
-		"govc_exporter: Duration of a collector scrape.",
-		[]string{"collector"},
-		nil,
-	)
-	scrapeSuccessDesc = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "scrape", "collector_success"),
-		"govc_exporter: Whether a collector succeeded.",
-		[]string{"collector"},
-		nil,
-	)
-)
+type CollectorConfig struct {
+	UseIsecSpecifics       bool
+	DisableExporterMetrics bool
 
-const (
-	defaultEnabled = true
-	//defaultDisabled = false
-)
+	MaxRequests int
 
-var (
-	factories        = make(map[string]func(logger log.Logger) (Collector, error))
-	collectorState   = make(map[string]*bool)
-	forcedCollectors = map[string]bool{} // collectors which have been explicitly enabled or disabled
-)
+	ClusterTagLabels      []string
+	DatastoreTagLabels    []string
+	HostTagLabels         []string
+	ResourcePoolTagLabels []string
+	StoragePodTagLabels   []string
 
-func registerCollector(collector string, isDefaultEnabled bool, factory func(logger log.Logger) (Collector, error)) {
-	var helpDefaultState string
-	if isDefaultEnabled {
-		helpDefaultState = "enabled"
-	} else {
-		helpDefaultState = "disabled"
+	VMAdvancedNetworkMetrics bool
+	VMAdvancedStorageMetrics bool
+	VMTagLabels              []string
+
+	HostStorageMetrics bool
+}
+
+func DefaultCollectorConf() *CollectorConfig {
+	return &CollectorConfig{
+		UseIsecSpecifics:       false,
+		DisableExporterMetrics: false,
+
+		MaxRequests: 10,
+
+		ClusterTagLabels:      []string{},
+		DatastoreTagLabels:    []string{},
+		HostTagLabels:         []string{},
+		ResourcePoolTagLabels: []string{},
+		StoragePodTagLabels:   []string{},
+
+		VMAdvancedNetworkMetrics: false,
+		VMAdvancedStorageMetrics: false,
+		VMTagLabels:              []string{},
+
+		HostStorageMetrics: false,
+	}
+}
+
+type VCCollector struct {
+	scraper *scraper.VCenterScraper
+	// logger     *slog.Logger
+	conf       CollectorConfig
+	collectors map[*helper.Matcher]prometheus.Collector
+}
+
+func NewVCCollector(conf *CollectorConfig, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
+	if conf == nil {
+		conf = DefaultCollectorConf()
 	}
 
-	flagName := fmt.Sprintf("collector.%s", collector)
-	flagHelp := fmt.Sprintf("Enable the %s collector (default: %s).", collector, helpDefaultState)
-	defaultValue := fmt.Sprintf("%v", isDefaultEnabled)
+	collectors := map[*helper.Matcher]prometheus.Collector{}
+	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper, *conf)
+	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper, *conf)
+	collectors[helper.NewMatcher("resourcepool", "rp")] = NewResourcePoolCollector(scraper, *conf)
+	collectors[helper.NewMatcher("cluster", "host")] = NewClusterCollector(scraper, *conf)
+	collectors[helper.NewMatcher("vm", "virtualmachine")] = NewVirtualMachineCollector(scraper, *conf)
+	collectors[helper.NewMatcher("spod", "storagepod")] = NewStoragePodCollector(scraper, *conf)
+	collectors[helper.NewMatcher("scraper")] = NewScraperCollector(scraper)
 
-	flag := kingpin.Flag(flagName, flagHelp).Default(defaultValue).Action(collectorFlagAction(collector)).Bool()
-	collectorState[collector] = flag
-
-	factories[collector] = factory
+	return &VCCollector{
+		scraper: scraper,
+		// logger:     logger,
+		conf:       *conf,
+		collectors: collectors,
+	}
 }
 
-// MainCollector implements the prometheus.Collector interface.
-type MainCollector struct {
-	Collectors map[string]Collector
-	logger     log.Logger
-}
+func (c *VCCollector) GetMetricHandler(logger *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		params := r.URL.Query()
 
-// DisableDefaultCollectors sets the collector state to false for all collectors which
-// have not been explicitly enabled on the command line.
-func DisableDefaultCollectors() {
-	for c := range collectorState {
-		if _, ok := forcedCollectors[c]; !ok {
-			*collectorState[c] = false
+		filters := []string{}
+		if f, ok := params["collect[]"]; ok {
+			filters = append(filters, f...)
 		}
-	}
-}
-
-// collectorFlagAction generates a new action function for the given collector
-// to track whether it has been explicitly enabled or disabled from the command line.
-// A new action function is needed for each collector flag because the ParseContext
-// does not contain information about which flag called the action.
-// See: https://github.com/alecthomas/kingpin/issues/294
-func collectorFlagAction(collector string) func(ctx *kingpin.ParseContext) error {
-	return func(ctx *kingpin.ParseContext) error {
-		forcedCollectors[collector] = true
-		return nil
-	}
-}
-
-// NewMainCollector creates a new MainCollector.
-func NewMainCollector(logger log.Logger, filters ...string) (*MainCollector, error) {
-	f := make(map[string]bool)
-	for _, filter := range filters {
-		enabled, exist := collectorState[filter]
-		if !exist {
-			return nil, fmt.Errorf("missing collector: %s", filter)
+		if f, ok := params["collect"]; ok {
+			filters = append(filters, f...)
 		}
-		if !*enabled {
-			return nil, fmt.Errorf("disabled collector: %s", filter)
+
+		exclude := []string{}
+		if f, ok := params["exclude[]"]; ok {
+			exclude = append(exclude, f...)
 		}
-		f[filter] = true
-	}
-	collectors := make(map[string]Collector)
-	for key, enabled := range collectorState {
-		if *enabled {
-			collector, err := factories[key](log.With(logger, "collector", key))
-			if err != nil {
-				return nil, err
+		if f, ok := params["exclude"]; ok {
+			exclude = append(exclude, f...)
+		}
+		excludeMatcher := helper.NewMatcher(exclude...)
+		logger.Debug(fmt.Sprintf("%s %s", r.Method, r.URL.Path), "filters", filters, "exclude", exclude)
+
+		registry := prometheus.NewRegistry()
+		if !c.conf.DisableExporterMetrics && !excludeMatcher.MatchAny("exporter_metrics", "exporter") {
+			registry.MustRegister(
+				collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+				collectors.NewGoCollector(),
+			)
+		}
+		for matcher, collector := range c.collectors {
+			if (len(filters) == 0 || slices.ContainsFunc(filters, matcher.Match)) && !excludeMatcher.MatchAny(matcher.Keywords...) {
+				logger.Debug(fmt.Sprintf("register %s collector", matcher.First()))
+				err := registry.Register(collector)
+				if err != nil {
+					logger.Error(fmt.Sprintf("Error registring %s collector for %s", matcher.First(), strings.Join(filters, ",")), "err", err.Error())
+				}
 			}
-			if len(f) == 0 || f[key] {
-				collectors[key] = collector
-			}
 		}
+
+		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{
+			ErrorHandling:       promhttp.ContinueOnError,
+			MaxRequestsInFlight: c.conf.MaxRequests,
+		})
+		h.ServeHTTP(w, r)
 	}
-	return &MainCollector{Collectors: collectors, logger: logger}, nil
 }
 
-// Describe implements the prometheus.Collector interface.
-func (n MainCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- scrapeDurationDesc
-	ch <- scrapeSuccessDesc
-}
+func (c *VCCollector) GetRefreshHandler(logger *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sensorReq := r.PathValue("sensor")
 
-// Collect implements the prometheus.Collector interface.
-func (n MainCollector) Collect(ch chan<- prometheus.Metric) {
-	wg := sync.WaitGroup{}
-	wg.Add(len(n.Collectors))
-	for name, c := range n.Collectors {
-		go func(name string, c Collector) {
-			execute(name, c, ch, n.logger)
-			wg.Done()
-		}(name, c)
-	}
-	wg.Wait()
-}
-
-func execute(name string, c Collector, ch chan<- prometheus.Metric, logger log.Logger) {
-	begin := time.Now()
-	err := c.Update(ch)
-	duration := time.Since(begin)
-	var success float64
-
-	if err != nil {
-		if IsNoDataError(err) {
-			level.Debug(logger).Log("msg", "collector returned no data", "name", name, "duration_seconds", duration.Seconds(), "err", err)
+		var sensor scraper.Refreshable
+		if helper.NewMatcher("cl", "cluster").MatchAny(sensorReq) {
+			sensor = c.scraper.Cluster
+		} else if helper.NewMatcher("cr", "compute_resource", "computeresource").MatchAny(sensorReq) {
+			sensor = c.scraper.ComputeResources
+		} else if helper.NewMatcher("ds", "datastore").MatchAny(sensorReq) {
+			sensor = c.scraper.Datastore
+		} else if helper.NewMatcher("h", "esx", "host").MatchAny(sensorReq) {
+			sensor = c.scraper.Host
+		} else if helper.NewMatcher("rp", "resource_pool", "respool", "repool").MatchAny(sensorReq) {
+			sensor = c.scraper.ResourcePool
+		} else if helper.NewMatcher("sp", "storage_pod", "storagepod", "datastorecluster", "datastore_cluster").MatchAny(sensorReq) {
+			sensor = c.scraper.SPOD
+		} else if helper.NewMatcher("t", "tag", "tags").MatchAny(sensorReq) {
+			sensor = c.scraper.Tags
+		} else if helper.NewMatcher("vm", "virtualmachine").MatchAny(sensorReq) {
+			sensor = c.scraper.VM
 		} else {
-			level.Error(logger).Log("msg", "collector failed", "name", name, "duration_seconds", duration.Seconds(), "err", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":    fmt.Sprintf("Invalid sensor %s", sensorReq),
+				"status": http.StatusBadRequest,
+			})
 		}
-		success = 0
-	} else {
-		level.Debug(logger).Log("msg", "collector succeeded", "name", name, "duration_seconds", duration.Seconds())
-		success = 1
+
+		sensorKind := strings.Split(reflect.TypeOf(sensor).String(), ".")[1]
+		logger.Info("Trigger manual refresh", "sensor_type", sensorKind)
+		err := sensor.Refresh(context.Background(), logger)
+		if err == nil {
+			logger.Info("Refresh successfull", "sensor_type", sensorKind)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":         "refresh successfull",
+				"sensor_type": sensorKind,
+				"status":      200,
+			})
+		} else {
+			logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_type", sensorKind)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":         "Failed to refresh sensor",
+				"sensor_type": sensorKind,
+				"err":         err.Error(),
+				"status":      http.StatusInternalServerError,
+			})
+		}
 	}
-	ch <- prometheus.MustNewConstMetric(scrapeDurationDesc, prometheus.GaugeValue, duration.Seconds(), name)
-	ch <- prometheus.MustNewConstMetric(scrapeSuccessDesc, prometheus.GaugeValue, success, name)
 }
 
-// Collector is the interface a collector has to implement.
-type Collector interface {
-	// Get new metrics and expose them via prometheus registry.
-	Update(ch chan<- prometheus.Metric) error
+func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var allSensors []interface {
+			GetKind() string
+			GetAllJsons() (map[string][]byte, error)
+		}
+		include := []string{}
+		sensorReq := r.PathValue("sensor")
+		if sensorReq != "" {
+			include = append(include, sensorReq)
+		} else {
+			params := r.URL.Query()
+			if f, ok := params["collect[]"]; ok {
+				include = append(include, f...)
+			} else if f, ok := params["collect"]; ok {
+				include = append(include, f...)
+			} else {
+				include = append(include, "all")
+			}
+
+		}
+
+		found := false
+		sensorKinds := []string{}
+		for matcher, sensor := range getSensorMatchMap(c.scraper) {
+			if matcher.MatchAny(include...) {
+				found = true
+				sensorKinds = append(sensorKinds, strings.Split(reflect.TypeOf(sensor).String(), ".")[1])
+				allSensors = append(allSensors, sensor)
+			}
+		}
+
+		if !found {
+			logger.Warn("Failed to create dump. Invalid sensor type", "type", include)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":    fmt.Sprintf("Failed to create dump. Invalid sensor type %v", include),
+				"status": http.StatusBadRequest,
+			})
+			return
+		}
+		logger.Info("Creating dump of sensors objects.", "sensors", sensorKinds)
+
+		dirPath := ""
+		for i := 0; true; i++ {
+			dirPath = fmt.Sprintf("./dumps/%s_%d", time.Now().Format("20060201"), i)
+			if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+				logger.Debug("Create dump path", "path", dirPath)
+				err := os.MkdirAll(dirPath, 0775)
+				if err != nil {
+					logger.Warn("Failed to create dump", "err", err)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]any{
+						"msg":    "Failed to create dump",
+						"err":    err.Error(),
+						"status": http.StatusInternalServerError,
+					})
+					return
+				}
+				break
+			}
+		}
+
+		for _, sensor := range allSensors {
+			sensorKind := strings.Split(reflect.TypeOf(sensor).String(), ".")[1]
+			jsonMap, err := sensor.GetAllJsons()
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]any{
+					"msg":    "Failed to create dump",
+					"err":    err.Error(),
+					"status": http.StatusInternalServerError,
+				})
+				return
+			}
+			for name, jsonString := range jsonMap {
+				filePath := path.Join(dirPath, fmt.Sprintf("%s-%s.json", sensorKind, name))
+				os.WriteFile(filePath, jsonString, os.ModePerm)
+			}
+		}
+		logger.Info(fmt.Sprintf("Dump successful. Check %s for results", dirPath))
+	}
 }
 
-type typedDesc struct {
-	desc      *prometheus.Desc
-	valueType prometheus.ValueType
-}
-
-func (d *typedDesc) mustNewConstMetric(value float64, labels ...string) prometheus.Metric {
-	return prometheus.MustNewConstMetric(d.desc, d.valueType, value, labels...)
-}
-
-// ErrNoData indicates the collector found no data to collect, but had no other error.
-var ErrNoData = errors.New("collector returned no data")
-
-func IsNoDataError(err error) bool {
-	return err == ErrNoData
+func getSensorMatchMap(scraper *scraper.VCenterScraper) map[*helper.Matcher]interface {
+	GetKind() string
+	GetAllJsons() (map[string][]byte, error)
+} {
+	return map[*helper.Matcher]interface {
+		GetKind() string
+		GetAllJsons() (map[string][]byte, error)
+	}{
+		helper.NewMatcher("cl", "cluster"):                                                     scraper.Cluster,
+		helper.NewMatcher("cr", "compute_resource", "computeresource"):                         scraper.ComputeResources,
+		helper.NewMatcher("ds", "datastore", "datastores"):                                     scraper.Datastore,
+		helper.NewMatcher("h", "esx", "host"):                                                  scraper.Host,
+		helper.NewMatcher("rp", "resource_pool", "respool", "repool"):                          scraper.ResourcePool,
+		helper.NewMatcher("sp", "storage_pod", "storagepod", "dscluster", "datastore_cluster"): scraper.SPOD,
+		helper.NewMatcher("t", "tag", "tags"):                                                  scraper.Tags,
+		helper.NewMatcher("vm", "vms", "virtualmachine"):                                       scraper.VM,
+	}
 }
