@@ -1,5 +1,9 @@
 .PHONY: build
+
 build:
+	goreleaser build --clean --snapshot
+
+build-simple:
 	go mod tidy
 	mkdir -p out
 	go build -o out/govc-exporter -gcflags CGO_ENABLED=0 ./cmd/exporter 
@@ -8,5 +12,3 @@ build:
 vendor:
 	go mod vendor
 
-goreleaser-build:
-	goreleaser build --clean --snapshot
