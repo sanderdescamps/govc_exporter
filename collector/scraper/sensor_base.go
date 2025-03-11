@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/intrinsec/govc_exporter/collector/helper"
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/vim25/types"
 )
 

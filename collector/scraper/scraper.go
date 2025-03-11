@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/intrinsec/govc_exporter/collector/pool"
+	"github.com/sanderdescamps/govc_exporter/collector/pool"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 )

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/intrinsec/govc_exporter/collector/pool"
+	"github.com/sanderdescamps/govc_exporter/collector/pool"
 )
 
 type TestPoolItem struct {

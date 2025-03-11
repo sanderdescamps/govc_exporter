@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/intrinsec/govc_exporter/collector/pool"
+	"github.com/sanderdescamps/govc_exporter/collector/pool"
 )
 
 func Test_VCenterClientPool(t *testing.T) {

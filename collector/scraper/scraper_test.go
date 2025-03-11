@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/intrinsec/govc_exporter/collector/scraper"
 	"github.com/prometheus/common/promslog"
+	"github.com/sanderdescamps/govc_exporter/collector/scraper"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/vapi/rest"

@@ -4,11 +4,11 @@ import (
 	"time"
 
 	kingpin "github.com/alecthomas/kingpin/v2"
-	"github.com/intrinsec/govc_exporter/collector"
-	"github.com/intrinsec/govc_exporter/collector/scraper"
 	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/common/promslog/flag"
 	"github.com/prometheus/common/version"
+	"github.com/sanderdescamps/govc_exporter/collector"
+	"github.com/sanderdescamps/govc_exporter/collector/scraper"
 )
 
 type Config struct {

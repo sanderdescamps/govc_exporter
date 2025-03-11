@@ -1,7 +1,6 @@
 package collector
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/vmware/govmomi/vim25/mo"
@@ -15,7 +14,7 @@ func b2f(val bool) float64 {
 }
 
 func me2id(me mo.ManagedEntity) string {
-	return fmt.Sprintf("%s", me.Self.Value)
+	return me.Self.Value
 }
 
 func cleanString(s string) string {
