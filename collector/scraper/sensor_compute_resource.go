@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -14,16 +15,24 @@ import (
 type ComputeResourceSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.ComputeResource]
 	Refreshable
+	helper.Matchable
 }
 
 func NewComputeResourceSensor(scraper *VCenterScraper) *ComputeResourceSensor {
-	return &ComputeResourceSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, mo.ComputeResource]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[mo.ComputeResource]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &ComputeResourceSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ComputeResource](
+			scraper,
+		),
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.compute_resource.client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.compute_resource.query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.compute_resource.status", false)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (s *ComputeResourceSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
@@ -69,13 +78,11 @@ func (s *ComputeResourceSensor) unsafeRefresh(ctx context.Context, logger *slog.
 		&computeResources,
 	)
 	t3 := time.Now()
-	s.setMetrics(&SensorMetric{
-		Name:           "compute_resource",
-		QueryTime:      t3.Sub(t2),
-		ClientWaitTime: t2.Sub(t1),
-		Status:         true,
-	})
+	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
+	s.metrics.QueryTime.Update(t3.Sub(t2))
+	s.metrics.Status.Update(true)
 	if err != nil {
+		s.metrics.Status.Update(true)
 		return err
 	}
 
@@ -84,4 +91,12 @@ func (s *ComputeResourceSensor) unsafeRefresh(ctx context.Context, logger *slog.
 	}
 
 	return nil
+}
+
+func (s *ComputeResourceSensor) Name() string {
+	return "compute_resource"
+}
+
+func (s *ComputeResourceSensor) Match(name string) bool {
+	return helper.NewMatcher("compute-resource", "computeresource").Match(name)
 }

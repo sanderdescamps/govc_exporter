@@ -2,6 +2,11 @@ package helper
 
 import "strings"
 
+type Matchable interface {
+	Name() string
+	Match(string) bool
+}
+
 type Matcher struct {
 	Keywords []string
 }

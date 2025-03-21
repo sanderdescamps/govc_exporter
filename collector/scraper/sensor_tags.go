@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/vapi/tags"
 	"github.com/vmware/govmomi/vim25/types"
 )
@@ -15,31 +16,32 @@ import (
 type TagsSensor struct {
 	BaseSensor[types.ManagedObjectReference, []*tags.Tag]
 	Refreshable
+	helper.Matchable
 	TagCatsToObserve []string
 	catCacheLock     sync.Mutex
 	catCache         map[string]tags.Category
 }
 
 func NewTagsSensor(scraper *VCenterScraper) *TagsSensor {
-	return &TagsSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, []*tags.Tag]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[[]*tags.Tag]),
-			scraper: scraper,
-			metrics: nil,
-		},
-	}
+	return NewTagsSensorWithTaglist(scraper, []string{})
 }
 
 func NewTagsSensorWithTaglist(scraper *VCenterScraper, t []string) *TagsSensor {
-	return &TagsSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, []*tags.Tag]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[[]*tags.Tag]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &TagsSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, []*tags.Tag](
+			scraper,
+		),
 		TagCatsToObserve: t,
-		// categoryCache: nil,
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.tags.client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.tags.query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.tags.status", true)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (s *TagsSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
@@ -80,11 +82,15 @@ func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) err
 	s.UpdateCatCache(catList)
 
 	tagList := []tags.Tag{}
+	s.metrics.Status.Reset()
 	for _, cat := range catList {
 		tags, err := m.GetTagsForCategory(ctx, cat.ID)
 		if err != nil {
 			logger.Error("failed to get tags for category", "category", cat, "err", err)
+			s.metrics.Status.Fail()
 			return err
+		} else {
+			s.metrics.Status.Success()
 		}
 		tagList = append(tagList, tags...)
 	}
@@ -104,12 +110,8 @@ func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) err
 		}
 	}
 	t3 := time.Now()
-	s.setMetrics(&SensorMetric{
-		Name:           "tags",
-		QueryTime:      t3.Sub(t2),
-		ClientWaitTime: t2.Sub(t1),
-		Status:         true,
-	})
+	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
+	s.metrics.QueryTime.Update(t3.Sub(t2))
 
 	for ref, tags := range objectTags {
 		s.Update(ref, &tags)
@@ -151,5 +153,12 @@ func (s *TagsSensor) GetTag(ref types.ManagedObjectReference, cat string) *tags.
 		}
 	}
 	return nil
+}
 
+func (s *TagsSensor) Name() string {
+	return "tags"
+}
+
+func (s *TagsSensor) Match(name string) bool {
+	return helper.NewMatcher("tags").Match(name)
 }

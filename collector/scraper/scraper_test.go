@@ -695,6 +695,33 @@ func TestVMwareVMperHost2(t *testing.T) {
 	}
 }
 
+func TestHostPerf(t *testing.T) {
+
+	conf := scraper.NewDefaultScraperConfig()
+	conf.Endpoint = "https://localhost:8989"
+	conf.Username = "testuser"
+	conf.Password = "testpass"
+	conf.TagsCategoryToCollect = []string{"tenants"}
+
+	promlogConfig := &promslog.Config{
+		// Level:
+	}
+	logger := promslog.New(promlogConfig)
+	ctx := context.Background()
+
+	aCache, _ := scraper.NewVCenterScraper(conf, logger)
+	aCache.Host.Refresh(ctx, logger)
+
+	t1 := time.Now()
+	err := aCache.HostPerf.Refresh(ctx, logger)
+	t2 := time.Now()
+
+	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
+	if err != nil {
+		logger.Error("error fetching metrics", "err", err)
+	}
+}
+
 // func TestVMwareCache(t *testing.T) {
 // 	activeCache := collector.NewVCenterScraper(collector.VMwareConfig{
 // 		RefreshPeriod: 5,

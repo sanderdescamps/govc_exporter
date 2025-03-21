@@ -11,25 +11,29 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 )
 
-type HasMetrics interface {
-	GetMetrics() *SensorMetric
-}
-
-type Sensor[K comparable, T any] interface {
-	Get(K) T
-	GetAll() []*T
-	GetAllRefs() []K
+type Sensor interface {
+	helper.Matchable
+	Refreshable
+	GetAllJsons() (map[string][]byte, error)
 }
 
 type BaseSensor[K comparable, T any] struct {
-	Sensor[K, T]
-	HasMetrics
 	cache       map[K]*CacheItem[T]
 	scraper     *VCenterScraper
 	lock        sync.Mutex
 	refreshLock sync.Mutex
-	metricLock  sync.Mutex
-	metrics     *SensorMetric
+	metrics     struct {
+		QueryTime      *SensorMetricDuration
+		ClientWaitTime *SensorMetricDuration
+		Status         *SensorMetricStatus
+	}
+}
+
+func NewBaseSensor[K comparable, T any](scraper *VCenterScraper) *BaseSensor[K, T] {
+	return &BaseSensor[K, T]{
+		cache:   make(map[K]*CacheItem[T]),
+		scraper: scraper,
+	}
 }
 
 func (s *BaseSensor[K, T]) Clean(maxAge time.Duration, logger *slog.Logger) {
@@ -92,18 +96,6 @@ func (s *BaseSensor[K, T]) GetAllRefs() []K {
 		result = append(result, k)
 	}
 	return result
-}
-
-func (s *BaseSensor[K, T]) setMetrics(m *SensorMetric) {
-	s.metricLock.Lock()
-	defer s.metricLock.Unlock()
-	s.metrics = m
-}
-
-func (s *BaseSensor[K, T]) GetMetrics() *SensorMetric {
-	s.metricLock.Lock()
-	defer s.metricLock.Unlock()
-	return s.metrics
 }
 
 func (s *BaseSensor[K, T]) Update(ref K, item *T) {

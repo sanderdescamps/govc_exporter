@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -77,10 +76,12 @@ func NewVCCollector(conf *CollectorConfig, scraper *scraper.VCenterScraper, logg
 
 	collectors := map[*helper.Matcher]prometheus.Collector{}
 	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper, *conf)
+	collectors[helper.NewMatcher("perfhost", "esx", "host")] = NewEsxPerfCollector(scraper, *conf)
 	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper, *conf)
 	collectors[helper.NewMatcher("resourcepool", "rp")] = NewResourcePoolCollector(scraper, *conf)
 	collectors[helper.NewMatcher("cluster", "host")] = NewClusterCollector(scraper, *conf)
 	collectors[helper.NewMatcher("vm", "virtualmachine")] = NewVirtualMachineCollector(scraper, *conf)
+	collectors[helper.NewMatcher("perfvm", "vm", "virtualmachine")] = NewVMPerfCollector(scraper, *conf)
 	collectors[helper.NewMatcher("spod", "storagepod")] = NewStoragePodCollector(scraper, *conf)
 	collectors[helper.NewMatcher("scraper")] = NewScraperCollector(scraper)
 
@@ -143,23 +144,33 @@ func (c *VCCollector) GetRefreshHandler(logger *slog.Logger) func(w http.Respons
 	return func(w http.ResponseWriter, r *http.Request) {
 		sensorReq := r.PathValue("sensor")
 
-		var sensor scraper.Refreshable
-		if helper.NewMatcher("cl", "cluster").MatchAny(sensorReq) {
-			sensor = c.scraper.Cluster
-		} else if helper.NewMatcher("cr", "compute_resource", "computeresource").MatchAny(sensorReq) {
-			sensor = c.scraper.ComputeResources
-		} else if helper.NewMatcher("ds", "datastore").MatchAny(sensorReq) {
-			sensor = c.scraper.Datastore
-		} else if helper.NewMatcher("h", "esx", "host").MatchAny(sensorReq) {
-			sensor = c.scraper.Host
-		} else if helper.NewMatcher("rp", "resource_pool", "respool", "repool").MatchAny(sensorReq) {
-			sensor = c.scraper.ResourcePool
-		} else if helper.NewMatcher("sp", "storage_pod", "storagepod", "datastorecluster", "datastore_cluster").MatchAny(sensorReq) {
-			sensor = c.scraper.SPOD
-		} else if helper.NewMatcher("t", "tag", "tags").MatchAny(sensorReq) {
-			sensor = c.scraper.Tags
-		} else if helper.NewMatcher("vm", "virtualmachine").MatchAny(sensorReq) {
-			sensor = c.scraper.VM
+		sensor := c.scraper.GetSensorRefreshByName(sensorReq)
+		if sensor != nil {
+			sensorName := sensor.Name()
+			logger.Info("Trigger manual refresh", "sensor_name", sensorName)
+			err := sensor.Refresh(context.Background(), logger)
+			if err == nil {
+				logger.Info("Refresh successfull", "sensor_name", sensorName)
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]any{
+					"msg":         "refresh successfull",
+					"sensor_name": sensorName,
+					"status":      200,
+				})
+			} else {
+				logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_name", sensorName)
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]any{
+					"msg":         "Failed to refresh sensor",
+					"sensor_name": sensorName,
+					"err":         err.Error(),
+					"status":      http.StatusInternalServerError,
+				})
+			}
 		} else {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -168,41 +179,11 @@ func (c *VCCollector) GetRefreshHandler(logger *slog.Logger) func(w http.Respons
 				"status": http.StatusBadRequest,
 			})
 		}
-
-		sensorKind := strings.Split(reflect.TypeOf(sensor).String(), ".")[1]
-		logger.Info("Trigger manual refresh", "sensor_type", sensorKind)
-		err := sensor.Refresh(context.Background(), logger)
-		if err == nil {
-			logger.Info("Refresh successfull", "sensor_type", sensorKind)
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{
-				"msg":         "refresh successfull",
-				"sensor_type": sensorKind,
-				"status":      200,
-			})
-		} else {
-			logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_type", sensorKind)
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]any{
-				"msg":         "Failed to refresh sensor",
-				"sensor_type": sensorKind,
-				"err":         err.Error(),
-				"status":      http.StatusInternalServerError,
-			})
-		}
 	}
 }
 
 func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var allSensors []interface {
-			GetKind() string
-			GetAllJsons() (map[string][]byte, error)
-		}
 		include := []string{}
 		sensorReq := r.PathValue("sensor")
 		if sensorReq != "" {
@@ -219,17 +200,21 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 
 		}
 
-		found := false
-		sensorKinds := []string{}
-		for matcher, sensor := range getSensorMatchMap(c.scraper) {
-			if matcher.MatchAny(include...) {
-				found = true
-				sensorKinds = append(sensorKinds, strings.Split(reflect.TypeOf(sensor).String(), ".")[1])
-				allSensors = append(allSensors, sensor)
+		sensors := []scraper.Sensor{}
+		for _, sensor := range c.scraper.SensorList() {
+			match := false
+			for _, i := range include {
+				if sensor.Match(i) {
+					match = true
+					break
+				}
+			}
+			if match {
+				sensors = append(sensors, sensor)
 			}
 		}
 
-		if !found {
+		if len(sensors) < 1 {
 			logger.Warn("Failed to create dump. Invalid sensor type", "type", include)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -239,7 +224,13 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 			})
 			return
 		}
-		logger.Info("Creating dump of sensors objects.", "sensors", sensorKinds)
+		logger.Info("Creating dump of sensors objects.", "sensors", func() []string {
+			result := []string{}
+			for _, s := range sensors {
+				result = append(result, s.Name())
+			}
+			return result
+		})
 
 		dirPath := ""
 		for i := 0; true; i++ {
@@ -262,8 +253,8 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 			}
 		}
 
-		for _, sensor := range allSensors {
-			sensorKind := strings.Split(reflect.TypeOf(sensor).String(), ".")[1]
+		for _, sensor := range sensors {
+
 			jsonMap, err := sensor.GetAllJsons()
 			if err != nil {
 				w.Header().Set("Content-Type", "application/json")
@@ -276,7 +267,7 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 				return
 			}
 			for name, jsonString := range jsonMap {
-				filePath := path.Join(dirPath, fmt.Sprintf("%s-%s.json", sensorKind, name))
+				filePath := path.Join(dirPath, fmt.Sprintf("%s-%s.json", sensor.Name(), name))
 				os.WriteFile(filePath, jsonString, os.ModePerm)
 			}
 		}
@@ -284,21 +275,21 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 	}
 }
 
-func getSensorMatchMap(scraper *scraper.VCenterScraper) map[*helper.Matcher]interface {
-	GetKind() string
-	GetAllJsons() (map[string][]byte, error)
-} {
-	return map[*helper.Matcher]interface {
-		GetKind() string
-		GetAllJsons() (map[string][]byte, error)
-	}{
-		helper.NewMatcher("cl", "cluster"):                                                     scraper.Cluster,
-		helper.NewMatcher("cr", "compute_resource", "computeresource"):                         scraper.ComputeResources,
-		helper.NewMatcher("ds", "datastore", "datastores"):                                     scraper.Datastore,
-		helper.NewMatcher("h", "esx", "host"):                                                  scraper.Host,
-		helper.NewMatcher("rp", "resource_pool", "respool", "repool"):                          scraper.ResourcePool,
-		helper.NewMatcher("sp", "storage_pod", "storagepod", "dscluster", "datastore_cluster"): scraper.SPOD,
-		helper.NewMatcher("t", "tag", "tags"):                                                  scraper.Tags,
-		helper.NewMatcher("vm", "vms", "virtualmachine"):                                       scraper.VM,
-	}
-}
+// func getSensorMatchMap(scraper *scraper.VCenterScraper) map[*helper.Matcher]interface {
+// 	GetKind() string
+// 	GetAllJsons() (map[string][]byte, error)
+// } {
+// 	return map[*helper.Matcher]interface {
+// 		GetKind() string
+// 		GetAllJsons() (map[string][]byte, error)
+// 	}{
+// 		helper.NewMatcher("cl", "cluster"):                                                     scraper.Cluster,
+// 		helper.NewMatcher("cr", "compute_resource", "computeresource"):                         scraper.ComputeResources,
+// 		helper.NewMatcher("ds", "datastore", "datastores"):                                     scraper.Datastore,
+// 		helper.NewMatcher("h", "esx", "host"):                                                  scraper.Host,
+// 		helper.NewMatcher("rp", "resource_pool", "respool", "repool"):                          scraper.ResourcePool,
+// 		helper.NewMatcher("sp", "storage_pod", "storagepod", "dscluster", "datastore_cluster"): scraper.SPOD,
+// 		helper.NewMatcher("t", "tag", "tags"):                                                  scraper.Tags,
+// 		helper.NewMatcher("vm", "vms", "virtualmachine"):                                       scraper.VM,
+// 	}
+// }

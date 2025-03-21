@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -14,16 +15,24 @@ import (
 type StoragePodSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.StoragePod]
 	Refreshable
+	helper.Matchable
 }
 
 func NewStoragePodSensor(scraper *VCenterScraper) *StoragePodSensor {
-	return &StoragePodSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, mo.StoragePod]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[mo.StoragePod]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &StoragePodSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.StoragePod](
+			scraper,
+		),
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.spod.client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.spod.query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.spod.status", false)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (s *StoragePodSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
@@ -69,13 +78,11 @@ func (s *StoragePodSensor) unsafeRefresh(ctx context.Context, logger *slog.Logge
 		&storagePods,
 	)
 	t3 := time.Now()
-	s.setMetrics(&SensorMetric{
-		Name:           "storage_pod",
-		QueryTime:      t3.Sub(t2),
-		ClientWaitTime: t2.Sub(t1),
-		Status:         true,
-	})
+	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
+	s.metrics.QueryTime.Update(t3.Sub(t2))
+	s.metrics.Status.Update(true)
 	if err != nil {
+		s.metrics.Status.Update(true)
 		return err
 	}
 
@@ -84,4 +91,12 @@ func (s *StoragePodSensor) unsafeRefresh(ctx context.Context, logger *slog.Logge
 	}
 
 	return nil
+}
+
+func (s *StoragePodSensor) Name() string {
+	return "storage_pod"
+}
+
+func (s *StoragePodSensor) Match(name string) bool {
+	return helper.NewMatcher("storagepod", "storage_pod", "datastore_cluster", "datastorecluster").Match(name)
 }

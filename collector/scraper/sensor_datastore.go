@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -14,16 +15,24 @@ import (
 type DatastoreSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.Datastore]
 	Refreshable
+	helper.Matchable
 }
 
 func NewDatastoreSensor(scraper *VCenterScraper) *DatastoreSensor {
-	return &DatastoreSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, mo.Datastore]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[mo.Datastore]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &DatastoreSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.Datastore](
+			scraper,
+		),
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.datastore.client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.datastore.query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.datastore.status", false)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (s *DatastoreSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
@@ -70,13 +79,11 @@ func (s *DatastoreSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger
 		&datastores,
 	)
 	t3 := time.Now()
-	s.setMetrics(&SensorMetric{
-		Name:           "datastore",
-		QueryTime:      t3.Sub(t2),
-		ClientWaitTime: t2.Sub(t1),
-		Status:         true,
-	})
+	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
+	s.metrics.QueryTime.Update(t3.Sub(t2))
+	s.metrics.Status.Update(true)
 	if err != nil {
+		s.metrics.Status.Update(true)
 		return err
 	}
 
@@ -85,4 +92,12 @@ func (s *DatastoreSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger
 	}
 
 	return nil
+}
+
+func (s *DatastoreSensor) Name() string {
+	return "datastore"
+}
+
+func (s *DatastoreSensor) Match(name string) bool {
+	return helper.NewMatcher("datastore", "ds").Match(name)
 }

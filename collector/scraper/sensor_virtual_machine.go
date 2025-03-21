@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -16,16 +17,24 @@ import (
 type VirtualMachineSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.VirtualMachine]
 	Refreshable
+	helper.Matchable
 }
 
 func NewVirtualMachineSensor(scraper *VCenterScraper) *VirtualMachineSensor {
-	return &VirtualMachineSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, mo.VirtualMachine]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[mo.VirtualMachine]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &VirtualMachineSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.VirtualMachine](
+			scraper,
+		),
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.vm.client_wait_time", 10)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.vm.query_time", 10)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.vm.status", true)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
@@ -40,6 +49,7 @@ func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger)
 }
 
 func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
+	s.metrics.Status.Reset()
 	var hostRefs []types.ManagedObjectReference
 	hostRefs, err := func() ([]types.ManagedObjectReference, error) {
 		resultChan := make(chan *[]types.ManagedObjectReference)
@@ -77,10 +87,7 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 	}()
 
 	if err != nil {
-		s.setMetrics(&SensorMetric{
-			Name:   "vm",
-			Status: false,
-		})
+		s.metrics.Status.Fail()
 		return err
 	}
 
@@ -88,7 +95,6 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 	wg.Add(len(hostRefs))
 	resultChan := make(chan *[]mo.VirtualMachine, len(hostRefs))
 	errChan := make(chan error, len(hostRefs))
-	metricChan := make(chan SensorMetric, len(hostRefs))
 	for _, host := range hostRefs {
 		go func() {
 			t1 := time.Now()
@@ -138,20 +144,14 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 				errChan <- err
 			} else {
 				resultChan <- &items
-				metricChan <- SensorMetric{
-					Name:           "vm",
-					QueryTime:      t3.Sub(t2),
-					ClientWaitTime: t2.Sub(t1),
-					Status:         true,
-				}
+				s.metrics.ClientWaitTime.Update(t2.Sub(t1))
+				s.metrics.QueryTime.Update(t3.Sub(t2))
+				s.metrics.Status.Success()
 			}
 		}()
 	}
 
 	readyChan := make(chan bool)
-	failed := false
-	var allClientWaitTimes []time.Duration
-	var allQueryTimes []time.Duration
 	allVMs := map[types.ManagedObjectReference]*CacheItem[mo.VirtualMachine]{}
 	go func() {
 		for {
@@ -186,12 +186,9 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 						allVMs[vm.Self] = NewCacheItem(&vm)
 					}
 				}
-			case m := <-metricChan:
-				allClientWaitTimes = append(allClientWaitTimes, m.ClientWaitTime)
-				allQueryTimes = append(allQueryTimes, m.QueryTime)
 			case err := <-errChan:
 				logger.Error("failed to get vm's from host", "err", err)
-				failed = true
+				s.metrics.Status.Fail()
 			case <-readyChan:
 				return
 			}
@@ -205,13 +202,6 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 		s.UpdateCacheItem(ref, cacheItem)
 	}
 
-	s.setMetrics(&SensorMetric{
-		Name:           "vm",
-		QueryTime:      avgDuration(allClientWaitTimes),
-		ClientWaitTime: avgDuration(allQueryTimes),
-		Status:         !failed,
-	})
-
 	return nil
 }
 
@@ -223,4 +213,12 @@ func (s *VirtualMachineSensor) GetHostVMs(ref types.ManagedObjectReference) []ty
 		}
 	}
 	return vmsOnHost
+}
+
+func (s *VirtualMachineSensor) Name() string {
+	return "vm"
+}
+
+func (s *VirtualMachineSensor) Match(name string) bool {
+	return helper.NewMatcher("vm", "virtual_machine", "virtualmachine").Match(name)
 }

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -14,16 +15,24 @@ import (
 type HostSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.HostSystem]
 	Refreshable
+	helper.Matchable
 }
 
 func NewHostSensor(scraper *VCenterScraper) *HostSensor {
-	return &HostSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, mo.HostSystem]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[mo.HostSystem]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &HostSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.HostSystem](
+			scraper,
+		),
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.host.client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.host.query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.host.status", false)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (s *HostSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
@@ -74,13 +83,11 @@ func (s *HostSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) err
 		&items,
 	)
 	t3 := time.Now()
-	s.setMetrics(&SensorMetric{
-		Name:           "host",
-		QueryTime:      t3.Sub(t2),
-		ClientWaitTime: t2.Sub(t1),
-		Status:         true,
-	})
+	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
+	s.metrics.QueryTime.Update(t3.Sub(t2))
+	s.metrics.Status.Update(true)
 	if err != nil {
+		s.metrics.Status.Update(true)
 		return err
 	}
 
@@ -89,4 +96,12 @@ func (s *HostSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) err
 	}
 
 	return nil
+}
+
+func (s *HostSensor) Name() string {
+	return "host"
+}
+
+func (s *HostSensor) Match(name string) bool {
+	return helper.NewMatcher("host", "esx").Match(name)
 }

@@ -17,14 +17,21 @@ type OnDemandSensor struct {
 }
 
 func NewOnDemandSensor(scraper *VCenterScraper, logger *slog.Logger) *OnDemandSensor {
-	return &OnDemandSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, mo.ManagedEntity]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[mo.ManagedEntity]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &OnDemandSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ManagedEntity](
+			scraper,
+		),
 		logger: logger,
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.on_demand.client_wait_time", 10)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.on_demand.query_time", 10)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.on_demand.status", false)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity {
@@ -57,16 +64,15 @@ func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity
 	o.logger.Debug("on_demand sensor query", "ref", ref)
 	var entity mo.ManagedEntity
 	err = pc.RetrieveOne(ctx, ref, []string{"name", "parent"}, &entity)
+
+	t3 := time.Now()
+	o.metrics.ClientWaitTime.Update(t2.Sub(t1))
+	o.metrics.QueryTime.Update(t3.Sub(t2))
+	o.metrics.Status.Success()
 	if err != nil {
+		o.metrics.Status.Fail()
 		o.logger.Error("Failed to get on_demand object", "ref", ref, "err", err)
 	}
-	t3 := time.Now()
-	o.setMetrics(&SensorMetric{
-		Name:           "on_demand",
-		QueryTime:      t3.Sub(t2),
-		ClientWaitTime: t2.Sub(t1),
-		Status:         true,
-	})
 
 	o.Update(ref, &entity)
 

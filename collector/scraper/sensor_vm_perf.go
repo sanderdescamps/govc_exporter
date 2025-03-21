@@ -10,26 +10,25 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 )
 
-type HostPerfSensor struct {
+type VMPerfSensor struct {
 	BasePerfSensor
 	Refreshable
 	helper.Matchable
 }
 
-func NewHostPerfSensor(scraper *VCenterScraper, options ...PerfOption) *HostPerfSensor {
-	sensor := &HostPerfSensor{
+func NewVMPerfSensor(scraper *VCenterScraper) *VMPerfSensor {
+	sensor := &VMPerfSensor{
 		BasePerfSensor: BasePerfSensor{
 			perfMetrics: map[types.ManagedObjectReference]*MetricQueue{},
 			scraper:     scraper,
-			perfOptions: options,
 			metrics: struct {
 				QueryTime      *SensorMetricDuration
 				ClientWaitTime *SensorMetricDuration
 				Status         *SensorMetricStatus
 			}{
-				QueryTime:      NewSensorMetricDuration("sensor.host_perf.client_wait_time", 0),
-				ClientWaitTime: NewSensorMetricDuration("sensor.host_perf.query_time", 0),
-				Status:         NewSensorMetricStatus("sensor.host_perf.status", false),
+				QueryTime:      NewSensorMetricDuration("sensor.vm_perf.client_wait_time", 0),
+				ClientWaitTime: NewSensorMetricDuration("sensor.vm_perf.query_time", 0),
+				Status:         NewSensorMetricStatus("sensor.vm_perf.status", false),
 			},
 		},
 	}
@@ -41,44 +40,24 @@ func NewHostPerfSensor(scraper *VCenterScraper, options ...PerfOption) *HostPerf
 	return sensor
 }
 
-func (s *HostPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+func (s *VMPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
 	t_start := time.Now()
 	options := []PerfOption{}
 	options = append(options,
 		SetSamples(20),
-		// SetInterval(60*time.Second),
 		SetWindow(5*time.Minute),
 		SetMetrics(
 			"cpu.usagemhz.average",
-			"cpu.demand.average",
-			"cpu.latency.average",
-			"cpu.entitlement.latest",
-			"cpu.ready.summation",
+			"cpu.capacity.provisioned.average",
 			"cpu.readiness.average",
 			"cpu.costop.summation",
-			"cpu.maxlimited.summation",
-			"mem.entitlement.average",
 			"mem.active.average",
-			"mem.shared.average",
-			"mem.vmmemctl.average",
-			"mem.swapped.average",
+			"mem.granted.average",
 			"mem.consumed.average",
-			"net.bytesRx.average",
-			"net.bytesTx.average",
-			"net.errorsRx.summation",
-			"net.errorsTx.summation",
-			"net.droppedRx.summation",
-			"net.droppedTx.summation",
-			"datastore.read.average",
-			"datastore.write.average",
-			// "datastore.numberReadAveraged.average",
-			// "datastore.numberWriteAveraged.average",
-			// "datastore.totalReadLatency.average",
-			// "datastore.totalWriteLatency.average",
+			"disk.throughput.contention.average",
+			"disk.throughput.usage.average",
 		),
 	)
-
-	options = append(options, s.perfOptions...)
 
 	pq := NewPerfQuery(options...)
 	t1 := time.Now()
@@ -89,11 +68,11 @@ func (s *HostPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error
 	}
 	t2 := time.Now()
 	perfManager := performance.NewManager(client.Client)
-	hostRefs := s.scraper.Host.GetAllRefs()
-	if len(hostRefs) == 0 {
+	vmRefs := s.scraper.VM.GetAllRefs()
+	if len(vmRefs) == 0 {
 		return nil
 	}
-	sample, err := perfManager.SampleByName(ctx, pq.ToSpec(), pq.metrics, hostRefs)
+	sample, err := perfManager.SampleByName(ctx, pq.ToSpec(), pq.metrics, vmRefs)
 	t3 := time.Now()
 	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
 	s.metrics.QueryTime.Update(t3.Sub(t2))
@@ -118,14 +97,14 @@ func (s *HostPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error
 		}
 	}
 	t_end := time.Now()
-	logger.Debug("host performance metrics collected", "time_ms", t_end.Sub(t_start).Milliseconds())
+	logger.Debug("vm performance metrics collected", "time_ms", t_end.Sub(t_start).Milliseconds())
 	return nil
 }
 
-func (s *HostPerfSensor) Name() string {
-	return "perf-host"
+func (s *VMPerfSensor) Name() string {
+	return "perf-vm"
 }
 
-func (s *HostPerfSensor) Match(name string) bool {
-	return helper.NewMatcher("perf-host", "perfhost", "perfesx", "perf-esx", "host-perf-host", "hostperf", "esxperf", "esx-perf").Match(name)
+func (s *VMPerfSensor) Match(name string) bool {
+	return helper.NewMatcher("perf-vm", "perfvm", "vm-perf", "vmperf").Match(name)
 }

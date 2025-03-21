@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -14,16 +15,24 @@ import (
 type ResourcePoolSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.ResourcePool]
 	Refreshable
+	helper.Matchable
 }
 
 func NewResourcePoolSensor(scraper *VCenterScraper) *ResourcePoolSensor {
-	return &ResourcePoolSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, mo.ResourcePool]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[mo.ResourcePool]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &ResourcePoolSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ResourcePool](
+			scraper,
+		),
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.repool.client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.repool.query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.repool.status", false)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (s *ResourcePoolSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
@@ -69,13 +78,11 @@ func (s *ResourcePoolSensor) unsafeRefresh(ctx context.Context, logger *slog.Log
 		&resourcePools,
 	)
 	t3 := time.Now()
-	s.setMetrics(&SensorMetric{
-		Name:           "resource_pool",
-		QueryTime:      t3.Sub(t2),
-		ClientWaitTime: t2.Sub(t1),
-		Status:         true,
-	})
+	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
+	s.metrics.QueryTime.Update(t3.Sub(t2))
+	s.metrics.Status.Update(true)
 	if err != nil {
+		s.metrics.Status.Update(true)
 		return err
 	}
 
@@ -84,4 +91,12 @@ func (s *ResourcePoolSensor) unsafeRefresh(ctx context.Context, logger *slog.Log
 	}
 
 	return nil
+}
+
+func (s *ResourcePoolSensor) Name() string {
+	return "resource_pool"
+}
+
+func (s *ResourcePoolSensor) Match(name string) bool {
+	return helper.NewMatcher("resource_pool", "resourcepool", "repool").Match(name)
 }

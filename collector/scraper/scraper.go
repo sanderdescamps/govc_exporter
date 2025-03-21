@@ -4,33 +4,37 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/sanderdescamps/govc_exporter/collector/pool"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
-type ScraperStatus struct {
-	TCPStatusCheck         bool
-	TCPStatusCheckMgs      string
-	TCPStatusCheckEndpoint string
+// type ScraperStatus struct {
+// 	TCPStatusCheck         bool
+// 	TCPStatusCheckMgs      string
+// 	TCPStatusCheckEndpoint string
 
-	SensorEnabled   map[string]bool
-	SensorAvailable map[string]bool
-	SensorMetric    []SensorMetric
-}
+// 	SensorEnabled   map[string]bool
+// 	SensorAvailable map[string]bool
+// 	SensorMetric    []SensorMetric
+// }
 
 type VCenterScraper struct {
 	clientPool *pool.VCenterClientPool
 	config     ScraperConfig
-	metrics    map[string]*SensorMetric
+	metrics    []*SensorMetric
 	refreshers []*AutoRefresh
 	cleaners   []*AutoClean
+	logger     *slog.Logger
 
 	Host             *HostSensor
+	HostPerf         *HostPerfSensor
 	Cluster          *ClusterSensor
 	ComputeResources *ComputeResourceSensor
 	VM               *VirtualMachineSensor
+	VMPerf           *VMPerfSensor
 	Datastore        *DatastoreSensor
 	SPOD             *StoragePodSensor
 	ResourcePool     *ResourcePoolSensor
@@ -56,7 +60,7 @@ func NewVCenterScraper(conf ScraperConfig, logger *slog.Logger) (*VCenterScraper
 	scraper := VCenterScraper{
 		clientPool: pool,
 		config:     conf,
-		metrics:    make(map[string]*SensorMetric),
+		metrics:    []*SensorMetric{},
 		refreshers: []*AutoRefresh{},
 		cleaners:   []*AutoClean{},
 	}
@@ -83,6 +87,10 @@ func NewVCenterScraper(conf ScraperConfig, logger *slog.Logger) (*VCenterScraper
 		scraper.Host = NewHostSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Host, conf.HostRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Host, conf.CleanInterval, conf.HostMaxAge))
+
+		scraper.HostPerf = NewHostPerfSensor(&scraper)
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.HostPerf, 30*time.Second))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.HostPerf, conf.CleanInterval, 8*time.Minute))
 	}
 
 	if conf.ResourcePoolScraperEnabled {
@@ -101,6 +109,10 @@ func NewVCenterScraper(conf ScraperConfig, logger *slog.Logger) (*VCenterScraper
 		scraper.VM = NewVirtualMachineSensor(&scraper)
 		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.VM, conf.VirtualMachineRefreshInterval))
 		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.VM, conf.CleanInterval, conf.VirtualMachineMaxAge))
+
+		scraper.VMPerf = NewVMPerfSensor(&scraper)
+		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.VMPerf, 60*time.Second))
+		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.VMPerf, conf.CleanInterval, 8*time.Minute))
 	}
 
 	if conf.SpodScraperEnabled {
@@ -122,40 +134,33 @@ func NewVCenterScraper(conf ScraperConfig, logger *slog.Logger) (*VCenterScraper
 	return &scraper, nil
 }
 
-// func (c *VCenterScraper) dispatchMetrics(m SensorMetric) {
-// 	if m.Name == "on_demand" {
-// 		if current, ok := c.metrics[m.Name]; ok {
-// 			newMean := current.RollingMean(m, 10)
-// 			c.metricsLock.Lock()
-// 			defer c.metricsLock.Unlock()
-// 			c.metrics[m.Name] = &newMean
-// 			return
-// 		}
-// 	}
-// 	c.metricsLock.Lock()
-// 	defer c.metricsLock.Unlock()
-// 	c.metrics[m.Name] = &m
-// }
-
-func (c *VCenterScraper) Status() ScraperStatus {
-	tcpConnect := false
-	tcpErrMsg := ""
-	tcpEndpoint := ""
+func (c *VCenterScraper) tcpConnectStatus() (BaseSensorMetric, error) {
+	status := *NewSensorMetricStatus("scraper.tcp_connect_status", false)
 	baseURL, err := c.config.URL()
-	if err == nil {
-		tcpEndpoint = baseURL.Host
-		tcpConnect, err = tcpConnectionCheck(tcpEndpoint)
-
-		if err != nil {
-			tcpErrMsg = err.Error()
-		}
-	} else {
-		tcpConnect = false
-		tcpErrMsg = err.Error()
+	if err != nil {
+		status.Fail()
+		return status.BaseSensorMetric, err
 	}
 
-	sensorEnabled := map[string]bool{
-		"host":             true,
+	_, err = tcpConnectionCheck(baseURL.Host)
+	if err != nil {
+		status.Fail()
+		return status.BaseSensorMetric, err
+	}
+	status.Success()
+	return status.BaseSensorMetric, nil
+}
+
+func (c *VCenterScraper) ScraperMetrics() []BaseSensorMetric {
+	result := []BaseSensorMetric{}
+	tcpStatus, err := c.tcpConnectStatus()
+	if err != nil {
+		c.logger.Error("failed to connect to endpoint", "err", err)
+	}
+	result = append(result, tcpStatus)
+
+	for kind, enabled := range map[string]bool{
+		"host":             c.config.HostScraperEnabled,
 		"cluster":          c.config.ClusterScraperEnabled,
 		"compute_resource": c.config.ClusterScraperEnabled,
 		"datastore":        c.config.DatastoreScraperEnabled,
@@ -163,9 +168,13 @@ func (c *VCenterScraper) Status() ScraperStatus {
 		"spod":             c.config.SpodScraperEnabled,
 		"repool":           c.config.ResourcePoolScraperEnabled,
 		"tags":             c.config.TagsScraperEnabled,
+	} {
+		sensor := NewSensorMetricStatus(fmt.Sprintf("sensor.%s.enabled", kind), false)
+		sensor.Update(enabled)
+		result = append(result, sensor.BaseSensorMetric)
 	}
 
-	sensorAvailable := map[string]bool{
+	for kind, available := range map[string]bool{
 		"host":             c.Host != nil,
 		"cluster":          c.Cluster != nil,
 		"compute_resource": c.ComputeResources != nil,
@@ -174,37 +183,45 @@ func (c *VCenterScraper) Status() ScraperStatus {
 		"spod":             c.SPOD != nil,
 		"repool":           c.ResourcePool != nil,
 		"tags":             c.Tags != nil,
+	} {
+		sensor := NewSensorMetricStatus(fmt.Sprintf("sensor.%s.available", kind), false)
+		sensor.Update(available)
+		result = append(result, sensor.BaseSensorMetric)
 	}
 
-	sensors := []HasMetrics{
-		c.Host,
+	for _, metric := range c.metrics {
+		result = append(result, metric.BaseSensorMetric)
+	}
+	return result
+}
+
+func (c *VCenterScraper) RegisterSensorMetric(metric ...*SensorMetric) {
+	c.metrics = append(c.metrics, metric...)
+}
+
+func (c *VCenterScraper) SensorList() []Sensor {
+	return []Sensor{
 		c.Cluster,
 		c.ComputeResources,
-		c.VM,
 		c.Datastore,
-		c.SPOD,
+		c.Host,
+		c.HostPerf,
 		c.ResourcePool,
+		c.SPOD,
 		c.Tags,
-		c.Remain,
+		c.VM,
+		c.VMPerf,
 	}
+}
 
-	sensorMetrics := []SensorMetric{}
-	for _, s := range sensors {
-		metrics := s.GetMetrics()
-		if metrics != nil {
-			sensorMetrics = append(sensorMetrics, *metrics)
+func (c *VCenterScraper) GetSensorRefreshByName(name string) Sensor {
+	for _, s := range c.SensorList() {
+		if s.Match(name) {
+			return s
 		}
-
 	}
 
-	return ScraperStatus{
-		TCPStatusCheck:         tcpConnect,
-		TCPStatusCheckMgs:      tcpErrMsg,
-		TCPStatusCheckEndpoint: tcpEndpoint,
-		SensorEnabled:          sensorEnabled,
-		SensorAvailable:        sensorAvailable,
-		SensorMetric:           sensorMetrics,
-	}
+	return nil
 }
 
 func (c *VCenterScraper) Start(logger *slog.Logger) error {

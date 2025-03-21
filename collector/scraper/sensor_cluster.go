@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/collector/helper"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -14,16 +15,24 @@ import (
 type ClusterSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.ClusterComputeResource]
 	Refreshable
+	helper.Matchable
 }
 
 func NewClusterSensor(scraper *VCenterScraper) *ClusterSensor {
-	return &ClusterSensor{
-		BaseSensor: BaseSensor[types.ManagedObjectReference, mo.ClusterComputeResource]{
-			cache:   make(map[types.ManagedObjectReference]*CacheItem[mo.ClusterComputeResource]),
-			scraper: scraper,
-			metrics: nil,
-		},
+	sensor := &ClusterSensor{
+		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ClusterComputeResource](
+			scraper,
+		),
 	}
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.cluster.client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.cluster.query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus("sensor.cluster.status", false)
+	scraper.RegisterSensorMetric(
+		&sensor.metrics.ClientWaitTime.SensorMetric,
+		&sensor.metrics.QueryTime.SensorMetric,
+		&sensor.metrics.Status.SensorMetric,
+	)
+	return sensor
 }
 
 func (s *ClusterSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
@@ -69,13 +78,11 @@ func (s *ClusterSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) 
 		&clusters,
 	)
 	t3 := time.Now()
-	s.setMetrics(&SensorMetric{
-		Name:           "cluster",
-		QueryTime:      t3.Sub(t2),
-		ClientWaitTime: t2.Sub(t1),
-		Status:         true,
-	})
+	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
+	s.metrics.QueryTime.Update(t3.Sub(t2))
+	s.metrics.Status.Update(true)
 	if err != nil {
+		s.metrics.Status.Update(true)
 		return err
 	}
 
@@ -84,4 +91,12 @@ func (s *ClusterSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) 
 	}
 
 	return nil
+}
+
+func (s *ClusterSensor) Name() string {
+	return "cluster"
+}
+
+func (s *ClusterSensor) Match(name string) bool {
+	return helper.NewMatcher("cluster").Match(name)
 }
