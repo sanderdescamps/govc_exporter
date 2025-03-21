@@ -78,11 +78,11 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf Collector
 		advancedNetworkMetrics: cConf.VMAdvancedNetworkMetrics,
 		useIsecSpecifics:       cConf.UseIsecSpecifics,
 		numCPU: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cpu_number_total"),
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cpu_number"),
 			"vm number of cpu", labels, nil),
 
 		numCoresPerSocket: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cores_number_per_socket_total"),
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cores_per_socket"),
 			"vm number of cores by socket", labels, nil),
 
 		memoryBytes: prometheus.NewDesc(
@@ -99,7 +99,7 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf Collector
 
 		maximumCPUUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "max_cpu_usage_mhz"),
-			"maximum CPU usage in MHz", labels, nil),
+			"total assigned CPU in MHz", labels, nil),
 
 		guestMemoryUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "guest_memory_usage_bytes"),

@@ -94,10 +94,10 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *es
 
 		//CPU
 		cpuCoresTotal: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "cpu_cores_total"),
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "cpu_cores"),
 			"esx number of  cores", labels, nil),
 		cpuThreadsTotal: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "cpu_threads_total"),
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "cpu_threads"),
 			"esx number of threads", labels, nil),
 		availCPUMhz: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "avail_cpu_mhz"),
