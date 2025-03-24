@@ -91,49 +91,49 @@ func LoadConfig() Config {
 	a.Flag("scraper.clean_interval", "interval the scraper cleans up old data").Default("5s").DurationVar(&cfg.ScraperConfig.CleanInterval)
 
 	//scraper.cluster
-	a.Flag("scraper.cluster", "Enable cluster scraper").Default("True").BoolVar(&cfg.ScraperConfig.ClusterScraperEnabled)
-	a.Flag("scraper.cluster.max_age", "time in seconds clusters are cached").Default("5m").DurationVar(&cfg.ScraperConfig.ClusterMaxAge)
-	a.Flag("scraper.cluster.refresh_interval", "interval clusters are refreshed").Default("25s").DurationVar(&cfg.ScraperConfig.ClusterRefreshInterval)
+	a.Flag("scraper.cluster", "Enable cluster scraper").Default("True").BoolVar(&cfg.ScraperConfig.Cluster.Enabled)
+	a.Flag("scraper.cluster.max_age", "time in seconds clusters are cached").Default("5m").DurationVar(&cfg.ScraperConfig.Cluster.MaxAge)
+	a.Flag("scraper.cluster.refresh_interval", "interval clusters are refreshed").Default("25s").DurationVar(&cfg.ScraperConfig.Cluster.RefreshInterval)
 
 	//scraper.compute_resource
-	a.Flag("scraper.compute_resource", "Enable compute_resource scraper").Default("True").BoolVar(&cfg.ScraperConfig.ComputeResourceScraperEnabled)
-	a.Flag("scraper.compute_resource.max_age", "time in seconds clusters are cached").Default("5m").DurationVar(&cfg.ScraperConfig.ComputeResourceMaxAge)
-	a.Flag("scraper.compute_resource.refresh_interval", "interval clusters are refreshed").Default("25s").DurationVar(&cfg.ScraperConfig.ComputeResourceRefreshInterval)
+	a.Flag("scraper.compute_resource", "Enable compute_resource scraper").Default("True").BoolVar(&cfg.ScraperConfig.ComputeResource.Enabled)
+	a.Flag("scraper.compute_resource.max_age", "time in seconds clusters are cached").Default("5m").DurationVar(&cfg.ScraperConfig.ComputeResource.MaxAge)
+	a.Flag("scraper.compute_resource.refresh_interval", "interval clusters are refreshed").Default("25s").DurationVar(&cfg.ScraperConfig.ComputeResource.RefreshInterval)
 
 	//scraper.datastore
-	a.Flag("scraper.ds", "Enable datastore scraper").Default("True").BoolVar(&cfg.ScraperConfig.DatastoreScraperEnabled)
-	a.Flag("scraper.datastore.max_age", "time in seconds datastores are cached").Default("2m").DurationVar(&cfg.ScraperConfig.DatastoreMaxAge)
-	a.Flag("scraper.datastore.refresh_interval", "interval datastores are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.DatastoreRefreshInterval)
+	a.Flag("scraper.ds", "Enable datastore scraper").Default("True").BoolVar(&cfg.ScraperConfig.Datastore.Enabled)
+	a.Flag("scraper.datastore.max_age", "time in seconds datastores are cached").Default("2m").DurationVar(&cfg.ScraperConfig.Datastore.MaxAge)
+	a.Flag("scraper.datastore.refresh_interval", "interval datastores are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.Datastore.RefreshInterval)
 
 	//scraper.host
-	a.Flag("scraper.host", "Enable host scraper").Default("True").BoolVar(&cfg.ScraperConfig.HostScraperEnabled)
-	a.Flag("scraper.host.max_age", "time in seconds hosts are cached").Default("1m").DurationVar(&cfg.ScraperConfig.HostMaxAge)
-	a.Flag("scraper.host.refresh_interval", "interval hosts are refreshed").Default("25s").DurationVar(&cfg.ScraperConfig.HostRefreshInterval)
+	a.Flag("scraper.host", "Enable host scraper").Default("True").BoolVar(&cfg.ScraperConfig.Host.Enabled)
+	a.Flag("scraper.host.max_age", "time in seconds hosts are cached").Default("1m").DurationVar(&cfg.ScraperConfig.Host.MaxAge)
+	a.Flag("scraper.host.refresh_interval", "interval hosts are refreshed").Default("25s").DurationVar(&cfg.ScraperConfig.Host.RefreshInterval)
 
 	//scraper.repool
-	a.Flag("scraper.repool", "Enable resource pool scraper").Default("True").BoolVar(&cfg.ScraperConfig.ResourcePoolScraperEnabled)
-	a.Flag("scraper.repool.max_age", "time in seconds resource pools are cached").Default("2m").DurationVar(&cfg.ScraperConfig.ResourcePoolMaxAge)
-	a.Flag("scraper.repool.refresh_interval", "interval resource pools are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.ResourcePoolRefreshInterval)
+	a.Flag("scraper.repool", "Enable resource pool scraper").Default("True").BoolVar(&cfg.ScraperConfig.ResourcePool.Enabled)
+	a.Flag("scraper.repool.max_age", "time in seconds resource pools are cached").Default("2m").DurationVar(&cfg.ScraperConfig.ResourcePool.MaxAge)
+	a.Flag("scraper.repool.refresh_interval", "interval resource pools are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.ResourcePool.RefreshInterval)
 
 	//scraper.spod
-	a.Flag("scraper.spod", "Enable datastore cluster scraper").Default("True").BoolVar(&cfg.ScraperConfig.SpodScraperEnabled)
-	a.Flag("scraper.spod.max_age", "time in seconds spods are cached").Default("2m").DurationVar(&cfg.ScraperConfig.SpodMaxAge)
-	a.Flag("scraper.spod.refresh_interval", "interval spods are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.SpodRefreshInterval)
+	a.Flag("scraper.spod", "Enable datastore cluster scraper").Default("True").BoolVar(&cfg.ScraperConfig.Spod.Enabled)
+	a.Flag("scraper.spod.max_age", "time in seconds spods are cached").Default("2m").DurationVar(&cfg.ScraperConfig.Spod.MaxAge)
+	a.Flag("scraper.spod.refresh_interval", "interval spods are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.Spod.RefreshInterval)
 
 	//scraper.tags
-	a.Flag("scraper.tags", "Collect tags").Default("True").BoolVar(&cfg.ScraperConfig.TagsScraperEnabled)
-	a.Flag("scraper.tags.max_age", "time in seconds tags are cached").Default("10m").DurationVar(&cfg.ScraperConfig.TagsMaxAge)
-	a.Flag("scraper.tags.refresh_interval", "interval tags are refreshed").Default("290s").DurationVar(&cfg.ScraperConfig.TagsRefreshInterval)
+	a.Flag("scraper.tags", "Collect tags").Default("True").BoolVar(&cfg.ScraperConfig.Tags.Enabled)
+	a.Flag("scraper.tags.max_age", "time in seconds tags are cached").Default("10m").DurationVar(&cfg.ScraperConfig.Tags.MaxAge)
+	a.Flag("scraper.tags.refresh_interval", "interval tags are refreshed").Default("290s").DurationVar(&cfg.ScraperConfig.Tags.RefreshInterval)
 
 	//scraper.vm
-	a.Flag("scraper.vm", "Enable virtualmachine scraper").Default("True").BoolVar(&cfg.ScraperConfig.VirtualMachineScraperEnabled)
-	a.Flag("scraper.vm.max_age", "time in seconds vm's are cached").Default("2m").DurationVar(&cfg.ScraperConfig.VirtualMachineMaxAge)
-	a.Flag("scraper.vm.refresh_interval", "interval vm's are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.VirtualMachineRefreshInterval)
+	a.Flag("scraper.vm", "Enable virtualmachine scraper").Default("True").BoolVar(&cfg.ScraperConfig.VirtualMachine.Enabled)
+	a.Flag("scraper.vm.max_age", "time in seconds vm's are cached").Default("2m").DurationVar(&cfg.ScraperConfig.VirtualMachine.MaxAge)
+	a.Flag("scraper.vm.refresh_interval", "interval vm's are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.VirtualMachine.RefreshInterval)
 	a.Flag("collector.vm.disk", "Collect extra vm disk metrics").Default("false").BoolVar(&cfg.CollectorConfig.VMAdvancedStorageMetrics)
 	a.Flag("collector.vm.network", "Collect extra vm network metrics").Default("false").BoolVar(&cfg.CollectorConfig.VMAdvancedNetworkMetrics)
 
 	//scraper.on_demand
-	a.Flag("scraper.on_demand.max_age", "Time in seconds the scraper keeps all non-cache data. Used when no other sensor is available").Default("5m").DurationVar(&cfg.ScraperConfig.OnDemandCacheMaxAge)
+	a.Flag("scraper.on_demand.max_age", "Time in seconds the scraper keeps all non-cache data. Used when no other sensor is available").Default("5m").DurationVar(&cfg.ScraperConfig.OnDemand.MaxAge)
 
 	if _, err := a.Parse(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing commandline arguments: %v\n", err)
@@ -141,7 +141,7 @@ func LoadConfig() Config {
 		os.Exit(2)
 	}
 
-	cfg.ScraperConfig.TagsCategoryToCollect = dedup(mergeLists(
+	cfg.ScraperConfig.Tags.CategoryToCollect = dedup(mergeLists(
 		cfg.CollectorConfig.ClusterTagLabels,
 		cfg.CollectorConfig.DatastoreTagLabels,
 		cfg.CollectorConfig.HostTagLabels,

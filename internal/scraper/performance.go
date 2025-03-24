@@ -93,12 +93,6 @@ func SetSamples[T constraints.Integer](num T) PerfOption {
 	}
 }
 
-// func SetInterval[T constraints.Integer](d T) PerfOption {
-// 	return func(pq *perfQuery) {
-// 		pq.sampleInterval = int32(d)
-// 	}
-// }
-
 func SetInterval(d time.Duration) PerfOption {
 	return func(pq *perfQuery) {
 		pq.sampleInterval = int32(d.Seconds())
