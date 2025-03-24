@@ -14,7 +14,7 @@ type VMPerfCollector struct {
 	perfMetric *prometheus.Desc
 }
 
-func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *VMPerfCollector {
+func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf Config) *VMPerfCollector {
 	labels := []string{"uuid", "name", "template", "vm_id"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {

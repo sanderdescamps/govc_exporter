@@ -17,7 +17,7 @@ type storagePodCollector struct {
 	overallStatus *prometheus.Desc
 }
 
-func NewStoragePodCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *storagePodCollector {
+func NewStoragePodCollector(scraper *scraper.VCenterScraper, cConf Config) *storagePodCollector {
 	labels := []string{"id", "name", "datacenter"}
 
 	extraLabels := cConf.StoragePodTagLabels

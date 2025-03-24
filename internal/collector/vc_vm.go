@@ -56,7 +56,7 @@ type virtualMachineCollector struct {
 	hostInfo             *prometheus.Desc
 }
 
-func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *virtualMachineCollector {
+func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf Config) *virtualMachineCollector {
 	labels := []string{"uuid", "name", "template", "vm_id"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {

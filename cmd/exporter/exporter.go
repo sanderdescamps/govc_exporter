@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,6 +33,12 @@ func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Requ
 
 func main() {
 	config := LoadConfig()
+	if err := config.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid config: %v\n", err)
+	}
+	jsonString, _ := json.MarshalIndent(config, "", "  ")
+	fmt.Print(string(jsonString))
+
 	logger := promslog.New(config.PromlogConfig)
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
 	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "user", version.BuildUser, "date", version.BuildDate, "tags", version.GetTags())
@@ -96,14 +103,4 @@ func main() {
 
 	<-shutdownChan
 	logger.Info("Graceful shutdown complete.")
-}
-
-func mergeLists[T any](l ...*[]T) []T {
-	result := []T{}
-	for _, i := range l {
-		if i != nil && len(*i) != 0 {
-			result = append(result, *i...)
-		}
-	}
-	return result
 }

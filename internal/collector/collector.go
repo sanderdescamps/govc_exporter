@@ -22,54 +22,14 @@ import (
 // Namespace defines the common namespace to be used by all metrics.
 const namespace = "govc"
 
-type CollectorConfig struct {
-	UseIsecSpecifics       bool
-	DisableExporterMetrics bool
-
-	MaxRequests int
-
-	ClusterTagLabels      []string
-	DatastoreTagLabels    []string
-	HostTagLabels         []string
-	ResourcePoolTagLabels []string
-	StoragePodTagLabels   []string
-
-	VMAdvancedNetworkMetrics bool
-	VMAdvancedStorageMetrics bool
-	VMTagLabels              []string
-
-	HostStorageMetrics bool
-}
-
-func DefaultCollectorConf() *CollectorConfig {
-	return &CollectorConfig{
-		UseIsecSpecifics:       false,
-		DisableExporterMetrics: false,
-
-		MaxRequests: 10,
-
-		ClusterTagLabels:      []string{},
-		DatastoreTagLabels:    []string{},
-		HostTagLabels:         []string{},
-		ResourcePoolTagLabels: []string{},
-		StoragePodTagLabels:   []string{},
-
-		VMAdvancedNetworkMetrics: false,
-		VMAdvancedStorageMetrics: false,
-		VMTagLabels:              []string{},
-
-		HostStorageMetrics: false,
-	}
-}
-
 type VCCollector struct {
 	scraper *scraper.VCenterScraper
 	// logger     *slog.Logger
-	conf       CollectorConfig
+	conf       Config
 	collectors map[*helper.Matcher]prometheus.Collector
 }
 
-func NewVCCollector(conf *CollectorConfig, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
+func NewVCCollector(conf *Config, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
 	if conf == nil {
 		conf = DefaultCollectorConf()
 	}

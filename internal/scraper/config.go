@@ -8,7 +8,7 @@ import (
 	"github.com/vmware/govmomi/vim25/soap"
 )
 
-type ScraperConfig struct {
+type Config struct {
 	Endpoint                       string
 	Username                       string
 	Password                       string
@@ -43,8 +43,8 @@ type ScraperConfig struct {
 	ClientPoolSize      int
 }
 
-func NewDefaultScraperConfig() ScraperConfig {
-	return ScraperConfig{
+func NewDefaultConfig() Config {
+	return Config{
 		HostScraperEnabled:            true,
 		HostMaxAge:                    time.Duration(120) * time.Second,
 		HostRefreshInterval:           time.Duration(60) * time.Second,
@@ -73,7 +73,7 @@ func NewDefaultScraperConfig() ScraperConfig {
 	}
 }
 
-func (c ScraperConfig) Validate() error {
+func (c Config) Validate() error {
 	if !c.HostScraperEnabled && c.VirtualMachineScraperEnabled {
 		return fmt.Errorf(`HostScraperEnabled must be enabled when 
 VirtualMachineScraperEnabled is enabled because scraper needs the hosts 
@@ -107,7 +107,7 @@ when it queries the vm's`)
 	return nil
 }
 
-func (c ScraperConfig) URL() (*url.URL, error) {
+func (c Config) URL() (*url.URL, error) {
 	u, err := url.Parse(c.Endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse url %s", c.Endpoint)
@@ -143,7 +143,7 @@ func (c ScraperConfig) URL() (*url.URL, error) {
 	return parseURL, nil
 }
 
-func (c ScraperConfig) SoapURL() (*url.URL, error) {
+func (c Config) SoapURL() (*url.URL, error) {
 	u, err := soap.ParseURL(c.Endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse url %s", c.Endpoint)

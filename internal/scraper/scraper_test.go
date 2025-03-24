@@ -41,7 +41,7 @@ func GetClient(ctx context.Context, t *testing.T) *govmomi.Client {
 
 func TestVCenterScraper(t *testing.T) {
 
-	conf := scraper.NewDefaultScraperConfig()
+	conf := scraper.NewDefaultConfig()
 	conf.Endpoint = "https://localhost:8989"
 	conf.Username = "testuser"
 	conf.Password = "testpass"
@@ -697,7 +697,7 @@ func TestVMwareVMperHost2(t *testing.T) {
 
 func TestHostPerf(t *testing.T) {
 
-	conf := scraper.NewDefaultScraperConfig()
+	conf := scraper.NewDefaultConfig()
 	conf.Endpoint = "https://localhost:8989"
 	conf.Username = "testuser"
 	conf.Password = "testpass"

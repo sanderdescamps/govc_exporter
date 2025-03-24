@@ -23,7 +23,7 @@ import (
 
 type VCenterScraper struct {
 	clientPool *pool.VCenterClientPool
-	config     ScraperConfig
+	config     Config
 	metrics    []*SensorMetric
 	refreshers []*AutoRefresh
 	cleaners   []*AutoClean
@@ -42,7 +42,7 @@ type VCenterScraper struct {
 	Remain           *OnDemandSensor
 }
 
-func NewVCenterScraper(conf ScraperConfig, logger *slog.Logger) (*VCenterScraper, error) {
+func NewVCenterScraper(conf Config, logger *slog.Logger) (*VCenterScraper, error) {
 
 	ctx := context.Background()
 	pool, err := pool.NewVCenterClientPoolWithLogger(

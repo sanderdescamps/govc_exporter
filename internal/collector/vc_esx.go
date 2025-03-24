@@ -49,7 +49,7 @@ type esxCollector struct {
 	vmNumTotal *prometheus.Desc
 }
 
-func NewEsxCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *esxCollector {
+func NewEsxCollector(scraper *scraper.VCenterScraper, cConf Config) *esxCollector {
 	labels := []string{"id", "name", "datacenter", "cluster"}
 	extraLabels := cConf.HostTagLabels
 	if len(extraLabels) != 0 {

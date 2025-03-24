@@ -28,7 +28,7 @@ type datastoreCollector struct {
 	vmfsInfo         *prometheus.Desc
 }
 
-func NewDatastoreCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *datastoreCollector {
+func NewDatastoreCollector(scraper *scraper.VCenterScraper, cConf Config) *datastoreCollector {
 	labels := []string{"id", "name", "cluster", "kind"}
 
 	extraLabels := cConf.DatastoreTagLabels

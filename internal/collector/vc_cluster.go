@@ -24,7 +24,7 @@ type clusterCollector struct {
 	overallStatus     *prometheus.Desc
 }
 
-func NewClusterCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *clusterCollector {
+func NewClusterCollector(scraper *scraper.VCenterScraper, cConf Config) *clusterCollector {
 	labels := []string{"id", "name", "datacenter"}
 
 	extraLabels := cConf.ClusterTagLabels

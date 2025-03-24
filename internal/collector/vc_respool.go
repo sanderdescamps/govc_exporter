@@ -30,7 +30,7 @@ type resourcePoolCollector struct {
 	overallStatus                *prometheus.Desc
 }
 
-func NewResourcePoolCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *resourcePoolCollector {
+func NewResourcePoolCollector(scraper *scraper.VCenterScraper, cConf Config) *resourcePoolCollector {
 	labels := []string{"id", "name", "datacenter"}
 
 	extraLabels := cConf.ResourcePoolTagLabels

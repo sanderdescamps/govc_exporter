@@ -12,7 +12,7 @@ type esxPerfCollector struct {
 	perfMetric *prometheus.Desc
 }
 
-func NewEsxPerfCollector(scraper *scraper.VCenterScraper, cConf CollectorConfig) *esxPerfCollector {
+func NewEsxPerfCollector(scraper *scraper.VCenterScraper, cConf Config) *esxPerfCollector {
 	labels := []string{"id", "name", "datacenter", "cluster"}
 	extraLabels := cConf.HostTagLabels
 	if len(extraLabels) != 0 {
