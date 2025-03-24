@@ -14,8 +14,8 @@ import (
 	"github.com/prometheus/common/promslog"
 
 	"github.com/prometheus/common/version"
-	"github.com/sanderdescamps/govc_exporter/collector"
-	"github.com/sanderdescamps/govc_exporter/collector/scraper"
+	"github.com/sanderdescamps/govc_exporter/internal/collector"
+	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
 func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Request) {
