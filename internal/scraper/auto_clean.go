@@ -1,44 +1,37 @@
 package scraper
 
 import (
+	"context"
 	"log/slog"
-	"reflect"
 	"time"
 )
 
-type Cleanable interface {
-	Clean(maxAge time.Duration, logger *slog.Logger)
+type AutoCleanSensor struct {
+	sensor CleanOnlySensor
+	ticker *time.Ticker
+	config SensorConfig
 }
 
-type AutoClean struct {
-	sensor        Cleanable
-	maxAge        time.Duration
-	cleanupTicker *time.Ticker
-}
-
-func NewAutoClean(sensor Cleanable, interval time.Duration, maxAge time.Duration) *AutoClean {
-	return &AutoClean{
-		sensor:        sensor,
-		maxAge:        maxAge,
-		cleanupTicker: time.NewTicker(interval),
+func NewAutoCleanSensor(sensor CleanOnlySensor, config SensorConfig) *AutoCleanSensor {
+	return &AutoCleanSensor{
+		sensor: sensor,
+		ticker: time.NewTicker(config.CleanInterval),
+		config: config,
 	}
 }
 
-func (o *AutoClean) Start(logger *slog.Logger) {
-	sensorKind := reflect.TypeOf(o.sensor).String()
-
+func (o *AutoCleanSensor) Start(ctx context.Context, logger *slog.Logger) {
 	go func() {
-		for ; true; <-o.cleanupTicker.C {
-			o.sensor.Clean(o.maxAge, logger)
-			logger.Debug("clean successfull", "sensor_type", sensorKind)
+		for ; true; <-o.ticker.C {
+			o.sensor.Clean(o.config.MaxAge, logger)
+			logger.Debug("clean successfull", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 		}
 	}()
 
 }
 
-func (o *AutoClean) Stop(logger *slog.Logger) {
-	sensorKind := reflect.TypeOf(o.sensor).String()
-	logger.Info("stopping cleanup ticker...", "sensor_type", sensorKind)
-	o.cleanupTicker.Stop()
-	logger.Info("cleanup ticker stopped", "sensor_type", sensorKind)
+func (o *AutoCleanSensor) Stop(ctx context.Context, logger *slog.Logger) {
+	logger.Info("stopping cleanup ticker...", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+	o.ticker.Stop()
+	logger.Info("cleanup ticker stopped", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 }

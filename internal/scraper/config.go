@@ -9,22 +9,24 @@ import (
 )
 
 type Config struct {
-	Endpoint        string
-	Username        string
-	Password        string
-	Cluster         SensorConfig
-	ComputeResource SensorConfig
-	Datastore       SensorConfig
-	Host            SensorConfig
-	ResourcePool    SensorConfig
-	Spod            SensorConfig
-	Tags            TagsSensorConfig
-	VirtualMachine  SensorConfig
-
-	OnDemand struct {
-		MaxAge time.Duration
+	Endpoint           string
+	Username           string
+	Password           string
+	Cluster            SensorConfig
+	ComputeResource    SensorConfig
+	Datastore          SensorConfig
+	Host               SensorConfig
+	HostPerf           PerfSensorConfig
+	ResourcePool       SensorConfig
+	Spod               SensorConfig
+	Tags               TagsSensorConfig
+	VirtualMachine     SensorConfig
+	VirtualMachinePerf PerfSensorConfig
+	OnDemand           struct {
+		MaxAge        time.Duration
+		CleanInterval time.Duration
 	}
-	CleanInterval  time.Duration
+	// CleanInterval  time.Duration
 	ClientPoolSize int
 }
 
@@ -32,6 +34,27 @@ type SensorConfig struct {
 	Enabled         bool
 	MaxAge          time.Duration
 	RefreshInterval time.Duration
+	CleanInterval   time.Duration
+}
+
+type PerfSensorConfig struct {
+	Enabled         bool
+	MaxAge          time.Duration
+	RefreshInterval time.Duration
+	CleanInterval   time.Duration
+	MaxSampleWindow time.Duration
+	SampleInterval  time.Duration
+	DefaultMetrics  bool
+	ExtraMetrics    []string
+}
+
+func (c *PerfSensorConfig) SensorConfig() SensorConfig {
+	return SensorConfig{
+		Enabled:         c.Enabled,
+		MaxAge:          c.MaxAge,
+		RefreshInterval: c.RefreshInterval,
+		CleanInterval:   c.CleanInterval,
+	}
 }
 
 type TagsSensorConfig struct {
@@ -85,10 +108,13 @@ func DefaultConfig() Config {
 			RefreshInterval: time.Duration(60) * time.Second,
 		},
 
-		OnDemand: struct{ MaxAge time.Duration }{
-			MaxAge: 300,
+		OnDemand: struct {
+			MaxAge        time.Duration
+			CleanInterval time.Duration
+		}{
+			MaxAge:        300,
+			CleanInterval: time.Duration(5) * time.Second,
 		},
-		CleanInterval:  time.Duration(5) * time.Second,
 		ClientPoolSize: 5,
 	}
 }

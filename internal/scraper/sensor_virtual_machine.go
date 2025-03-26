@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"sync"
 	"time"
 
@@ -16,36 +15,38 @@ import (
 
 type VirtualMachineSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.VirtualMachine]
+	AutoRunSensor
 	Refreshable
 	helper.Matchable
 }
 
-func NewVirtualMachineSensor(scraper *VCenterScraper) *VirtualMachineSensor {
-	sensor := &VirtualMachineSensor{
+func NewVirtualMachineSensor(scraper *VCenterScraper, config SensorConfig) *VirtualMachineSensor {
+	var sensor VirtualMachineSensor
+	sensor = VirtualMachineSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.VirtualMachine](
 			scraper,
+			"VirtualMachineSensor",
 		),
+		AutoRunSensor: *NewAutoRunSensor(&sensor, config),
 	}
-	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.vm.client_wait_time", 10)
-	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.vm.query_time", 10)
-	sensor.metrics.Status = NewSensorMetricStatus("sensor.vm.status", true)
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration(sensor.Kind(), "client_wait_time", 10)
+	sensor.metrics.QueryTime = NewSensorMetricDuration(sensor.Kind(), "query_time", 10)
+	sensor.metrics.Status = NewSensorMetricStatus(sensor.Kind(), "status", true)
 	scraper.RegisterSensorMetric(
 		&sensor.metrics.ClientWaitTime.SensorMetric,
 		&sensor.metrics.QueryTime.SensorMetric,
 		&sensor.metrics.Status.SensorMetric,
 	)
-	return sensor
+	return &sensor
 }
 
 func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
-	sensorKind := reflect.TypeOf(s).String()
-	if hasLock := s.refreshLock.TryLock(); hasLock {
-		defer s.refreshLock.Unlock()
-		return s.unsafeRefresh(ctx, logger)
-	} else {
-		logger.Info("Sensor Refresh already running", "sensor_type", sensorKind)
+	if ok := s.sensorLock.TryLock(); !ok {
+		logger.Info("Sensor Refresh already running", "sensor_type", s.Kind())
+		return nil
 	}
-	return nil
+	defer s.sensorLock.Unlock()
+	return s.unsafeRefresh(ctx, logger)
 }
 
 func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
@@ -77,7 +78,7 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 		}()
 
 		select {
-		case <-time.After(10 * time.Second):
+		case <-time.After(20 * time.Second):
 			quitChan <- true
 			logger.Warn("Scraper can not request virtual machines without hosts")
 			return nil, fmt.Errorf("waiting for hosts timeout")

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -12,26 +13,29 @@ import (
 
 type OnDemandSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.ManagedEntity]
-	Cleanable
+	AutoCleanSensor
 	logger *slog.Logger
 }
 
-func NewOnDemandSensor(scraper *VCenterScraper, logger *slog.Logger) *OnDemandSensor {
-	sensor := &OnDemandSensor{
+func NewOnDemandSensor(scraper *VCenterScraper, config SensorConfig, logger *slog.Logger) *OnDemandSensor {
+	var sensor OnDemandSensor
+	sensor = OnDemandSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ManagedEntity](
 			scraper,
+			"OnDemandSensor",
 		),
-		logger: logger,
+		logger:          logger,
+		AutoCleanSensor: *NewAutoCleanSensor(&sensor, config),
 	}
-	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.on_demand.client_wait_time", 10)
-	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.on_demand.query_time", 10)
-	sensor.metrics.Status = NewSensorMetricStatus("sensor.on_demand.status", false)
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration(sensor.Kind(), "client_wait_time", 10)
+	sensor.metrics.QueryTime = NewSensorMetricDuration(sensor.Kind(), "query_time", 10)
+	sensor.metrics.Status = NewSensorMetricStatus(sensor.Kind(), "status", false)
 	scraper.RegisterSensorMetric(
 		&sensor.metrics.ClientWaitTime.SensorMetric,
 		&sensor.metrics.QueryTime.SensorMetric,
 		&sensor.metrics.Status.SensorMetric,
 	)
-	return sensor
+	return &sensor
 }
 
 func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity {
@@ -79,6 +83,10 @@ func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity
 	return &entity
 }
 
-func (s *OnDemandSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
-	s.BaseSensor.Clean(maxAge, logger)
+func (s *OnDemandSensor) Name() string {
+	return "on_demand"
+}
+
+func (s *OnDemandSensor) Match(name string) bool {
+	return helper.NewMatcher("on_demand", "ondemand").Match(name)
 }

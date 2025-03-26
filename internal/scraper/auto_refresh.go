@@ -4,54 +4,44 @@ import (
 	"context"
 	"log/slog"
 	"math/rand"
-	"reflect"
 	"time"
 )
 
-type Refreshable interface {
-	Refresh(context.Context, *slog.Logger) error
+type AutoRefreshSensor struct {
+	rTicker *time.Ticker
+	cTicker *time.Ticker
+	sensor  Sensor
+	config  SensorConfig
 }
 
-type RefreshConfig struct {
-	RefreshInterval    int64
-	CleanCacheInterval int64
-	MaxAge             int64
-}
-
-type AutoRefresh struct {
-	sensor        Refreshable
-	refreshTicker *time.Ticker
-}
-
-func NewAutoRefresh(sensor Refreshable, interval time.Duration) *AutoRefresh {
-	return &AutoRefresh{
-		sensor:        sensor,
-		refreshTicker: time.NewTicker(interval),
+func NewAutoRefreshSensor(sensor Sensor, config SensorConfig) *AutoRefreshSensor {
+	return &AutoRefreshSensor{
+		rTicker: time.NewTicker(config.RefreshInterval),
+		cTicker: time.NewTicker(config.CleanInterval),
+		sensor:  sensor,
+		config:  config,
 	}
 }
 
-func (o *AutoRefresh) Start(ctx context.Context, logger *slog.Logger) {
-	sensorKind := reflect.TypeOf(o.sensor).String()
+func (o *AutoRefreshSensor) Start(ctx context.Context, logger *slog.Logger) {
 
-	go func() {
-		//random sleep to prevent sensors refreshing at the same time
-		time.Sleep(time.Duration(rand.Intn(3)) * time.Second)
-
-		for ; true; <-o.refreshTicker.C {
-			err := o.sensor.Refresh(ctx, logger)
-			if err == nil {
-				logger.Info("refresh successfull", "sensor_type", sensorKind)
-			} else {
-				logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_type", sensorKind)
+	if o.rTicker != nil {
+		go func() {
+			time.Sleep(time.Duration(rand.Intn(3)) * time.Second)
+			for ; true; <-o.rTicker.C {
+				err := (o.sensor).Refresh(ctx, logger)
+				if err == nil {
+					logger.Info("Refresh successfull", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+				} else {
+					logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+				}
 			}
-		}
-	}()
-	logger.Info("Sensor start successfull", "sensor_type", sensorKind)
+		}()
+	}
 }
 
-func (o *AutoRefresh) Stop(logger *slog.Logger) {
-	sensorKind := reflect.TypeOf(o.sensor).String()
-	logger.Info("stopping refresh ticker...", "sensor_type", sensorKind)
-	o.refreshTicker.Stop()
-	logger.Info("refresh ticker stopped", "sensor_type", sensorKind)
+func (o *AutoRefreshSensor) Stop(ctx context.Context, logger *slog.Logger) {
+	logger.Info("stopping refresh rTicker...", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+	o.rTicker.Stop()
+	logger.Info("refresh rTicker stopped", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 }

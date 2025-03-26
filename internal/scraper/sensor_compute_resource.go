@@ -3,7 +3,6 @@ package scraper
 import (
 	"context"
 	"log/slog"
-	"reflect"
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
@@ -14,36 +13,38 @@ import (
 
 type ComputeResourceSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.ComputeResource]
+	AutoRunSensor
 	Refreshable
 	helper.Matchable
 }
 
-func NewComputeResourceSensor(scraper *VCenterScraper) *ComputeResourceSensor {
-	sensor := &ComputeResourceSensor{
+func NewComputeResourceSensor(scraper *VCenterScraper, config SensorConfig) *ComputeResourceSensor {
+	var sensor ComputeResourceSensor
+	sensor = ComputeResourceSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ComputeResource](
 			scraper,
+			"ComputeResourceSensor",
 		),
+		AutoRunSensor: *NewAutoRunSensor(&sensor, config),
 	}
-	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.compute_resource.client_wait_time", 0)
-	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.compute_resource.query_time", 0)
-	sensor.metrics.Status = NewSensorMetricStatus("sensor.compute_resource.status", false)
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration(sensor.Kind(), "client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration(sensor.Kind(), "query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus(sensor.Kind(), "status", false)
 	scraper.RegisterSensorMetric(
 		&sensor.metrics.ClientWaitTime.SensorMetric,
 		&sensor.metrics.QueryTime.SensorMetric,
 		&sensor.metrics.Status.SensorMetric,
 	)
-	return sensor
+	return &sensor
 }
 
 func (s *ComputeResourceSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
-	sensorKind := reflect.TypeOf(s).String()
-	if hasLock := s.refreshLock.TryLock(); hasLock {
-		defer s.refreshLock.Unlock()
-		return s.unsafeRefresh(ctx, logger)
-	} else {
-		logger.Info("Sensor Refresh already running", "sensor_type", sensorKind)
+	if ok := s.sensorLock.TryLock(); !ok {
+		logger.Info("Sensor Refresh already running", "sensor_type", s.Kind())
+		return nil
 	}
-	return nil
+	defer s.sensorLock.Unlock()
+	return s.unsafeRefresh(ctx, logger)
 }
 
 func (s *ComputeResourceSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {

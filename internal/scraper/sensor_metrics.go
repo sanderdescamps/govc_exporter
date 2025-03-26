@@ -6,7 +6,8 @@ import (
 )
 
 type BaseSensorMetric struct {
-	Name          string
+	Sensor        string
+	MetricName    string
 	Unit          string
 	Value         float64
 	LastUpdate    time.Time
@@ -19,10 +20,11 @@ type SensorMetric struct {
 	lock sync.RWMutex
 }
 
-func NewSensorMetric(name string, unit string, avgWindow int) *SensorMetric {
+func NewSensorMetric(sensor string, metric string, unit string, avgWindow int) *SensorMetric {
 	return &SensorMetric{
 		BaseSensorMetric: BaseSensorMetric{
-			Name:          name,
+			Sensor:        sensor,
+			MetricName:    metric,
 			Unit:          unit,
 			AverageWindow: avgWindow,
 			LastUpdate:    time.Now(),
@@ -51,9 +53,9 @@ type SensorMetricDuration struct {
 	SensorMetric
 }
 
-func NewSensorMetricDuration(name string, avgWindow int) *SensorMetricDuration {
+func NewSensorMetricDuration(sensor string, metric string, avgWindow int) *SensorMetricDuration {
 	return &SensorMetricDuration{
-		SensorMetric: *NewSensorMetric(name, "nanoseconds", avgWindow),
+		SensorMetric: *NewSensorMetric(sensor, metric, "nanoseconds", avgWindow),
 	}
 }
 
@@ -70,9 +72,9 @@ type SensorMetricStatus struct {
 	keepStatusHistory bool
 }
 
-func NewSensorMetricStatus(name string, keepStatusHistory bool) *SensorMetricStatus {
+func NewSensorMetricStatus(sensor string, metric string, keepStatusHistory bool) *SensorMetricStatus {
 	return &SensorMetricStatus{
-		SensorMetric:      *NewSensorMetric(name, "boolean", 0),
+		SensorMetric:      *NewSensorMetric(sensor, metric, "boolean", 0),
 		allValues:         []bool{},
 		keepStatusHistory: keepStatusHistory,
 	}

@@ -3,7 +3,6 @@ package scraper
 import (
 	"context"
 	"log/slog"
-	"reflect"
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
@@ -14,36 +13,38 @@ import (
 
 type ClusterSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.ClusterComputeResource]
+	AutoRunSensor
 	Refreshable
 	helper.Matchable
 }
 
-func NewClusterSensor(scraper *VCenterScraper) *ClusterSensor {
-	sensor := &ClusterSensor{
+func NewClusterSensor(scraper *VCenterScraper, config SensorConfig) *ClusterSensor {
+	var sensor ClusterSensor
+	sensor = ClusterSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ClusterComputeResource](
 			scraper,
+			"ClusterSensor",
 		),
+		AutoRunSensor: *NewAutoRunSensor(&sensor, config),
 	}
-	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.cluster.client_wait_time", 0)
-	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.cluster.query_time", 0)
-	sensor.metrics.Status = NewSensorMetricStatus("sensor.cluster.status", false)
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration(sensor.Kind(), "client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration(sensor.Kind(), "query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus(sensor.Kind(), "status", false)
 	scraper.RegisterSensorMetric(
 		&sensor.metrics.ClientWaitTime.SensorMetric,
 		&sensor.metrics.QueryTime.SensorMetric,
 		&sensor.metrics.Status.SensorMetric,
 	)
-	return sensor
+	return &sensor
 }
 
 func (s *ClusterSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
-	sensorKind := reflect.TypeOf(s).String()
-	if hasLock := s.refreshLock.TryLock(); hasLock {
-		defer s.refreshLock.Unlock()
-		return s.unsafeRefresh(ctx, logger)
-	} else {
-		logger.Info("Sensor Refresh already running", "sensor_type", sensorKind)
+	if ok := s.sensorLock.TryLock(); !ok {
+		logger.Info("Sensor Refresh already running", "sensor_type", s.Kind())
+		return nil
 	}
-	return nil
+	defer s.sensorLock.Unlock()
+	return s.unsafeRefresh(ctx, logger)
 }
 
 func (s *ClusterSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {

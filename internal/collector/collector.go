@@ -36,12 +36,12 @@ func NewVCCollector(conf *Config, scraper *scraper.VCenterScraper, logger *slog.
 
 	collectors := map[*helper.Matcher]prometheus.Collector{}
 	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper, *conf)
-	collectors[helper.NewMatcher("perfhost", "esx", "host")] = NewEsxPerfCollector(scraper, *conf)
+	collectors[helper.NewMatcher("perfhost", "perfesx", "perf-host", "perf-esx")] = NewEsxPerfCollector(scraper, *conf)
 	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper, *conf)
 	collectors[helper.NewMatcher("resourcepool", "rp")] = NewResourcePoolCollector(scraper, *conf)
 	collectors[helper.NewMatcher("cluster", "host")] = NewClusterCollector(scraper, *conf)
 	collectors[helper.NewMatcher("vm", "virtualmachine")] = NewVirtualMachineCollector(scraper, *conf)
-	collectors[helper.NewMatcher("perfvm", "vm", "virtualmachine")] = NewVMPerfCollector(scraper, *conf)
+	collectors[helper.NewMatcher("perfvm", "perf-vm")] = NewVMPerfCollector(scraper, *conf)
 	collectors[helper.NewMatcher("spod", "storagepod")] = NewStoragePodCollector(scraper, *conf)
 	collectors[helper.NewMatcher("scraper")] = NewScraperCollector(scraper)
 
@@ -82,6 +82,7 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) func(w http.Response
 				collectors.NewGoCollector(),
 			)
 		}
+		found := false
 		for matcher, collector := range c.collectors {
 			if (len(filters) == 0 || slices.ContainsFunc(filters, matcher.Match)) && !excludeMatcher.MatchAny(matcher.Keywords...) {
 				logger.Debug(fmt.Sprintf("register %s collector", matcher.First()))
@@ -89,7 +90,18 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) func(w http.Response
 				if err != nil {
 					logger.Error(fmt.Sprintf("Error registring %s collector for %s", matcher.First(), strings.Join(filters, ",")), "err", err.Error())
 				}
+				found = true
 			}
+		}
+		if !found {
+			logger.Warn("No sensor found for filter", "filter", filters)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":    fmt.Sprintf("No sensor found for filter for %v", filters),
+				"err":    "No sensor found for filter",
+				"status": http.StatusNotFound,
+			})
 		}
 
 		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{
@@ -234,22 +246,3 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 		logger.Info(fmt.Sprintf("Dump successful. Check %s for results", dirPath))
 	}
 }
-
-// func getSensorMatchMap(scraper *scraper.VCenterScraper) map[*helper.Matcher]interface {
-// 	GetKind() string
-// 	GetAllJsons() (map[string][]byte, error)
-// } {
-// 	return map[*helper.Matcher]interface {
-// 		GetKind() string
-// 		GetAllJsons() (map[string][]byte, error)
-// 	}{
-// 		helper.NewMatcher("cl", "cluster"):                                                     scraper.Cluster,
-// 		helper.NewMatcher("cr", "compute_resource", "computeresource"):                         scraper.ComputeResources,
-// 		helper.NewMatcher("ds", "datastore", "datastores"):                                     scraper.Datastore,
-// 		helper.NewMatcher("h", "esx", "host"):                                                  scraper.Host,
-// 		helper.NewMatcher("rp", "resource_pool", "respool", "repool"):                          scraper.ResourcePool,
-// 		helper.NewMatcher("sp", "storage_pod", "storagepod", "dscluster", "datastore_cluster"): scraper.SPOD,
-// 		helper.NewMatcher("t", "tag", "tags"):                                                  scraper.Tags,
-// 		helper.NewMatcher("vm", "vms", "virtualmachine"):                                       scraper.VM,
-// 	}
-// }

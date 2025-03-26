@@ -37,23 +37,12 @@ func (c *VMPerfCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
-	if c.scraper.Host == nil || c.scraper.HostPerf == nil || c.scraper.VM == nil || c.scraper.VMPerf == nil {
+	if c.scraper.Host == nil || c.scraper.VM == nil || c.scraper.VMPerf == nil {
 		return
 	}
 
 	for _, ref := range c.scraper.VM.GetAllRefs() {
 		vm := c.scraper.VM.Get(ref)
-
-		esxName := "NONE"
-		hostRef := vm.Runtime.Host
-		if hostRef != nil {
-			host := c.scraper.Host.Get(*hostRef)
-			if host != nil {
-				esxName = host.Name
-			}
-		}
-
-		parentChain := c.scraper.GetParentChain(vm.Self)
 
 		extraLabelValues := func() []string {
 			result := []string{}
@@ -71,7 +60,6 @@ func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 
 		labelValues := []string{vm.Config.Uuid, vm.Name, strconv.FormatBool(vm.Config.Template), vm.Self.Value}
 		labelValues = append(labelValues, extraLabelValues...)
-		labelValues = append(labelValues, parentChain.ResourcePool, parentChain.DC, parentChain.Cluster, esxName)
 
 		for _, metric := range c.scraper.VMPerf.PopAll(ref) {
 			perfMetricLabelValues := append(labelValues, metric.Name, metric.Unit)

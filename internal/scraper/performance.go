@@ -55,20 +55,20 @@ func EntityMetricToMetric(entiry performance.EntityMetric) []Metric {
 type perfQuery struct {
 	metrics        []string
 	instance       string
-	sampleCount    int32
-	sampleInterval int32
-	window         time.Duration
+	maxSample      int32
+	sampleInterval time.Duration
+	// window         time.Duration
+	begin time.Time
+	end   time.Time
 }
 
 func (pq perfQuery) ToSpec() types.PerfQuerySpec {
-	endtime := time.Now()
-	starttime := endtime.Add(-pq.window)
 	return types.PerfQuerySpec{
-		MaxSample: pq.sampleCount,
-		MetricId:  []types.PerfMetricId{{Instance: pq.instance}},
-		// IntervalId: pq.sampleInterval,
-		StartTime: &starttime,
-		EndTime:   &endtime,
+		MaxSample:  pq.maxSample,
+		MetricId:   []types.PerfMetricId{{Instance: pq.instance}},
+		IntervalId: int32(pq.sampleInterval.Seconds()),
+		StartTime:  &pq.begin,
+		EndTime:    &pq.end,
 	}
 }
 
@@ -76,9 +76,9 @@ type PerfOption func(*perfQuery)
 
 func NewPerfQuery(options ...PerfOption) *perfQuery {
 	result := &perfQuery{
-		metrics:     []string{},
-		instance:    "*",
-		sampleCount: 1,
+		metrics:   []string{},
+		instance:  "*",
+		maxSample: 1,
 		// sampleInterval: 20,
 	}
 	for _, o := range options {
@@ -87,21 +87,35 @@ func NewPerfQuery(options ...PerfOption) *perfQuery {
 	return result
 }
 
-func SetSamples[T constraints.Integer](num T) PerfOption {
+func SetMaxSamples[T constraints.Integer](num T) PerfOption {
 	return func(pq *perfQuery) {
-		pq.sampleCount = int32(num)
+		pq.maxSample = int32(num)
 	}
 }
 
 func SetInterval(d time.Duration) PerfOption {
 	return func(pq *perfQuery) {
-		pq.sampleInterval = int32(d.Seconds())
+		pq.sampleInterval = d
 	}
 }
 
-func SetWindow(d time.Duration) PerfOption {
+func SetDurationWindow(d time.Duration) PerfOption {
+	endtime := time.Now()
+	starttime := endtime.Add(d)
 	return func(pq *perfQuery) {
-		pq.window = d
+		pq.begin = starttime
+		pq.end = endtime
+	}
+}
+
+func SetWindow(t1 time.Time, t2 time.Time) PerfOption {
+	if t1.After(t2) {
+		t1, t2 = t2, t1
+	}
+
+	return func(pq *perfQuery) {
+		pq.begin = t1
+		pq.end = t2
 	}
 }
 
@@ -115,49 +129,6 @@ func SetMetrics(m ...string) PerfOption {
 	return func(pq *perfQuery) {
 		pq.metrics = m
 	}
-}
-
-func AllHostMetrics() PerfOption {
-	return SetMetrics([]string{
-		"cpu.capacity.contention.average", "cpu.capacity.demand.average",
-		"cpu.capacity.provisioned.average", "cpu.capacity.usage.average",
-		"cpu.corecount.contention.average", "cpu.corecount.provisioned.average",
-		"cpu.corecount.usage.average", "cpu.costop.summation", "cpu.demand.average",
-		"cpu.entitlement.latest", "cpu.latency.average", "cpu.maxlimited.summation",
-		"cpu.readiness.average", "cpu.ready.summation", "cpu.reservedCapacity.average",
-		"cpu.usage.average", "cpu.usage.maximum", "cpu.usage.minimum",
-		"cpu.usagemhz.average", "cpu.usagemhz.maximum", "cpu.usagemhz.minimum",
-		"datastore.numberReadAveraged.average", "datastore.numberWriteAveraged.average",
-		"datastore.read.average", "datastore.totalReadLatency.average",
-		"datastore.totalWriteLatency.average", "datastore.write.average",
-		"disk.throughput.contention.average", "disk.throughput.usage.average",
-		"mem.active.average", "mem.active.maximum", "mem.active.minimum",
-		"mem.capacity.contention.average", "mem.capacity.entitlement.average",
-		"mem.capacity.provisioned.average", "mem.capacity.usable.average",
-		"mem.capacity.usage.average", "mem.compressed.average", "mem.compressionRate.average",
-		"mem.consumed.average", "mem.consumed.maximum", "mem.consumed.minimum",
-		"mem.decompressionRate.average", "mem.entitlement.average", "mem.granted.average",
-		"mem.granted.maximum", "mem.granted.minimum", "mem.overhead.average",
-		"mem.overhead.maximum", "mem.overhead.minimum", "mem.reservedCapacity.average",
-		"mem.shared.average", "mem.shared.maximum", "mem.shared.minimum",
-		"mem.swapped.average", "mem.swapused.average", "mem.swapused.maximum",
-		"mem.swapused.minimum", "mem.usage.average", "mem.usage.maximum",
-		"mem.usage.minimum", "mem.vmmemctl.average", "mem.vmmemctl.maximum",
-		"mem.vmmemctl.minimum", "mem.zero.average", "mem.zero.maximum",
-		"mem.zero.minimum", "net.bytesRx.average", "net.bytesTx.average",
-		"net.droppedRx.summation", "net.droppedTx.summation", "net.errorsRx.summation",
-		"net.errorsTx.summation", "net.throughput.contention.summation",
-		"net.throughput.provisioned.average", "net.throughput.usable.average",
-		"net.throughput.usage.average", "power.energy.summation", "power.power.average",
-		"power.powerCap.average", "sys.uptime.latest", "vmop.numChangeDS.latest",
-		"vmop.numChangeHost.latest", "vmop.numChangeHostDS.latest", "vmop.numClone.latest",
-		"vmop.numCreate.latest", "vmop.numDeploy.latest", "vmop.numDestroy.latest",
-		"vmop.numPoweroff.latest", "vmop.numPoweron.latest", "vmop.numRebootGuest.latest",
-		"vmop.numReconfigure.latest", "vmop.numRegister.latest", "vmop.numReset.latest",
-		"vmop.numSVMotion.latest", "vmop.numShutdownGuest.latest",
-		"vmop.numStandbyGuest.latest", "vmop.numSuspend.latest",
-		"vmop.numUnregister.latest", "vmop.numVMotion.latest", "vmop.numXVMotion.latest",
-	}...)
 }
 
 func SetInstance(i string) PerfOption {

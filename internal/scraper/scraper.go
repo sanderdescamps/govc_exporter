@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/pool"
 	"github.com/vmware/govmomi/vim25/mo"
@@ -25,8 +24,7 @@ type VCenterScraper struct {
 	clientPool *pool.VCenterClientPool
 	config     Config
 	metrics    []*SensorMetric
-	refreshers []*AutoRefresh
-	cleaners   []*AutoClean
+	runnables  []Runnable
 	logger     *slog.Logger
 
 	Host             *HostSensor
@@ -61,81 +59,69 @@ func NewVCenterScraper(conf Config, logger *slog.Logger) (*VCenterScraper, error
 		clientPool: pool,
 		config:     conf,
 		metrics:    []*SensorMetric{},
-		refreshers: []*AutoRefresh{},
-		cleaners:   []*AutoClean{},
 	}
 
 	if conf.Cluster.Enabled {
-		scraper.Cluster = NewClusterSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Cluster, conf.Cluster.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Cluster, conf.CleanInterval, conf.Cluster.MaxAge))
+		scraper.Cluster = NewClusterSensor(&scraper, conf.Cluster)
+		scraper.runnables = append(scraper.runnables, scraper.Cluster)
 	}
 
 	if conf.ComputeResource.Enabled {
-		scraper.ComputeResources = NewComputeResourceSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.ComputeResources, conf.ComputeResource.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.ComputeResources, conf.CleanInterval, conf.ComputeResource.MaxAge))
+		scraper.ComputeResources = NewComputeResourceSensor(&scraper, conf.ComputeResource)
+		scraper.runnables = append(scraper.runnables, scraper.ComputeResources)
 	}
 
 	if conf.Datastore.Enabled {
-		scraper.Datastore = NewDatastoreSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Datastore, conf.Datastore.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Datastore, conf.CleanInterval, conf.Datastore.MaxAge))
+		scraper.Datastore = NewDatastoreSensor(&scraper, conf.Datastore)
+		scraper.runnables = append(scraper.runnables, scraper.Datastore)
 	}
 
 	if conf.Host.Enabled {
-		scraper.Host = NewHostSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Host, conf.Host.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Host, conf.CleanInterval, conf.Host.MaxAge))
-
-		scraper.HostPerf = NewHostPerfSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.HostPerf, 30*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.HostPerf, conf.CleanInterval, 8*time.Minute))
+		scraper.Host = NewHostSensor(&scraper, conf.Host)
+		scraper.runnables = append(scraper.runnables, scraper.Host)
+		if conf.HostPerf.Enabled {
+			scraper.HostPerf = NewHostPerfSensor(&scraper, conf.HostPerf)
+			scraper.runnables = append(scraper.runnables, scraper.HostPerf)
+		}
 	}
 
 	if conf.ResourcePool.Enabled {
-		scraper.ResourcePool = NewResourcePoolSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.ResourcePool, conf.ResourcePool.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.ResourcePool, conf.CleanInterval, conf.ResourcePool.MaxAge))
+		scraper.ResourcePool = NewResourcePoolSensor(&scraper, conf.ResourcePool)
+		scraper.runnables = append(scraper.runnables, scraper.ResourcePool)
 	}
 
 	if conf.Spod.Enabled {
-		scraper.SPOD = NewStoragePodSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.SPOD, conf.Spod.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.SPOD, conf.CleanInterval, conf.Spod.MaxAge))
+		scraper.SPOD = NewStoragePodSensor(&scraper, conf.Spod)
+		scraper.runnables = append(scraper.runnables, scraper.SPOD)
 	}
 
 	if conf.VirtualMachine.Enabled {
-		scraper.VM = NewVirtualMachineSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.VM, conf.VirtualMachine.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.VM, conf.CleanInterval, conf.VirtualMachine.MaxAge))
-
-		scraper.VMPerf = NewVMPerfSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.VMPerf, 60*time.Second))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.VMPerf, conf.CleanInterval, 8*time.Minute))
-	}
-
-	if conf.Spod.Enabled {
-		scraper.SPOD = NewStoragePodSensor(&scraper)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.SPOD, conf.Spod.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.SPOD, conf.CleanInterval, conf.Spod.MaxAge))
+		scraper.VM = NewVirtualMachineSensor(&scraper, conf.VirtualMachine)
+		scraper.runnables = append(scraper.runnables, scraper.VM)
+		if conf.VirtualMachinePerf.Enabled {
+			scraper.VMPerf = NewVMPerfSensor(&scraper, conf.VirtualMachinePerf)
+			scraper.runnables = append(scraper.runnables, scraper.VMPerf)
+		}
 	}
 
 	if conf.Tags.Enabled {
 		logger.Info("Create TagsSensor", "TagsCategoryToCollect", conf.Tags.CategoryToCollect)
-		scraper.Tags = NewTagsSensorWithTaglist(&scraper, conf.Tags.CategoryToCollect)
-		scraper.refreshers = append(scraper.refreshers, NewAutoRefresh(scraper.Tags, conf.Tags.RefreshInterval))
-		scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Tags, conf.CleanInterval, conf.Tags.MaxAge))
+		scraper.Tags = NewTagsSensorWithTaglist(&scraper, conf.Tags)
+		scraper.runnables = append(scraper.runnables, scraper.Tags)
 	}
 
-	scraper.Remain = NewOnDemandSensor(&scraper, logger)
-	scraper.cleaners = append(scraper.cleaners, NewAutoClean(scraper.Remain, conf.CleanInterval, conf.OnDemand.MaxAge))
+	scraper.Remain = NewOnDemandSensor(&scraper, SensorConfig{
+		Enabled:       true,
+		CleanInterval: conf.OnDemand.CleanInterval,
+		MaxAge:        conf.OnDemand.MaxAge,
+	}, logger)
+	scraper.runnables = append(scraper.runnables, scraper.Remain)
 
 	return &scraper, nil
 }
 
 func (c *VCenterScraper) tcpConnectStatus() (BaseSensorMetric, error) {
-	status := *NewSensorMetricStatus("scraper.tcp_connect_status", false)
+	status := *NewSensorMetricStatus("", "scraper.tcp_connect_status", false)
 	baseURL, err := c.config.URL()
 	if err != nil {
 		status.Fail()
@@ -169,7 +155,7 @@ func (c *VCenterScraper) ScraperMetrics() []BaseSensorMetric {
 		"repool":           c.config.ResourcePool.Enabled,
 		"tags":             c.config.Tags.Enabled,
 	} {
-		sensor := NewSensorMetricStatus(fmt.Sprintf("sensor.%s.enabled", kind), false)
+		sensor := NewSensorMetricStatus("", fmt.Sprintf("sensor.%s.enabled", kind), false)
 		sensor.Update(enabled)
 		result = append(result, sensor.BaseSensorMetric)
 	}
@@ -184,7 +170,7 @@ func (c *VCenterScraper) ScraperMetrics() []BaseSensorMetric {
 		"repool":           c.ResourcePool != nil,
 		"tags":             c.Tags != nil,
 	} {
-		sensor := NewSensorMetricStatus(fmt.Sprintf("sensor.%s.available", kind), false)
+		sensor := NewSensorMetricStatus("", fmt.Sprintf("sensor.%s.available", kind), false)
 		sensor.Update(available)
 		result = append(result, sensor.BaseSensorMetric)
 	}
@@ -224,32 +210,19 @@ func (c *VCenterScraper) GetSensorRefreshByName(name string) Sensor {
 	return nil
 }
 
-func (c *VCenterScraper) Start(logger *slog.Logger) error {
-	ctx := context.Background()
-
-	for _, r := range c.refreshers {
+func (c *VCenterScraper) Start(ctx context.Context, logger *slog.Logger) error {
+	for _, r := range c.runnables {
 		r.Start(ctx, logger)
-	}
-
-	for _, c := range c.cleaners {
-		c.Start(logger)
 	}
 
 	return nil
 }
 
-func (c *VCenterScraper) Stop(logger *slog.Logger) {
-	logger.Info("stopping all refreshers...")
-	for _, r := range c.refreshers {
-		r.Stop(logger)
-	}
-	logger.Info("refreshers all stopped")
+func (c *VCenterScraper) Stop(ctx context.Context, logger *slog.Logger) {
 
-	logger.Info("stopping all cleaners...")
-	for _, c := range c.cleaners {
-		c.Stop(logger)
+	for _, r := range c.runnables {
+		r.Stop(ctx, logger)
 	}
-	logger.Info("cleaners all stopped")
 
 	c.clientPool.Destroy()
 	logger.Info("Close client pool")

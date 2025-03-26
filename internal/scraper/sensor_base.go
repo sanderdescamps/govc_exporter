@@ -1,6 +1,7 @@
 package scraper
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"reflect"
@@ -11,28 +12,49 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 )
 
+type Cleanable interface {
+	Clean(maxAge time.Duration, logger *slog.Logger)
+}
+
+type Refreshable interface {
+	Refresh(context.Context, *slog.Logger) error
+}
+
 type Sensor interface {
 	helper.Matchable
 	Refreshable
+	Cleanable
+	Name() string
+	Kind() string
+	GetAllJsons() (map[string][]byte, error)
+}
+
+type CleanOnlySensor interface {
+	helper.Matchable
+	Cleanable
+	Name() string
+	Kind() string
 	GetAllJsons() (map[string][]byte, error)
 }
 
 type BaseSensor[K comparable, T any] struct {
-	cache       map[K]*CacheItem[T]
-	scraper     *VCenterScraper
-	lock        sync.Mutex
-	refreshLock sync.Mutex
-	metrics     struct {
+	cache      map[K]*CacheItem[T]
+	scraper    *VCenterScraper
+	sensorKind string
+	lock       sync.Mutex
+	sensorLock sync.Mutex
+	metrics    struct {
 		QueryTime      *SensorMetricDuration
 		ClientWaitTime *SensorMetricDuration
 		Status         *SensorMetricStatus
 	}
 }
 
-func NewBaseSensor[K comparable, T any](scraper *VCenterScraper) *BaseSensor[K, T] {
+func NewBaseSensor[K comparable, T any](scraper *VCenterScraper, sensorKind string) *BaseSensor[K, T] {
 	return &BaseSensor[K, T]{
-		cache:   make(map[K]*CacheItem[T]),
-		scraper: scraper,
+		cache:      make(map[K]*CacheItem[T]),
+		sensorKind: sensorKind,
+		scraper:    scraper,
 	}
 }
 
@@ -110,10 +132,6 @@ func (s *BaseSensor[K, T]) UpdateCacheItem(ref K, item *CacheItem[T]) {
 	s.cache[ref] = item
 }
 
-func (s *BaseSensor[K, T]) GetKind() string {
-	return reflect.ValueOf(s).String()
-}
-
 func (s *BaseSensor[K, T]) GetAllJsons() (map[string][]byte, error) {
 	result := map[string][]byte{}
 	s.lock.Lock()
@@ -137,4 +155,8 @@ func (s *BaseSensor[K, T]) GetAllJsons() (map[string][]byte, error) {
 		result[name] = jsonBytes
 	}
 	return result, nil
+}
+
+func (s *BaseSensor[K, T]) Kind() string {
+	return s.sensorKind
 }

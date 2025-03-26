@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,12 +31,12 @@ func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Requ
 }
 
 func main() {
+	ctx := context.Background()
+
 	config := LoadConfig()
 	if err := config.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid config: %v\n", err)
 	}
-	jsonString, _ := json.MarshalIndent(config, "", "  ")
-	fmt.Print(string(jsonString))
 
 	logger := promslog.New(config.PromlogConfig)
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
@@ -53,7 +52,7 @@ func main() {
 		logger.Error("Failed to create VCenterScraper", "err", err)
 		return
 	}
-	err = scraper.Start(logger)
+	err = scraper.Start(ctx, logger)
 	if err != nil {
 		logger.Error("Failed to start VCenterScraper", "err", err)
 		return
@@ -85,7 +84,7 @@ func main() {
 		}
 
 		logger.Info("Stopped serving new connections.")
-		scraper.Stop(logger)
+		scraper.Stop(ctx, logger)
 
 		shutdownChan <- true
 	}()

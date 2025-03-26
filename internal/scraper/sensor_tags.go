@@ -3,7 +3,6 @@ package scraper
 import (
 	"context"
 	"log/slog"
-	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 
 type TagsSensor struct {
 	BaseSensor[types.ManagedObjectReference, []*tags.Tag]
+	AutoRunSensor
 	Refreshable
 	helper.Matchable
 	TagCatsToObserve []string
@@ -22,37 +22,38 @@ type TagsSensor struct {
 	catCache         map[string]tags.Category
 }
 
-func NewTagsSensor(scraper *VCenterScraper) *TagsSensor {
-	return NewTagsSensorWithTaglist(scraper, []string{})
+func NewTagsSensor(scraper *VCenterScraper, config TagsSensorConfig) *TagsSensor {
+	return NewTagsSensorWithTaglist(scraper, config)
 }
 
-func NewTagsSensorWithTaglist(scraper *VCenterScraper, t []string) *TagsSensor {
-	sensor := &TagsSensor{
+func NewTagsSensorWithTaglist(scraper *VCenterScraper, config TagsSensorConfig) *TagsSensor {
+	var sensor TagsSensor
+	sensor = TagsSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, []*tags.Tag](
 			scraper,
+			"TagsSensor",
 		),
-		TagCatsToObserve: t,
+		TagCatsToObserve: config.CategoryToCollect,
+		AutoRunSensor:    *NewAutoRunSensor(&sensor, config.SensorConfig),
 	}
-	sensor.metrics.ClientWaitTime = NewSensorMetricDuration("sensor.tags.client_wait_time", 0)
-	sensor.metrics.QueryTime = NewSensorMetricDuration("sensor.tags.query_time", 0)
-	sensor.metrics.Status = NewSensorMetricStatus("sensor.tags.status", true)
+	sensor.metrics.ClientWaitTime = NewSensorMetricDuration(sensor.Kind(), "client_wait_time", 0)
+	sensor.metrics.QueryTime = NewSensorMetricDuration(sensor.Kind(), "query_time", 0)
+	sensor.metrics.Status = NewSensorMetricStatus(sensor.Kind(), "status", true)
 	scraper.RegisterSensorMetric(
 		&sensor.metrics.ClientWaitTime.SensorMetric,
 		&sensor.metrics.QueryTime.SensorMetric,
 		&sensor.metrics.Status.SensorMetric,
 	)
-	return sensor
+	return &sensor
 }
 
 func (s *TagsSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
-	sensorKind := reflect.TypeOf(s).String()
-	if hasLock := s.refreshLock.TryLock(); hasLock {
-		defer s.refreshLock.Unlock()
-		return s.unsafeRefresh(ctx, logger)
-	} else {
-		logger.Info("Sensor Refresh already running", "sensor_type", sensorKind)
+	if ok := s.sensorLock.TryLock(); !ok {
+		logger.Info("Sensor Refresh already running", "sensor_type", s.Kind())
+		return nil
 	}
-	return nil
+	defer s.sensorLock.Unlock()
+	return s.unsafeRefresh(ctx, logger)
 }
 
 func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
