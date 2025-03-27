@@ -12,3 +12,5 @@ build-simple:
 vendor:
 	go mod vendor
 
+test-vcenter:
+	./scripts/gi-start-vcsim.sh
