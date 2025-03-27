@@ -24,6 +24,7 @@ func NewVMPerfSensor(scraper *VCenterScraper, config PerfSensorConfig) *VMPerfSe
 }
 
 func (s *VMPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+	s.scraper.VM.WaitTillStartup()
 	refs := s.scraper.VM.GetAllRefs()
 	if len(refs) < 1 {
 		return nil
@@ -36,6 +37,8 @@ func (s *VMPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
 			"cpu.capacity.provisioned.average",
 			"cpu.readiness.average",
 			"cpu.costop.summation",
+			"cpu.maxlimited.summation",
+			"cpu.ready.summation",
 			"mem.active.average",
 			"mem.granted.average",
 			"mem.consumed.average",

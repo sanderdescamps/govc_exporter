@@ -8,6 +8,7 @@ import (
 type Runnable interface {
 	Start(context.Context, *slog.Logger)
 	Stop(context.Context, *slog.Logger)
+	WaitTillStartup()
 }
 
 type AutoRunSensor struct {

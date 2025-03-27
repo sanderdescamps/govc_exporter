@@ -24,6 +24,7 @@ func NewHostPerfSensor(scraper *VCenterScraper, config PerfSensorConfig) *HostPe
 }
 
 func (s *HostPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+	s.scraper.Host.WaitTillStartup()
 	hostRefs := s.scraper.Host.GetAllRefs()
 	if len(hostRefs) < 1 {
 		return nil

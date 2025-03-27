@@ -90,3 +90,5 @@ func (s *OnDemandSensor) Name() string {
 func (s *OnDemandSensor) Match(name string) bool {
 	return helper.NewMatcher("on_demand", "ondemand").Match(name)
 }
+
+func (o *OnDemandSensor) WaitTillStartup() {}

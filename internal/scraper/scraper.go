@@ -214,6 +214,12 @@ func (c *VCenterScraper) Start(ctx context.Context, logger *slog.Logger) error {
 	for _, r := range c.runnables {
 		r.Start(ctx, logger)
 	}
+	go func() {
+		for _, r := range c.runnables {
+			r.WaitTillStartup()
+		}
+		logger.Info("All sensors started")
+	}()
 
 	return nil
 }
