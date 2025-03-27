@@ -14,8 +14,8 @@ import (
 	"github.com/prometheus/common/promslog"
 
 	"github.com/prometheus/common/version"
-	"github.com/sanderdescamps/govc_exporter/collector"
-	"github.com/sanderdescamps/govc_exporter/collector/scraper"
+	"github.com/sanderdescamps/govc_exporter/internal/collector"
+	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
 func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +31,13 @@ func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Requ
 }
 
 func main() {
+	ctx := context.Background()
+
 	config := LoadConfig()
+	if err := config.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid config: %v\n", err)
+	}
+
 	logger := promslog.New(config.PromlogConfig)
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
 	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "user", version.BuildUser, "date", version.BuildDate, "tags", version.GetTags())
@@ -46,7 +52,7 @@ func main() {
 		logger.Error("Failed to create VCenterScraper", "err", err)
 		return
 	}
-	err = scraper.Start(logger)
+	err = scraper.Start(ctx, logger)
 	if err != nil {
 		logger.Error("Failed to start VCenterScraper", "err", err)
 		return
@@ -78,7 +84,7 @@ func main() {
 		}
 
 		logger.Info("Stopped serving new connections.")
-		scraper.Stop(logger)
+		scraper.Stop(ctx, logger)
 
 		shutdownChan <- true
 	}()
@@ -96,14 +102,4 @@ func main() {
 
 	<-shutdownChan
 	logger.Info("Graceful shutdown complete.")
-}
-
-func mergeLists[T any](l ...*[]T) []T {
-	result := []T{}
-	for _, i := range l {
-		if i != nil && len(*i) != 0 {
-			result = append(result, *i...)
-		}
-	}
-	return result
 }

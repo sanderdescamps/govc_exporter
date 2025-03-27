@@ -9,11 +9,14 @@ require (
 	github.com/prometheus/client_golang v1.21.1
 	github.com/prometheus/common v0.62.0
 	github.com/prometheus/procfs v0.15.1 // indirect
-	github.com/vmware/govmomi v0.48.1
+	github.com/vmware/govmomi v0.49.0
 	golang.org/x/sys v0.31.0 // indirect
 )
 
-require github.com/alecthomas/kingpin/v2 v2.4.0
+require (
+	github.com/alecthomas/kingpin/v2 v2.4.0
+	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
+)
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
