@@ -146,7 +146,7 @@ func LoadConfig() Config {
 	a.Flag("scraper.vm.max_age", "time in seconds vm's are cached").Default("2m").DurationVar(&cfg.ScraperConfig.VirtualMachine.MaxAge)
 	a.Flag("scraper.vm.refresh_interval", "interval vm's are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.VirtualMachine.RefreshInterval)
 	a.Flag("scraper.vm.clean_interval", "interval to clean up old metrics").Default("5s").DurationVar(&cfg.ScraperConfig.VirtualMachine.CleanInterval)
-	a.Flag("collector.vm.legacy", "Collect lagacy metrics. Should all be available via scraper.vm.perf").Default("false").BoolVar(&cfg.CollectorConfig.VMLegacyMetrics)
+	a.Flag("collector.vm.legacy", "Collect legacy metrics. Should all be available via scraper.vm.perf").Default("false").BoolVar(&cfg.CollectorConfig.VMLegacyMetrics)
 	a.Flag("collector.vm.disk", "Collect extra vm disk metrics").Default("false").BoolVar(&cfg.CollectorConfig.VMAdvancedStorageMetrics)
 	a.Flag("collector.vm.network", "Collect extra vm network metrics").Default("false").BoolVar(&cfg.CollectorConfig.VMAdvancedNetworkMetrics)
 

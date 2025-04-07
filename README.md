@@ -47,15 +47,14 @@ export VC_PASSWORD=FIXME
 
 ```
 govc_exporter --help
-usage: exporter --scraper.vc.url=SCRAPER.VC.URL --scraper.vc.username=SCRAPER.VC.USERNAME --scraper.vc.password=SCRAPER.VC.PASSWORD [<flags>]
+usage: govc_exporter --scraper.vc.url=SCRAPER.VC.URL --scraper.vc.username=SCRAPER.VC.USERNAME --scraper.vc.password=SCRAPER.VC.PASSWORD [<flags>]
 
 Prometheus vCenter exporter
 
 
 Flags:
   -h, --[no-]help                Show context-sensitive help (also try --help-long and --help-man).
-      --log.level=info           Only log messages with the given severity or above. One of: [debug,
-                                 info, warn, error]
+      --log.level=info           Only log messages with the given severity or above. One of: [debug, info, warn, error]
       --log.format=logfmt        Output format of log messages. One of: [logfmt, json]
       --[no-]version             Show application version.
       --web.listen-address=":9752"  
@@ -64,19 +63,15 @@ Flags:
                                  Path under which to expose metrics.
       --web.max-requests=40      Maximum number of parallel scrape requests. Use 0 to disable.
       --[no-]web.manual-refresh  Enable /refresh/{sensor} path to trigger a refresh of a sensor.
-      --[no-]web.allow-dumps     Enable /dump path to trigger a dump of the cache data in ./dumps
-                                 folder on server side. Only enable for debugging.
+      --[no-]web.allow-dumps     Enable /dump path to trigger a dump of the cache data in ./dumps folder on server side. Only enable for debugging.
       --[no-]web.disable-exporter-metrics  
-                                 Exclude metrics about the exporter itself (promhttp_*, process_*,
-                                 go_*).
+                                 Exclude metrics about the exporter itself (promhttp_*, process_*, go_*).
       --[no-]collector.intrinsec  
                                  Enable intrinsec specific features
       --collector.cluster.tag_label=COLLECTOR.CLUSTER.TAG_LABEL ...  
-                                 List of vmware tag categories to collect which will be added as label
-                                 in metrics
+                                 List of vmware tag categories to collect which will be added as label in metrics
       --collector.datastore.tag_label=COLLECTOR.DATASTORE.TAG_LABEL ...  
-                                 List of vmware tag categories to collect which will be added as label
-                                 in metrics
+                                 List of vmware tag categories to collect which will be added as label in metrics
       --[no-]collector.host.storage  
                                  Collect host storage metrics
       --collector.host.tag_label=COLLECTOR.HOST.TAG_LABEL ...  
@@ -84,11 +79,9 @@ Flags:
       --collector.repool.tag_label=COLLECTOR.REPOOL.TAG_LABEL ...  
                                  List of tag categories which will be added as label in metrics
       --collector.spod.tag_label=COLLECTOR.SPOD.TAG_LABEL ...  
-                                 List of vmware tag categories to collect which will be added as label
-                                 in metrics
+                                 List of vmware tag categories to collect which will be added as label in metrics
       --collector.vm.tag_label=COLLECTOR.VM.TAG_LABEL ...  
-                                 List of vmware tag categories to collect which will be added as label
-                                 in metrics
+                                 List of vmware tag categories to collect which will be added as label in metrics
       --scraper.vc.url=SCRAPER.VC.URL  
                                  vc api username ($VC_URL)
       --scraper.vc.username=SCRAPER.VC.USERNAME  
@@ -166,6 +159,8 @@ Flags:
                                  interval vm's are refreshed
       --scraper.vm.clean_interval=5s  
                                  interval to clean up old metrics
+      --[no-]collector.vm.legacy  
+                                 Collect lagacy metrics. Should all be available via scraper.vm.perf
       --[no-]collector.vm.disk   Collect extra vm disk metrics
       --[no-]collector.vm.network  
                                  Collect extra vm network metrics
@@ -185,8 +180,7 @@ Flags:
       --scraper.vm.perf.extra_metric=SCRAPER.VM.PERF.EXTRA_METRIC ...  
                                  Collect additional vm perf metrics
       --scraper.on_demand.max_age=5m  
-                                 Time in seconds the scraper keeps all non-cache data. Used when no
-                                 other sensor is available
+                                 Time in seconds the scraper keeps all non-cache data. Used when no other sensor is available
       --scraper.on_demand.clean_interval=5s  
                                  interval to clean up old metrics
 ```
