@@ -23,14 +23,19 @@ type virtualMachineCollector struct {
 	useIsecSpecifics       bool
 	extraLabels            []string
 
-	numCPU               *prometheus.Desc
-	numCoresPerSocket    *prometheus.Desc
-	maxCPUUsage          *prometheus.Desc
-	overallCPUUsage      *prometheus.Desc
-	overallCPUDemand     *prometheus.Desc
-	memoryBytes          *prometheus.Desc
-	guestMemoryUsage     *prometheus.Desc
-	hostMemoryUsage      *prometheus.Desc
+	numCPU                      *prometheus.Desc
+	numCoresPerSocket           *prometheus.Desc
+	maxCPUUsage                 *prometheus.Desc
+	overallCPUUsage             *prometheus.Desc
+	overallCPUDemand            *prometheus.Desc
+	cpuAllocationShares         *prometheus.Desc
+	cpuAllocationReservation    *prometheus.Desc
+	memoryBytes                 *prometheus.Desc
+	guestMemoryUsage            *prometheus.Desc
+	hostMemoryUsage             *prometheus.Desc
+	memoryAllocationShares      *prometheus.Desc
+	memoryAllocationReservation *prometheus.Desc
+
 	uptimeSeconds        *prometheus.Desc
 	numSnapshot          *prometheus.Desc
 	powerState           *prometheus.Desc
@@ -94,13 +99,19 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf Config) *
 			"vm number of cores by socket", labels, nil),
 		maxCPUUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "max_cpu_usage_mhz"),
-			"total assigned CPU in MHz", labels, nil),
+			"total assigned CPU in MHz. Based on the host the vm is current running on", labels, nil),
 		overallCPUUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "overall_cpu_usage_mhz"),
 			"vm overall CPU usage in MHz", labels, nil),
 		overallCPUDemand: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "overall_cpu_demand_mhz"),
 			"vm overall CPU demand in MHz", labels, nil),
+		cpuAllocationShares: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cpu_allocation_shares_mhz"),
+			"The number of shares allocated in MHz. ", labels, nil),
+		cpuAllocationReservation: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cpu_allocation_reservation_mhz"),
+			"Amount of resource that is guaranteed available to the virtual machine or resource pool.", labels, nil),
 		memoryBytes: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "memory_bytes"),
 			"vm memory in bytes", labels, nil),
@@ -110,6 +121,12 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf Config) *
 		hostMemoryUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "host_memory_usage_bytes"),
 			"vm host memory usage in bytes", labels, nil),
+		memoryAllocationShares: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "memory_allocation_shares_bytes"),
+			"The number of shares allocated in bytes.", labels, nil),
+		memoryAllocationReservation: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "memory_allocation_reservation_bytes"),
+			"Amount of resource that is guaranteed available to the virtual machine or resource pool.", labels, nil),
 		uptimeSeconds: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "uptime_seconds"),
 			"vm uptime in seconds", labels, nil),
@@ -194,9 +211,13 @@ func (c *virtualMachineCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.maxCPUUsage
 	ch <- c.overallCPUUsage
 	ch <- c.overallCPUDemand
+	ch <- c.cpuAllocationShares
+	ch <- c.cpuAllocationReservation
 	ch <- c.memoryBytes
 	ch <- c.guestMemoryUsage
 	ch <- c.hostMemoryUsage
+	ch <- c.memoryAllocationShares
+	ch <- c.memoryAllocationReservation
 	ch <- c.uptimeSeconds
 	ch <- c.numSnapshot
 	ch <- c.powerState
@@ -293,6 +314,16 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.overallCPUDemand, prometheus.GaugeValue, float64(qs.OverallCpuDemand), labelValues...,
 		))
+		if vm.Config.CpuAllocation != nil && vm.Config.CpuAllocation.Shares != nil {
+			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+				c.cpuAllocationShares, prometheus.GaugeValue, float64(vm.Config.CpuAllocation.Shares.Shares), labelValues...,
+			))
+		}
+		if vm.Config.CpuAllocation != nil && vm.Config.CpuAllocation.Reservation != nil {
+			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+				c.cpuAllocationReservation, prometheus.GaugeValue, float64(*vm.Config.CpuAllocation.Reservation), labelValues...,
+			))
+		}
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.memoryBytes, prometheus.GaugeValue, float64(int64(vm.Config.Hardware.MemoryMB)*mb), labelValues...,
 		))
@@ -302,6 +333,16 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.hostMemoryUsage, prometheus.GaugeValue, float64(int64(qs.HostMemoryUsage)*mb), labelValues...,
 		))
+		if vm.Config.MemoryAllocation != nil && vm.Config.MemoryAllocation.Shares != nil {
+			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+				c.memoryAllocationShares, prometheus.GaugeValue, float64(int64(vm.Config.MemoryAllocation.Shares.Shares)*mb), labelValues...,
+			))
+		}
+		if vm.Config.MemoryAllocation != nil && vm.Config.MemoryAllocation.Reservation != nil {
+			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+				c.memoryAllocationReservation, prometheus.GaugeValue, float64(int64(*vm.Config.MemoryAllocation.Reservation)*mb), labelValues...,
+			))
+		}
 		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 			c.uptimeSeconds, prometheus.GaugeValue, float64(qs.UptimeSeconds), labelValues...,
 		))
