@@ -2,30 +2,25 @@ package scraper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
+	"reflect"
+	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/pool"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
-// type ScraperStatus struct {
-// 	TCPStatusCheck         bool
-// 	TCPStatusCheckMgs      string
-// 	TCPStatusCheckEndpoint string
-
-// 	SensorEnabled   map[string]bool
-// 	SensorAvailable map[string]bool
-// 	SensorMetric    []SensorMetric
-// }
-
 type VCenterScraper struct {
-	clientPool *pool.VCenterClientPool
+	clientPool pool.VCenterPool
 	config     Config
 	metrics    []*SensorMetric
 	runnables  []Runnable
-	logger     *slog.Logger
+	// logger     *slog.Logger
 
 	Host             *HostSensor
 	HostPerf         *HostPerfSensor
@@ -40,20 +35,20 @@ type VCenterScraper struct {
 	Remain           *OnDemandSensor
 }
 
-func NewVCenterScraper(conf Config, logger *slog.Logger) (*VCenterScraper, error) {
+func NewVCenterScraper(ctx context.Context, conf Config) (*VCenterScraper, error) {
 
-	ctx := context.Background()
-	pool, err := pool.NewVCenterClientPoolWithLogger(
-		ctx,
+	pool := pool.NewVCenterThrottlePool(
 		conf.Endpoint,
 		conf.Username,
 		conf.Password,
 		conf.ClientPoolSize,
-		logger,
 	)
+
+	err := pool.Init()
 	if err != nil {
 		return nil, err
 	}
+	// pool.StartAuthRefresher(ctx, 5*time.Minute)
 
 	scraper := VCenterScraper{
 		clientPool: pool,
@@ -105,7 +100,9 @@ func NewVCenterScraper(conf Config, logger *slog.Logger) (*VCenterScraper, error
 	}
 
 	if conf.Tags.Enabled {
-		logger.Info("Create TagsSensor", "TagsCategoryToCollect", conf.Tags.CategoryToCollect)
+		if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+			logger.Info("Create TagsSensor", "TagsCategoryToCollect", conf.Tags.CategoryToCollect)
+		}
 		scraper.Tags = NewTagsSensorWithTaglist(&scraper, conf.Tags)
 		scraper.runnables = append(scraper.runnables, scraper.Tags)
 	}
@@ -114,36 +111,45 @@ func NewVCenterScraper(conf Config, logger *slog.Logger) (*VCenterScraper, error
 		Enabled:       true,
 		CleanInterval: conf.OnDemand.CleanInterval,
 		MaxAge:        conf.OnDemand.MaxAge,
-	}, logger)
+	})
 	scraper.runnables = append(scraper.runnables, scraper.Remain)
 
 	return &scraper, nil
 }
 
-func (c *VCenterScraper) tcpConnectStatus() (BaseSensorMetric, error) {
-	status := *NewSensorMetricStatus("", "scraper.tcp_connect_status", false)
+var (
+	ErrVCenterURLInvalid  = errors.New("could not parse url")
+	ErrVCenterConnectFail = errors.New("cannot connect to vcenter")
+)
+
+func (c *VCenterScraper) tcpConnectStatus() error {
 	baseURL, err := c.config.URL()
 	if err != nil {
-		status.Fail()
-		return status.BaseSensorMetric, err
+		return ErrVCenterURLInvalid
 	}
 
 	_, err = tcpConnectionCheck(baseURL.Host)
 	if err != nil {
-		status.Fail()
-		return status.BaseSensorMetric, err
+		return ErrVCenterConnectFail
 	}
-	status.Success()
-	return status.BaseSensorMetric, nil
+
+	return nil
 }
 
 func (c *VCenterScraper) ScraperMetrics() []BaseSensorMetric {
 	result := []BaseSensorMetric{}
-	tcpStatus, err := c.tcpConnectStatus()
-	if err != nil {
-		c.logger.Error("failed to connect to endpoint", "err", err)
+
+	err := c.tcpConnectStatus()
+	tcpConnectStatus := *NewSensorMetricStatus("scraper", "tcp_connect_status", false)
+	if err == nil {
+		tcpConnectStatus.Success()
+	} else if err != nil && errors.Is(err, ErrVCenterURLInvalid) {
+		tcpConnectStatus.Fail()
+	} else if err != nil && errors.Is(err, ErrVCenterConnectFail) {
+		tcpConnectStatus.Fail()
+	} else {
+		tcpConnectStatus.Fail()
 	}
-	result = append(result, tcpStatus)
 
 	for kind, enabled := range map[string]bool{
 		"host":             c.config.Host.Enabled,
@@ -155,7 +161,7 @@ func (c *VCenterScraper) ScraperMetrics() []BaseSensorMetric {
 		"repool":           c.config.ResourcePool.Enabled,
 		"tags":             c.config.Tags.Enabled,
 	} {
-		sensor := NewSensorMetricStatus("", fmt.Sprintf("sensor.%s.enabled", kind), false)
+		sensor := NewSensorMetricStatus("scraper", fmt.Sprintf("sensor.%s.enabled", kind), false)
 		sensor.Update(enabled)
 		result = append(result, sensor.BaseSensorMetric)
 	}
@@ -170,7 +176,7 @@ func (c *VCenterScraper) ScraperMetrics() []BaseSensorMetric {
 		"repool":           c.ResourcePool != nil,
 		"tags":             c.Tags != nil,
 	} {
-		sensor := NewSensorMetricStatus("", fmt.Sprintf("sensor.%s.available", kind), false)
+		sensor := NewSensorMetricStatus("scraper", fmt.Sprintf("sensor.%s.available", kind), false)
 		sensor.Update(available)
 		result = append(result, sensor.BaseSensorMetric)
 	}
@@ -186,7 +192,8 @@ func (c *VCenterScraper) RegisterSensorMetric(metric ...*SensorMetric) {
 }
 
 func (c *VCenterScraper) SensorList() []Sensor {
-	return []Sensor{
+	sensors := []Sensor{}
+	for _, s := range []Sensor{
 		c.Cluster,
 		c.ComputeResources,
 		c.Datastore,
@@ -197,7 +204,14 @@ func (c *VCenterScraper) SensorList() []Sensor {
 		c.Tags,
 		c.VM,
 		c.VMPerf,
+		c.Remain,
+	} {
+		if !reflect.ValueOf(s).IsNil() {
+			sensors = append(sensors, s)
+		}
 	}
+
+	return sensors
 }
 
 func (c *VCenterScraper) GetSensorRefreshByName(name string) Sensor {
@@ -210,28 +224,85 @@ func (c *VCenterScraper) GetSensorRefreshByName(name string) Sensor {
 	return nil
 }
 
-func (c *VCenterScraper) Start(ctx context.Context, logger *slog.Logger) error {
-	for _, r := range c.runnables {
-		r.Start(ctx, logger)
-	}
-	go func() {
-		for _, r := range c.runnables {
-			r.WaitTillStartup()
+func (c *VCenterScraper) RefreshSensor(ctx context.Context, names ...string) error {
+	for _, s := range c.SensorList() {
+		if helper.AnyMatch(s, names...) {
+			err := s.TriggerRefresh(ctx)
+			if err != nil {
+				return err
+			}
 		}
-		logger.Info("All sensors started")
-	}()
-
+	}
 	return nil
 }
 
-func (c *VCenterScraper) Stop(ctx context.Context, logger *slog.Logger) {
-
-	for _, r := range c.runnables {
-		r.Stop(ctx, logger)
+func (c *VCenterScraper) Start(ctx context.Context) error {
+	err := c.tcpConnectStatus()
+	if err != nil {
+		return fmt.Errorf("cannot connect to vcenter: %w", err)
 	}
 
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	sensors := c.SensorList()
+	startupDone := make(chan Sensor, len(sensors))
+	// Start all sensors
+	for _, r := range sensors {
+		go func() {
+			time.Sleep(time.Duration(rand.Intn(2000)) * time.Millisecond)
+			err := r.Start(ctx)
+			if err != nil {
+				if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+					logger.Error("failed to start sensor", "err", err)
+				}
+				return
+			}
+			r.WaitTillStartup()
+			startupDone <- r
+		}()
+	}
+
+	sensorRunning := []string{}
+	for {
+		select {
+		case sensor := <-startupDone:
+			sensorRunning = append(sensorRunning, sensor.Name())
+			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+				msg := fmt.Sprintf("Sensor started [%d/%d]", len(sensorRunning), len(sensors))
+				logger.Info(msg, "sensor_kind", sensor.Kind(), "sensor_name", sensor.Name())
+			}
+			if len(sensorRunning) >= len(sensors) {
+				if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+					logger.Info("All sensors started")
+				}
+				return nil
+			}
+		case <-ctxWithTimeout.Done():
+			allSensors := []string{}
+			for _, r := range sensors {
+				allSensors = append(allSensors, r.Name())
+			}
+
+			sensorsNotStarted := helper.Subtract(allSensors, sensorRunning)
+
+			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+				logger.Error("Timeout waiting for sensors to start", "sensors_not_started", sensorsNotStarted)
+			}
+			return fmt.Errorf("timeout waiting for sensors to start: %v", sensorsNotStarted)
+		}
+	}
+}
+
+func (c *VCenterScraper) Stop(ctx context.Context) {
+
+	// for _, r := range c.runnables {
+	// 	// r.Stop(ctx)
+	// }
+
 	c.clientPool.Destroy()
-	logger.Info("Close client pool")
+	if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+		logger.Info("Close client pool")
+	}
 }
 
 type ParentChain struct {

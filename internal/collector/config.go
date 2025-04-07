@@ -14,6 +14,7 @@ type Config struct {
 	ResourcePoolTagLabels []string
 	StoragePodTagLabels   []string
 
+	VMLegacyMetrics          bool
 	VMAdvancedNetworkMetrics bool
 	VMAdvancedStorageMetrics bool
 	VMTagLabels              []string
@@ -34,6 +35,7 @@ func DefaultCollectorConf() *Config {
 		ResourcePoolTagLabels: []string{},
 		StoragePodTagLabels:   []string{},
 
+		VMLegacyMetrics:          false,
 		VMAdvancedNetworkMetrics: false,
 		VMAdvancedStorageMetrics: false,
 		VMTagLabels:              []string{},

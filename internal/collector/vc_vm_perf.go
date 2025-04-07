@@ -27,7 +27,7 @@ func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf Config) *VMPerfCo
 		scraper:     scraper,
 		extraLabels: extraLabels,
 		perfMetric: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "perf_metric"),
+			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "perf_metric"),
 			"Performance metric", perfLabels, nil),
 	}
 }

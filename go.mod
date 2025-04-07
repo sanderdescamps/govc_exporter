@@ -7,8 +7,8 @@ toolchain go1.23.1
 require (
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/prometheus/client_golang v1.21.1
-	github.com/prometheus/common v0.62.0
-	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/prometheus/common v0.63.0
+	github.com/prometheus/procfs v0.16.0 // indirect
 	github.com/vmware/govmomi v0.49.0
 	golang.org/x/sys v0.31.0 // indirect
 )
@@ -25,5 +25,5 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
-	google.golang.org/protobuf v1.36.5 // indirect
+	google.golang.org/protobuf v1.36.6 // indirect
 )

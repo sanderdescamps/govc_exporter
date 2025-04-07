@@ -2,7 +2,6 @@ package scraper
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 )
@@ -23,7 +22,7 @@ func NewHostPerfSensor(scraper *VCenterScraper, config PerfSensorConfig) *HostPe
 	return &sensor
 }
 
-func (s *HostPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+func (s *HostPerfSensor) Refresh(ctx context.Context) error {
 	s.scraper.Host.WaitTillStartup()
 	hostRefs := s.scraper.Host.GetAllRefs()
 	if len(hostRefs) < 1 {
@@ -67,7 +66,7 @@ func (s *HostPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error
 
 	metrics = helper.Dedup(metrics)
 
-	metricSeries, err := s.BasePerfSensor.QueryEntiryMetrics(hostRefs, metrics, ctx, logger)
+	metricSeries, err := s.BasePerfSensor.QueryEntiryMetrics(ctx, hostRefs, metrics)
 	if err != nil {
 		return err
 	}

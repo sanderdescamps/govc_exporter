@@ -2,12 +2,10 @@ package scraper
 
 import (
 	"context"
-	"log/slog"
 )
 
 type Runnable interface {
-	Start(context.Context, *slog.Logger)
-	Stop(context.Context, *slog.Logger)
+	Start(context.Context) error
 	WaitTillStartup()
 }
 
@@ -16,14 +14,17 @@ type AutoRunSensor struct {
 	AutoRefreshSensor
 }
 
-func (o *AutoRunSensor) Start(ctx context.Context, logger *slog.Logger) {
-	o.AutoRefreshSensor.Start(ctx, logger)
-	o.AutoCleanSensor.Start(ctx, logger)
-}
+func (o *AutoRunSensor) Start(ctx context.Context) error {
+	refreshErr := o.AutoRefreshSensor.Start(ctx)
+	if refreshErr != nil {
+		return refreshErr
+	}
 
-func (o *AutoRunSensor) Stop(ctx context.Context, logger *slog.Logger) {
-	o.AutoRefreshSensor.Stop(ctx, logger)
-	o.AutoCleanSensor.Stop(ctx, logger)
+	cleanErr := o.AutoCleanSensor.Start(ctx)
+	if cleanErr != nil {
+		return cleanErr
+	}
+	return nil
 }
 
 func NewAutoRunSensor(sensor Sensor, config SensorConfig) *AutoRunSensor {

@@ -52,31 +52,32 @@ func TestVCenterScraper(t *testing.T) {
 	}
 	logger := promslog.New(promlogConfig)
 	ctx := context.Background()
+	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
 
-	aCache, _ := scraper.NewVCenterScraper(conf, logger)
+	aCache, _ := scraper.NewVCenterScraper(ctxScraper, conf)
 
 	t1 := time.Now()
-	aCache.Host.Refresh(ctx, logger)
+	aCache.Host.Refresh(ctxScraper)
 	t2 := time.Now()
 	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
 
-	aCache.Datastore.Refresh(ctx, logger)
+	aCache.Datastore.Refresh(ctxScraper)
 	t3 := time.Now()
 	fmt.Printf("fetching all datastores took %dms\n", t3.Sub(t2).Milliseconds())
 
-	aCache.SPOD.Refresh(ctx, logger)
+	aCache.SPOD.Refresh(ctxScraper)
 	t4 := time.Now()
 	fmt.Printf("fetching all spod took %dms\n", t4.Sub(t3).Milliseconds())
 
-	aCache.VM.Refresh(ctx, logger)
+	aCache.VM.Refresh(ctxScraper)
 	t5 := time.Now()
 	fmt.Printf("fetching all VMs took %dms\n", t5.Sub(t4).Milliseconds())
 
-	aCache.Cluster.Refresh(ctx, logger)
+	aCache.Cluster.Refresh(ctxScraper)
 	t6 := time.Now()
 	fmt.Printf("fetching all clusters took %dms\n", t6.Sub(t5).Milliseconds())
 
-	aCache.Tags.Refresh(ctx, logger)
+	aCache.Tags.Refresh(ctxScraper)
 	t7 := time.Now()
 	fmt.Printf("fetching all tags took %dms\n", t7.Sub(t6).Milliseconds())
 	// for _, cat := range conf.TagsCategoryToCollect {
@@ -92,6 +93,32 @@ func TestVCenterScraper(t *testing.T) {
 	// }
 
 	fmt.Print("end")
+}
+
+func TestVCenterScraperStart(t *testing.T) {
+
+	conf := scraper.DefaultConfig()
+
+	conf.Endpoint = "https://localhost:8989"
+	conf.Username = "testuser"
+	conf.Password = "testpass"
+	conf.Tags.CategoryToCollect = []string{"tenants"}
+
+	promlogConfig := &promslog.Config{
+		// Level:
+	}
+	logger := promslog.New(promlogConfig)
+	ctx := context.Background()
+	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
+
+	aCache, _ := scraper.NewVCenterScraper(ctxScraper, conf)
+
+	sensors := aCache.SensorList()
+	for _, sensor := range sensors {
+		logger.Info("Sensor", "name", sensor.Name(), "kind", sensor.Kind())
+	}
+	aCache.Start(ctxScraper)
+
 }
 
 func TestVMwareHost(t *testing.T) {
@@ -708,12 +735,13 @@ func TestHostPerf(t *testing.T) {
 	}
 	logger := promslog.New(promlogConfig)
 	ctx := context.Background()
+	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
 
-	aCache, _ := scraper.NewVCenterScraper(conf, logger)
-	aCache.Host.Refresh(ctx, logger)
+	aCache, _ := scraper.NewVCenterScraper(ctxScraper, conf)
+	aCache.Host.Refresh(ctxScraper)
 
 	t1 := time.Now()
-	err := aCache.HostPerf.Refresh(ctx, logger)
+	err := aCache.HostPerf.Refresh(ctxScraper)
 	t2 := time.Now()
 
 	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
