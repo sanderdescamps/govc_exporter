@@ -360,7 +360,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 
 		if vm.Snapshot != nil {
 			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.uptimeSeconds, prometheus.GaugeValue, float64(len(vm.Snapshot.RootSnapshotList)), labelValues...,
+				c.numSnapshot, prometheus.GaugeValue, float64(len(vm.Snapshot.RootSnapshotList)), labelValues...,
 			))
 		}
 
