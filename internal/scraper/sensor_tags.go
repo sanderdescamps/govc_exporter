@@ -16,7 +16,6 @@ type TagsSensor struct {
 	BaseSensor[types.ManagedObjectReference, []*tags.Tag]
 	AutoRunSensor
 	Refreshable
-	helper.Matchable
 	TagCatsToObserve []string
 	catCacheLock     sync.Mutex
 	catCache         map[string]tags.Category
@@ -30,8 +29,10 @@ func NewTagsSensorWithTaglist(scraper *VCenterScraper, config TagsSensorConfig) 
 	var sensor TagsSensor
 	sensor = TagsSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, []*tags.Tag](
-			scraper,
+			"tags",
 			"TagsSensor",
+			helper.NewMatcher("tags"),
+			scraper,
 		),
 		TagCatsToObserve: config.CategoryToCollect,
 		AutoRunSensor:    *NewAutoRunSensor(&sensor, config.SensorConfig),
@@ -47,22 +48,26 @@ func NewTagsSensorWithTaglist(scraper *VCenterScraper, config TagsSensorConfig) 
 	return &sensor
 }
 
-func (s *TagsSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
-	if ok := s.sensorLock.TryLock(); !ok {
-		logger.Info("Sensor Refresh already running", "sensor_type", s.Kind())
-		return nil
+func (s *TagsSensor) Refresh(ctx context.Context) error {
+	tagMap, err := s.tagRefresh(ctx)
+	if err != nil {
+		return err
 	}
-	defer s.sensorLock.Unlock()
-	return s.unsafeRefresh(ctx, logger)
+
+	for ref, tags := range tagMap {
+		s.Update(ref, &tags)
+	}
+
+	return nil
 }
 
-func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
+func (s *TagsSensor) tagRefresh(ctx context.Context) (map[types.ManagedObjectReference][]*tags.Tag, error) {
 	t1 := time.Now()
 
 	restclient, release, err := s.scraper.clientPool.AcquireRest()
 	defer release()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	t2 := time.Now()
 
@@ -70,8 +75,10 @@ func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) err
 
 	allCats, err := m.GetCategories(ctx)
 	if err != nil {
-		logger.Error("failed to get tag categories", "err", err)
-		return err
+		if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+			logger.Error("failed to get tag categories", "err", err)
+		}
+		return nil, err
 	}
 
 	catList := []tags.Category{}
@@ -87,9 +94,11 @@ func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) err
 	for _, cat := range catList {
 		tags, err := m.GetTagsForCategory(ctx, cat.ID)
 		if err != nil {
-			logger.Error("failed to get tags for category", "category", cat, "err", err)
+			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+				logger.Error("failed to get tags for category", "category", cat, "err", err)
+			}
 			s.metrics.Status.Fail()
-			return err
+			return nil, err
 		} else {
 			s.metrics.Status.Success()
 		}
@@ -100,8 +109,10 @@ func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) err
 	for _, tag := range tagList {
 		attachObjs, err := m.GetAttachedObjectsOnTags(ctx, []string{tag.ID})
 		if err != nil {
-			logger.Error("failed to get attached objects for tag", "tag", tag, "err", err)
-			return err
+			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+				logger.Error("failed to get attached objects for tag", "tag", tag, "err", err)
+			}
+			return nil, err
 		}
 
 		for _, attachObj := range attachObjs {
@@ -114,11 +125,7 @@ func (s *TagsSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) err
 	s.metrics.ClientWaitTime.Update(t2.Sub(t1))
 	s.metrics.QueryTime.Update(t3.Sub(t2))
 
-	for ref, tags := range objectTags {
-		s.Update(ref, &tags)
-	}
-
-	return nil
+	return objectTags, nil
 }
 
 func (s *TagsSensor) UpdateCatCache(cats []tags.Category) {
@@ -154,12 +161,4 @@ func (s *TagsSensor) GetTag(ref types.ManagedObjectReference, cat string) *tags.
 		}
 	}
 	return nil
-}
-
-func (s *TagsSensor) Name() string {
-	return "tags"
-}
-
-func (s *TagsSensor) Match(name string) bool {
-	return helper.NewMatcher("tags").Match(name)
 }

@@ -51,7 +51,7 @@ func NewBasePerfSensor(scraper *VCenterScraper, sensorKind string, config PerfSe
 	return &sensor
 }
 
-func (s *BasePerfSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
+func (s *BasePerfSensor) Clean(ctx context.Context, maxAge time.Duration) {
 	now := time.Now()
 	total := 0
 	for _, pm := range s.perfMetrics {
@@ -59,7 +59,9 @@ func (s *BasePerfSensor) Clean(maxAge time.Duration, logger *slog.Logger) {
 		total = total + len(ExpiredMetrics)
 	}
 	if total > 0 {
-		logger.Warn(fmt.Sprintf("Removed %d host-metrics which were not yet pulled", total))
+		if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+			logger.Warn(fmt.Sprintf("Removed %d host-metrics which were not yet pulled", total))
+		}
 	}
 }
 
@@ -84,7 +86,7 @@ func (s *BasePerfSensor) GetAllJsons() (map[string][]byte, error) {
 	return result, nil
 }
 
-func (s *BasePerfSensor) QueryEntiryMetrics(refs []types.ManagedObjectReference, metrics []string, ctx context.Context, logger *slog.Logger) ([]performance.EntityMetric, error) {
+func (s *BasePerfSensor) QueryEntiryMetrics(ctx context.Context, refs []types.ManagedObjectReference, metrics []string) ([]performance.EntityMetric, error) {
 	if ok := s.sensorLock.TryLock(); !ok {
 		return nil, fmt.Errorf("Sensor already running")
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,15 +19,16 @@ type VirtualMachineSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.VirtualMachine]
 	AutoRunSensor
 	Refreshable
-	helper.Matchable
 }
 
 func NewVirtualMachineSensor(scraper *VCenterScraper, config SensorConfig) *VirtualMachineSensor {
 	var sensor VirtualMachineSensor
 	sensor = VirtualMachineSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.VirtualMachine](
-			scraper,
+			"vm",
 			"VirtualMachineSensor",
+			helper.NewMatcher("vm", "virtual_machine", "virtualmachine"),
+			scraper,
 		),
 		AutoRunSensor: *NewAutoRunSensor(&sensor, config),
 	}
@@ -40,16 +43,20 @@ func NewVirtualMachineSensor(scraper *VCenterScraper, config SensorConfig) *Virt
 	return &sensor
 }
 
-func (s *VirtualMachineSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
-	if ok := s.sensorLock.TryLock(); !ok {
-		logger.Info("Sensor Refresh already running", "sensor_type", s.Kind())
-		return nil
+func (s *VirtualMachineSensor) Refresh(ctx context.Context) error {
+	entities, err := s.vmQuery(ctx)
+	if err != nil {
+		return err
 	}
-	defer s.sensorLock.Unlock()
-	return s.unsafeRefresh(ctx, logger)
+
+	for _, entity := range entities {
+		s.Update(entity.Self, &entity)
+	}
+
+	return nil
 }
 
-func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.Logger) error {
+func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine, error) {
 	s.metrics.Status.Reset()
 	var hostRefs []types.ManagedObjectReference
 	hostRefs, err := func() ([]types.ManagedObjectReference, error) {
@@ -66,9 +73,14 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 							resultChan <- &refs
 							break
 						}
-						logger.Info("VM sensor is waiting for hosts")
+						if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+							logger.Info("VM sensor is waiting for hosts")
+						}
+
 					} else {
-						logger.Info("No host sensor found")
+						if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+							logger.Info("No host sensor found")
+						}
 					}
 
 				case <-quitChan:
@@ -80,7 +92,9 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 		select {
 		case <-time.After(20 * time.Second):
 			quitChan <- true
-			logger.Warn("Scraper can not request virtual machines without hosts")
+			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+				logger.Warn("Scraper can not request virtual machines without hosts")
+			}
 			return nil, fmt.Errorf("waiting for hosts timeout")
 		case refs := <-resultChan:
 			return *refs, nil
@@ -89,7 +103,7 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 
 	if err != nil {
 		s.metrics.Status.Fail()
-		return err
+		return nil, err
 	}
 
 	var wg sync.WaitGroup
@@ -153,7 +167,7 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 	}
 
 	readyChan := make(chan bool)
-	allVMs := map[types.ManagedObjectReference]*CacheItem[mo.VirtualMachine]{}
+	allVMs := map[types.ManagedObjectReference]mo.VirtualMachine{}
 	go func() {
 		for {
 			select {
@@ -161,8 +175,8 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 				for _, vm := range *r {
 					if entityA, exist := allVMs[vm.Self]; exist {
 						timestampA := func() time.Time {
-							if entityA.Item.Config != nil {
-								timestamp, err := time.Parse(time.RFC3339Nano, entityA.Item.Config.ChangeVersion)
+							if entityA.Config != nil {
+								timestamp, err := time.Parse(time.RFC3339Nano, entityA.Config.ChangeVersion)
 								if err == nil {
 									return timestamp
 								}
@@ -179,16 +193,18 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 							}
 							return time.Now()
 						}()
-						// time comparison to prevent inconsistent data during vmotion
+						// only keep the most recent one. Time comparison to prevent inconsistent data during vmotion
 						if timestampB.After(timestampA) {
-							allVMs[vm.Self] = NewCacheItem(&vm)
+							allVMs[vm.Self] = vm
 						}
 					} else {
-						allVMs[vm.Self] = NewCacheItem(&vm)
+						allVMs[vm.Self] = vm
 					}
 				}
 			case err := <-errChan:
-				logger.Error("failed to get vm's from host", "err", err)
+				if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+					logger.Error("failed to get vm's from host", "err", err)
+				}
 				s.metrics.Status.Fail()
 			case <-readyChan:
 				return
@@ -199,11 +215,7 @@ func (s *VirtualMachineSensor) unsafeRefresh(ctx context.Context, logger *slog.L
 	wg.Wait()
 	readyChan <- true
 
-	for ref, cacheItem := range allVMs {
-		s.UpdateCacheItem(ref, cacheItem)
-	}
-
-	return nil
+	return slices.Collect(maps.Values(allVMs)), nil
 }
 
 func (s *VirtualMachineSensor) GetHostVMs(ref types.ManagedObjectReference) []types.ManagedObjectReference {
@@ -214,12 +226,4 @@ func (s *VirtualMachineSensor) GetHostVMs(ref types.ManagedObjectReference) []ty
 		}
 	}
 	return vmsOnHost
-}
-
-func (s *VirtualMachineSensor) Name() string {
-	return "vm"
-}
-
-func (s *VirtualMachineSensor) Match(name string) bool {
-	return helper.NewMatcher("vm", "virtual_machine", "virtualmachine").Match(name)
 }

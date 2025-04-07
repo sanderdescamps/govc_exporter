@@ -29,7 +29,7 @@ type VCCollector struct {
 	collectors map[*helper.Matcher]prometheus.Collector
 }
 
-func NewVCCollector(conf *Config, scraper *scraper.VCenterScraper, logger *slog.Logger) *VCCollector {
+func NewVCCollector(ctx context.Context, conf *Config, scraper *scraper.VCenterScraper) *VCCollector {
 	if conf == nil {
 		conf = DefaultCollectorConf()
 	}
@@ -46,15 +46,15 @@ func NewVCCollector(conf *Config, scraper *scraper.VCenterScraper, logger *slog.
 	collectors[helper.NewMatcher("scraper")] = NewScraperCollector(scraper)
 
 	return &VCCollector{
-		scraper: scraper,
-		// logger:     logger,
+		scraper:    scraper,
 		conf:       *conf,
 		collectors: collectors,
 	}
 }
 
-func (c *VCCollector) GetMetricHandler(logger *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
+func (c *VCCollector) GetMetricHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		params := r.URL.Query()
 
 		filters := []string{}
@@ -73,7 +73,9 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) func(w http.Response
 			exclude = append(exclude, f...)
 		}
 		excludeMatcher := helper.NewMatcher(exclude...)
-		logger.Debug(fmt.Sprintf("%s %s", r.Method, r.URL.Path), "filters", filters, "exclude", exclude)
+		if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+			logger.Debug(fmt.Sprintf("%s %s", r.Method, r.URL.Path), "filters", filters, "exclude", exclude)
+		}
 
 		registry := prometheus.NewRegistry()
 		if !c.conf.DisableExporterMetrics && !excludeMatcher.MatchAny("exporter_metrics", "exporter") {
@@ -85,16 +87,25 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) func(w http.Response
 		found := false
 		for matcher, collector := range c.collectors {
 			if (len(filters) == 0 || slices.ContainsFunc(filters, matcher.Match)) && !excludeMatcher.MatchAny(matcher.Keywords...) {
-				logger.Debug(fmt.Sprintf("register %s collector", matcher.First()))
+				if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+					logger.Debug(fmt.Sprintf("register %s collector", matcher.First()))
+				}
+
 				err := registry.Register(collector)
 				if err != nil {
-					logger.Error(fmt.Sprintf("Error registring %s collector for %s", matcher.First(), strings.Join(filters, ",")), "err", err.Error())
+					if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+						logger.Error(fmt.Sprintf("Error registring %s collector for %s", matcher.First(), strings.Join(filters, ",")), "err", err.Error())
+					}
+
 				}
 				found = true
 			}
 		}
 		if !found {
-			logger.Warn("No sensor found for filter", "filter", filters)
+			if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+				logger.Warn("No sensor found for filter", "filter", filters)
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -112,37 +123,64 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) func(w http.Response
 	}
 }
 
-func (c *VCCollector) GetRefreshHandler(logger *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
+func (c *VCCollector) GetRefreshHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		sensorReq := r.PathValue("sensor")
 
 		sensor := c.scraper.GetSensorRefreshByName(sensorReq)
 		if sensor != nil {
 			sensorName := sensor.Name()
-			logger.Info("Trigger manual refresh", "sensor_name", sensorName)
-			err := sensor.Refresh(context.Background(), logger)
-			if err == nil {
-				logger.Info("Refresh successfull", "sensor_name", sensorName)
+			if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+				logger.Info("Trigger manual refresh", "sensor_name", sensorName)
+			}
 
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]any{
-					"msg":         "refresh successfull",
-					"sensor_name": sensorName,
-					"status":      200,
-				})
-			} else {
-				logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_name", sensorName)
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, 60*time.Second)
+			defer cancel()
+			done := make(chan error)
+			go func() {
+				err := sensor.Refresh(ctxWithTimeout)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil {
+					if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+						logger.Info("Refresh successfull", "sensor_name", sensorName)
+					}
 
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(map[string]any{
+						"msg":         "refresh successfull",
+						"sensor_name": sensorName,
+						"status":      200,
+					})
+				} else {
+					if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+						logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_name", sensorName)
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]any{
+						"msg":         "Failed to refresh sensor",
+						"sensor_name": sensorName,
+						"err":         err.Error(),
+						"status":      http.StatusInternalServerError,
+					})
+				}
+			case <-ctxWithTimeout.Done():
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]any{
-					"msg":         "Failed to refresh sensor",
+					"msg":         "sensor refresh timeout",
 					"sensor_name": sensorName,
-					"err":         err.Error(),
+					"err":         fmt.Errorf("sensor refresh timeout"),
 					"status":      http.StatusInternalServerError,
 				})
 			}
+
 		} else {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -154,8 +192,9 @@ func (c *VCCollector) GetRefreshHandler(logger *slog.Logger) func(w http.Respons
 	}
 }
 
-func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
+func (c *VCCollector) GetDumpHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		include := []string{}
 		sensorReq := r.PathValue("sensor")
 		if sensorReq != "" {
@@ -187,7 +226,10 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 		}
 
 		if len(sensors) < 1 {
-			logger.Warn("Failed to create dump. Invalid sensor type", "type", include)
+			if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+				logger.Warn("Failed to create dump. Invalid sensor type", "type", include)
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -196,22 +238,29 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 			})
 			return
 		}
-		logger.Info("Creating dump of sensors objects.", "sensors", func() []string {
-			result := []string{}
-			for _, s := range sensors {
-				result = append(result, s.Name())
-			}
-			return result
-		})
+		if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+			logger.Info("Creating dump of sensors objects.", "sensors", func() []string {
+				result := []string{}
+				for _, s := range sensors {
+					result = append(result, s.Name())
+				}
+				return result
+			})
+		}
 
 		dirPath := ""
 		for i := 0; true; i++ {
 			dirPath = fmt.Sprintf("./dumps/%s_%d", time.Now().Format("20060201"), i)
 			if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-				logger.Debug("Create dump path", "path", dirPath)
+				if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+					logger.Debug("Create dump path", "path", dirPath)
+				}
+
 				err := os.MkdirAll(dirPath, 0775)
 				if err != nil {
-					logger.Warn("Failed to create dump", "err", err)
+					if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+						logger.Warn("Failed to create dump", "err", err)
+					}
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 					json.NewEncoder(w).Encode(map[string]any{
@@ -243,6 +292,9 @@ func (c *VCCollector) GetDumpHandler(logger *slog.Logger) func(w http.ResponseWr
 				os.WriteFile(filePath, jsonString, os.ModePerm)
 			}
 		}
-		logger.Info(fmt.Sprintf("Dump successful. Check %s for results", dirPath))
+
+		if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+			logger.Info(fmt.Sprintf("Dump successful. Check %s for results", dirPath))
+		}
 	}
 }

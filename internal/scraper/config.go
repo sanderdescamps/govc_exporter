@@ -66,46 +66,54 @@ func DefaultConfig() Config {
 	return Config{
 		Cluster: SensorConfig{
 			Enabled:         true,
-			MaxAge:          time.Duration(120) * time.Second,
-			RefreshInterval: time.Duration(60) * time.Second,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
 		},
 		ComputeResource: SensorConfig{
 			Enabled:         true,
-			MaxAge:          time.Duration(120) * time.Second,
-			RefreshInterval: time.Duration(60) * time.Second,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
 		},
 		Datastore: SensorConfig{
 			Enabled:         true,
-			MaxAge:          time.Duration(120) * time.Second,
-			RefreshInterval: time.Duration(30) * time.Second,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 30 * time.Second,
+			CleanInterval:   5 * time.Second,
 		},
 		Host: SensorConfig{
 			Enabled:         true,
-			MaxAge:          time.Duration(120) * time.Second,
-			RefreshInterval: time.Duration(30) * time.Second,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 30 * time.Second,
+			CleanInterval:   5 * time.Second,
 		},
 		ResourcePool: SensorConfig{
 			Enabled:         true,
-			MaxAge:          time.Duration(120) * time.Second,
-			RefreshInterval: time.Duration(60) * time.Second,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
 		},
 		Spod: SensorConfig{
 			Enabled:         true,
-			MaxAge:          time.Duration(120) * time.Second,
-			RefreshInterval: time.Duration(60) * time.Second,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
 		},
 		Tags: TagsSensorConfig{
 			SensorConfig: SensorConfig{
 				Enabled:         true,
-				MaxAge:          time.Duration(600) * time.Second,
-				RefreshInterval: time.Duration(290) * time.Second,
+				MaxAge:          600 * time.Second,
+				RefreshInterval: 290 * time.Second,
+				CleanInterval:   5 * time.Second,
 			},
 			CategoryToCollect: []string{},
 		},
 		VirtualMachine: SensorConfig{
 			Enabled:         true,
-			MaxAge:          time.Duration(120) * time.Second,
-			RefreshInterval: time.Duration(60) * time.Second,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
 		},
 
 		OnDemand: struct {
@@ -113,7 +121,7 @@ func DefaultConfig() Config {
 			CleanInterval time.Duration
 		}{
 			MaxAge:        300,
-			CleanInterval: time.Duration(5) * time.Second,
+			CleanInterval: 5 * time.Second,
 		},
 		ClientPoolSize: 5,
 	}

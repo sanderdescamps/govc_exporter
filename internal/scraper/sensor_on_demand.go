@@ -11,21 +11,39 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 )
 
+type OnDemandRequest struct {
+	ReqRef   types.ManagedObjectReference
+	RespChan chan *mo.ManagedEntity
+}
+
+func NewOnDemandRequest(ref types.ManagedObjectReference) *OnDemandRequest {
+	return &OnDemandRequest{
+		ReqRef:   ref,
+		RespChan: make(chan *mo.ManagedEntity),
+	}
+}
+
 type OnDemandSensor struct {
 	BaseSensor[types.ManagedObjectReference, mo.ManagedEntity]
 	AutoCleanSensor
-	logger *slog.Logger
+	started *helper.StartedCheck
+	reqChan chan *OnDemandRequest
+	stop    chan bool
 }
 
-func NewOnDemandSensor(scraper *VCenterScraper, config SensorConfig, logger *slog.Logger) *OnDemandSensor {
+func NewOnDemandSensor(scraper *VCenterScraper, config SensorConfig) *OnDemandSensor {
 	var sensor OnDemandSensor
 	sensor = OnDemandSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ManagedEntity](
-			scraper,
+			"on_demand",
 			"OnDemandSensor",
+			helper.NewMatcher("on_demand"),
+			scraper,
 		),
-		logger:          logger,
 		AutoCleanSensor: *NewAutoCleanSensor(&sensor, config),
+		started:         helper.NewStartedCheck(),
+		reqChan:         make(chan *OnDemandRequest),
+		stop:            make(chan bool),
 	}
 	sensor.metrics.ClientWaitTime = NewSensorMetricDuration(sensor.Kind(), "client_wait_time", 10)
 	sensor.metrics.QueryTime = NewSensorMetricDuration(sensor.Kind(), "query_time", 10)
@@ -50,24 +68,38 @@ func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity
 	}()
 
 	if cacheEntity != nil {
-		o.logger.Debug("Found entity in cache", "entity", cacheEntity.Self.Encode())
 		return cacheEntity
 	}
 
+	req := NewOnDemandRequest(ref)
+	o.reqChan <- req
+	entity := <-req.RespChan
+	if entity != nil {
+		o.Update(ref, entity)
+	}
+	return entity
+}
+
+func (o *OnDemandSensor) query(ctx context.Context, ref types.ManagedObjectReference) *mo.ManagedEntity {
 	t1 := time.Now()
 	client, release, err := o.scraper.clientPool.Acquire()
 	if err != nil {
-		o.logger.Error("Failed to acquire a client from pool", "err", err)
+		if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+			logger.Error("Failed to acquire a client from pool", "err", err)
+		}
 		return nil
 	}
 	defer release()
 
 	t2 := time.Now()
-	ctx := context.Background()
 	pc := property.DefaultCollector(client.Client)
-	o.logger.Debug("on_demand sensor query", "ref", ref)
+	if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+		logger.Debug("on_demand sensor query", "ref", ref)
+	}
 	var entity mo.ManagedEntity
-	err = pc.RetrieveOne(ctx, ref, []string{"name", "parent"}, &entity)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err = pc.RetrieveOne(ctxWithTimeout, ref, []string{"name", "parent"}, &entity)
 
 	t3 := time.Now()
 	o.metrics.ClientWaitTime.Update(t2.Sub(t1))
@@ -75,20 +107,58 @@ func (o *OnDemandSensor) Get(ref types.ManagedObjectReference) *mo.ManagedEntity
 	o.metrics.Status.Success()
 	if err != nil {
 		o.metrics.Status.Fail()
-		o.logger.Error("Failed to get on_demand object", "ref", ref, "err", err)
+		if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+			logger.Error("Failed to get on_demand object", "ref", ref, "err", err)
+		}
 	}
-
-	o.Update(ref, &entity)
 
 	return &entity
 }
 
-func (s *OnDemandSensor) Name() string {
-	return "on_demand"
+func (o *OnDemandSensor) Start(ctx context.Context) error {
+	if !o.started.IsStarted() {
+		go func() {
+			o.started.Started()
+			for o.started.IsStarted() {
+				select {
+				case req := <-o.reqChan:
+					entiry := o.query(ctx, req.ReqRef)
+					req.RespChan <- entiry
+				case <-ctx.Done():
+					o.started.Stopped()
+				case <-o.stop:
+					o.started.Stopped()
+				}
+			}
+		}()
+	} else {
+		if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+			logger.Warn("Sensor already started", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+		}
+	}
+	return nil
 }
 
-func (s *OnDemandSensor) Match(name string) bool {
-	return helper.NewMatcher("on_demand", "ondemand").Match(name)
+func (o *OnDemandSensor) Stop(ctx context.Context) {
+	if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+		logger.Info("stopping sensor...", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+	}
+	o.stop <- true
+	o.started.Stopped()
+	if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+		logger.Info("sensor stopped", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+	}
+
 }
 
-func (o *OnDemandSensor) WaitTillStartup() {}
+func (o *OnDemandSensor) WaitTillStartup() {
+	o.started.Wait()
+}
+
+func (o *OnDemandSensor) TriggerRefresh(ctx context.Context) error {
+	return nil
+}
+
+func (o *OnDemandSensor) Refresh(ctx context.Context) error {
+	return nil
+}

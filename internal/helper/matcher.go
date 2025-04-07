@@ -57,3 +57,13 @@ func (m Matcher) MatchAll(s ...string) bool {
 	}
 	return false
 }
+
+func AnyMatch(o Matchable, keywords ...string) bool {
+	for _, keyword := range keywords {
+		match := o.Match(keyword)
+		if match {
+			return true
+		}
+	}
+	return false
+}

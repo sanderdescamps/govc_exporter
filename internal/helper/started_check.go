@@ -9,13 +9,18 @@ type StartedCheck struct {
 }
 
 func NewStartedCheck() *StartedCheck {
+	var mu = new(sync.Mutex)
+	var cond = sync.NewCond(mu)
 	c := &StartedCheck{
 		started: false,
+		mu:      *mu,
+		cond:    cond,
 	}
 	c.cond = sync.NewCond(&c.mu)
 	return c
 }
 
+// Wait until the Started method is called
 func (c *StartedCheck) Wait() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -26,15 +31,16 @@ func (c *StartedCheck) Wait() {
 
 func (c *StartedCheck) Started() {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.started = true
-	c.mu.Unlock()
 	c.cond.Broadcast()
 }
 
 func (c *StartedCheck) Stopped() {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.started = false
-	c.mu.Unlock()
+	c.cond.Broadcast()
 }
 
 func (c *StartedCheck) IsStarted() bool {

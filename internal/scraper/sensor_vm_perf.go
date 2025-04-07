@@ -2,7 +2,6 @@ package scraper
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 )
@@ -23,7 +22,7 @@ func NewVMPerfSensor(scraper *VCenterScraper, config PerfSensorConfig) *VMPerfSe
 	return &sensor
 }
 
-func (s *VMPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
+func (s *VMPerfSensor) Refresh(ctx context.Context) error {
 	s.scraper.VM.WaitTillStartup()
 	refs := s.scraper.VM.GetAllRefs()
 	if len(refs) < 1 {
@@ -52,7 +51,7 @@ func (s *VMPerfSensor) Refresh(ctx context.Context, logger *slog.Logger) error {
 
 	metrics = helper.Dedup(metrics)
 
-	metricSeries, err := s.BasePerfSensor.QueryEntiryMetrics(refs, metrics, ctx, logger)
+	metricSeries, err := s.BasePerfSensor.QueryEntiryMetrics(ctx, refs, metrics)
 	if err != nil {
 		return err
 	}
