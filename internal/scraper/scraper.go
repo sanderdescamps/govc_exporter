@@ -269,7 +269,7 @@ func (c *VCenterScraper) Start(ctx context.Context) error {
 			sensorRunning = append(sensorRunning, sensor.Name())
 			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
 				msg := fmt.Sprintf("Sensor started [%d/%d]", len(sensorRunning), len(sensors))
-				logger.Info(msg, "sensor_kind", sensor.Kind(), "sensor_name", sensor.Name())
+				logger.Info(msg, "sensor_name", sensor.Name(), "sensor_kind", sensor.Kind())
 			}
 			if len(sensorRunning) >= len(sensors) {
 				if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
