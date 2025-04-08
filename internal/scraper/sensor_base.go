@@ -137,13 +137,10 @@ func (s *BaseSensor[K, T]) GetAllRefs() []K {
 func (s *BaseSensor[K, T]) Update(ref K, item *T) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if item == nil {
+		return
+	}
 	s.cache[ref] = NewCacheItem(item)
-}
-
-func (s *BaseSensor[K, T]) UpdateCacheItem(ref K, item *CacheItem[T]) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	s.cache[ref] = item
 }
 
 func (s *BaseSensor[K, T]) GetAllJsons() (map[string][]byte, error) {

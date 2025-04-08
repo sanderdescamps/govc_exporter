@@ -41,6 +41,9 @@ func (c *esxPerfCollector) Collect(ch chan<- prometheus.Metric) {
 
 	for _, ref := range c.scraper.Host.GetAllRefs() {
 		host := c.scraper.Host.Get(ref)
+		if host == nil {
+			continue
+		}
 
 		parentChain := c.scraper.GetParentChain(host.Self)
 
