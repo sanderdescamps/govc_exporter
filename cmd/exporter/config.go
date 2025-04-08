@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/common/promslog/flag"
 	"github.com/prometheus/common/version"
 	"github.com/sanderdescamps/govc_exporter/internal/collector"
+	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -170,14 +171,14 @@ func LoadConfig() Config {
 		os.Exit(2)
 	}
 
-	cfg.ScraperConfig.Tags.CategoryToCollect = dedup(mergeLists(
+	cfg.ScraperConfig.Tags.CategoryToCollect = helper.Union(
 		cfg.CollectorConfig.ClusterTagLabels,
 		cfg.CollectorConfig.DatastoreTagLabels,
 		cfg.CollectorConfig.HostTagLabels,
 		cfg.CollectorConfig.ResourcePoolTagLabels,
 		cfg.CollectorConfig.StoragePodTagLabels,
 		cfg.CollectorConfig.VMTagLabels,
-	))
+	)
 
 	return cfg
 }
