@@ -3,13 +3,20 @@ package scraper
 import (
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vmware/govmomi/vim25/soap"
 )
 
+const (
+	URL_REGEX_PATTERN = `(?:(https)?:\/\/)?([-a-zA-Z0-9%._\+~]{1,256})(?:\:(\d+))?(.*)\/?`
+)
+
 type Config struct {
-	Endpoint           string
+	VCenter            string
 	Username           string
 	Password           string
 	Cluster            SensorConfig
@@ -128,6 +135,14 @@ func DefaultConfig() Config {
 }
 
 func (c Config) Validate() error {
+	if !regexp.MustCompile(URL_REGEX_PATTERN).MatchString(c.VCenter) {
+		return fmt.Errorf("invalid URL %s", c.VCenter)
+	}
+
+	if c.ClientPoolSize <= 0 {
+		return fmt.Errorf("ClientPoolSize cannot be smaller than 1")
+	}
+
 	if !c.Host.Enabled && c.VirtualMachine.Enabled {
 		return fmt.Errorf(`HostScraperEnabled must be enabled when 
 VirtualMachineScraperEnabled is enabled because scraper needs the hosts 
@@ -161,46 +176,45 @@ when it queries the vm's`)
 	return nil
 }
 
-func (c Config) URL() (*url.URL, error) {
-	u, err := url.Parse(c.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse url %s", c.Endpoint)
+func (c Config) Endpoint() string {
+	re := regexp.MustCompile(URL_REGEX_PATTERN)
+	groups := re.FindStringSubmatch(c.VCenter)
+	if len(groups) != 5 {
+		panic("Invalid URL")
 	}
-
-	port := u.Port()
-	if u.Port() == "" {
-		if u.Scheme == "https" {
-			port = "443"
-		} else if u.Scheme == "http" {
-			port = "80"
+	scheme := groups[1]
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := groups[2]
+	var port int
+	if groups[3] != "" {
+		port, _ = strconv.Atoi(groups[3])
+	} else {
+		if scheme == "https" {
+			port = 443
+		} else if scheme == "http" {
+			port = 80
 		}
 	}
-
-	urlToParse := fmt.Sprintf("%s://%s", u.Scheme, u.Hostname())
-	if port != "" {
-		urlToParse = fmt.Sprintf("%s:%s", urlToParse, port)
-	}
-	if u.Path != "" {
-		urlToParse = fmt.Sprintf("%s%s", urlToParse, u.Path)
-	}
-	if len(u.Query()) > 0 {
-		urlToParse = fmt.Sprintf("%s?%s", urlToParse, u.Query().Encode())
-	}
-	if u.Fragment != "" {
-		urlToParse = fmt.Sprintf("%s#%s", urlToParse, u.Fragment)
+	path := groups[4]
+	if path == "/" {
+		path = ""
+	} else if strings.HasSuffix(path, "/") {
+		path = path[:len(path)-1]
 	}
 
-	parseURL, err := url.Parse(urlToParse)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse url  %s", urlToParse)
-	}
-	return parseURL, nil
+	return fmt.Sprintf("%s://%s:%d%s", scheme, host, port, path)
+}
+
+func (c Config) URL() (*url.URL, error) {
+	return url.Parse(c.Endpoint())
 }
 
 func (c Config) SoapURL() (*url.URL, error) {
-	u, err := soap.ParseURL(c.Endpoint)
+	u, err := soap.ParseURL(c.Endpoint())
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse url %s", c.Endpoint)
+		return nil, fmt.Errorf("unable to parse url %s", c.Endpoint())
 	}
 	return u, err
 }

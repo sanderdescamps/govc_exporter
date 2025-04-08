@@ -36,9 +36,8 @@ type VCenterScraper struct {
 }
 
 func NewVCenterScraper(ctx context.Context, conf Config) (*VCenterScraper, error) {
-
 	pool := pool.NewVCenterThrottlePool(
-		conf.Endpoint,
+		conf.Endpoint(),
 		conf.Username,
 		conf.Password,
 		conf.ClientPoolSize,
@@ -143,9 +142,9 @@ func (c *VCenterScraper) ScraperMetrics() []BaseSensorMetric {
 	tcpConnectStatus := *NewSensorMetricStatus("scraper", "tcp_connect_status", false)
 	if err == nil {
 		tcpConnectStatus.Success()
-	} else if err != nil && errors.Is(err, ErrVCenterURLInvalid) {
+	} else if errors.Is(err, ErrVCenterURLInvalid) {
 		tcpConnectStatus.Fail()
-	} else if err != nil && errors.Is(err, ErrVCenterConnectFail) {
+	} else if errors.Is(err, ErrVCenterConnectFail) {
 		tcpConnectStatus.Fail()
 	} else {
 		tcpConnectStatus.Fail()

@@ -84,7 +84,7 @@ func LoadConfig() Config {
 	a.Flag("collector.vm.tag_label", "List of vmware tag categories to collect which will be added as label in metrics").StringsVar(&cfg.CollectorConfig.VMTagLabels)
 
 	//scraper
-	a.Flag("scraper.vc.url", "vc api username").Envar("VC_URL").Required().StringVar(&cfg.ScraperConfig.Endpoint)
+	a.Flag("scraper.vc.url", "vc api username").Envar("VC_URL").Required().StringVar(&cfg.ScraperConfig.VCenter)
 	a.Flag("scraper.vc.username", "vc api username").Envar("VC_USERNAME").Required().StringVar(&cfg.ScraperConfig.Username)
 	a.Flag("scraper.vc.password", "vc api password").Envar("VC_PASSWORD").Required().StringVar(&cfg.ScraperConfig.Password)
 	a.Flag("scraper.client_pool_size", "number of simultanious requests to vCenter api").Default("5").IntVar(&cfg.ScraperConfig.ClientPoolSize)

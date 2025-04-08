@@ -42,10 +42,15 @@ func GetClient(ctx context.Context, t *testing.T) *govmomi.Client {
 func TestVCenterScraper(t *testing.T) {
 
 	conf := scraper.DefaultConfig()
-	conf.Endpoint = "https://localhost:8989"
+	conf.VCenter = "https://localhost:8989"
 	conf.Username = "testuser"
 	conf.Password = "testpass"
 	conf.Tags.CategoryToCollect = []string{"tenants"}
+
+	err := conf.Validate()
+	if err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
 
 	promlogConfig := &promslog.Config{
 		// Level:
@@ -99,10 +104,15 @@ func TestVCenterScraperStart(t *testing.T) {
 
 	conf := scraper.DefaultConfig()
 
-	conf.Endpoint = "https://localhost:8989"
+	conf.VCenter = "https://localhost:8989"
 	conf.Username = "testuser"
 	conf.Password = "testpass"
 	conf.Tags.CategoryToCollect = []string{"tenants"}
+
+	err := conf.Validate()
+	if err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
 
 	promlogConfig := &promslog.Config{
 		// Level:
@@ -176,7 +186,7 @@ func TestVMwareVMTags(t *testing.T) {
 	_, err := re.Session(ctx)
 	if err != nil {
 		log.Print(err)
-		t.Fatalf(err.Error())
+		t.Fatal(err.Error())
 	}
 	username := "testuser"
 	password := "testpass"
@@ -188,7 +198,7 @@ func TestVMwareVMTags(t *testing.T) {
 	allCats, err := m.GetCategories(ctx)
 	if err != nil {
 		log.Print(err)
-		t.Fatalf(err.Error())
+		t.Fatal(err.Error())
 	}
 	for _, cat := range allCats {
 		if len(catsToObserve) == 0 || slices.Contains(catsToObserve, cat.Name) {
@@ -204,7 +214,7 @@ func TestVMwareVMTags(t *testing.T) {
 		tags, err := m.GetTagsForCategory(ctx, cat.ID)
 		if err != nil {
 			log.Print(err)
-			t.Fatalf(err.Error())
+			t.Fatal(err.Error())
 		}
 		tagList = append(tagList, tags...)
 	}
@@ -213,7 +223,7 @@ func TestVMwareVMTags(t *testing.T) {
 	for _, tag := range tagList {
 		attachObjs, err := m.GetAttachedObjectsOnTags(ctx, []string{tag.ID})
 		if err != nil {
-			t.Fatalf(err.Error())
+			t.Fatal(err.Error())
 		}
 
 		// tag2, err := m.GetTag(ctx, tag)
@@ -725,10 +735,15 @@ func TestVMwareVMperHost2(t *testing.T) {
 func TestHostPerf(t *testing.T) {
 
 	conf := scraper.DefaultConfig()
-	conf.Endpoint = "https://localhost:8989"
+	conf.VCenter = "https://localhost:8989"
 	conf.Username = "testuser"
 	conf.Password = "testpass"
 	conf.Tags.CategoryToCollect = []string{"tenants"}
+
+	err := conf.Validate()
+	if err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
 
 	promlogConfig := &promslog.Config{
 		// Level:
@@ -741,7 +756,7 @@ func TestHostPerf(t *testing.T) {
 	aCache.Host.Refresh(ctxScraper)
 
 	t1 := time.Now()
-	err := aCache.HostPerf.Refresh(ctxScraper)
+	err = aCache.HostPerf.Refresh(ctxScraper)
 	t2 := time.Now()
 
 	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
