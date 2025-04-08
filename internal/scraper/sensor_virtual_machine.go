@@ -59,46 +59,18 @@ func (s *VirtualMachineSensor) Refresh(ctx context.Context) error {
 func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine, error) {
 	s.metrics.Status.Reset()
 	var hostRefs []types.ManagedObjectReference
+
 	hostRefs, err := func() ([]types.ManagedObjectReference, error) {
-		resultChan := make(chan *[]types.ManagedObjectReference)
-		quitChan := make(chan bool)
-		go func() {
-			ticker := time.NewTicker(1 * time.Second)
-			for {
-				select {
-				case <-ticker.C:
-					if s.scraper.Host != nil {
-						refs := s.scraper.Host.GetAllRefs()
-						if refs != nil {
-							resultChan <- &refs
-							break
-						}
-						if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-							logger.Info("VM sensor is waiting for hosts")
-						}
-
-					} else {
-						if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-							logger.Info("No host sensor found")
-						}
-					}
-
-				case <-quitChan:
-					return
-				}
-			}
-		}()
-
-		select {
-		case <-time.After(20 * time.Second):
-			quitChan <- true
+		if s.scraper.Host == nil {
 			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-				logger.Warn("Scraper can not request virtual machines without hosts")
+				logger.Warn("VM sensor cannot operate without host sensor")
+
 			}
-			return nil, fmt.Errorf("waiting for hosts timeout")
-		case refs := <-resultChan:
-			return *refs, nil
+			return nil, fmt.Errorf("no host sensor found")
 		}
+		s.scraper.Host.WaitTillStartup()
+
+		return s.scraper.Host.GetAllRefs(), nil
 	}()
 
 	if err != nil {
