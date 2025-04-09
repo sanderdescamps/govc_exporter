@@ -72,7 +72,6 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 
 		return s.scraper.Host.GetAllRefs(), nil
 	}()
-
 	if err != nil {
 		s.metrics.Status.Fail()
 		return nil, err
@@ -82,7 +81,7 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 	wg.Add(len(hostRefs))
 	resultChan := make(chan *[]mo.VirtualMachine, len(hostRefs))
 	errChan := make(chan error, len(hostRefs))
-	for _, host := range hostRefs {
+	for _, hostRef := range hostRefs {
 		go func() {
 			t1 := time.Now()
 			client, release, err := s.scraper.clientPool.Acquire()
@@ -96,7 +95,7 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 			m := view.NewManager(client.Client)
 			v, err := m.CreateContainerView(
 				ctx,
-				host,
+				hostRef,
 				[]string{"VirtualMachine"},
 				true,
 			)
@@ -108,7 +107,7 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 
 			var items []mo.VirtualMachine
 			err = v.Retrieve(
-				context.Background(),
+				ctx,
 				[]string{"VirtualMachine"},
 				[]string{
 					"name",
@@ -128,7 +127,8 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 			)
 			t3 := time.Now()
 			if err != nil {
-				errChan <- err
+				msg := fmt.Sprintf("failed to get VMs for %s", hostRef.Value)
+				errChan <- fmt.Errorf(msg+": %w", err)
 			} else {
 				resultChan <- &items
 				s.metrics.ClientWaitTime.Update(t2.Sub(t1))
@@ -175,10 +175,16 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 				}
 			case err := <-errChan:
 				if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-					logger.Error("failed to get vm's from host", "err", err)
+					logger.Error("failed to get vm's for host", "err", err)
 				}
 				s.metrics.Status.Fail()
 			case <-readyChan:
+				close(readyChan)
+				close(resultChan)
+				return
+			case <-ctx.Done():
+				close(readyChan)
+				close(resultChan)
 				return
 			}
 		}
