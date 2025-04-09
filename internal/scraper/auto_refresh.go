@@ -16,6 +16,7 @@ const (
 
 type AutoRefreshSensor struct {
 	refreshInterval time.Duration
+	refreshTimeout  time.Duration
 	sensor          Sensor
 	config          SensorConfig
 	started         *helper.StartedCheck
@@ -28,8 +29,14 @@ func NewAutoRefreshSensor(sensor Sensor, config SensorConfig) *AutoRefreshSensor
 		refreshInterval = 60 * time.Second
 	}
 
+	refreshTimeout := config.RefreshTimeout
+	if refreshTimeout == 0 {
+		refreshTimeout = refreshInterval * RefreshTimeoutFactor
+	}
+
 	return &AutoRefreshSensor{
 		refreshInterval: refreshInterval,
+		refreshTimeout:  refreshTimeout,
 		sensor:          sensor,
 		config:          config,
 		started:         helper.NewStartedCheck(),
@@ -50,39 +57,49 @@ func (o *AutoRefreshSensor) Start(ctx context.Context) error {
 		}
 
 		go func() {
-			refreshFunc := func(refreshCtx context.Context) {
-				err := (o.sensor).Refresh(refreshCtx)
-				if logger, ok := refreshCtx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-					if err == nil {
-						logger.Info("Refresh successfull", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
-					} else {
-						logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+			refreshWithTimeoutFunc := func(refreshCtx context.Context) {
+				ctxWithTimeout, cancel := context.WithTimeout(refreshCtx, o.refreshTimeout)
+				defer cancel()
+
+				doneErr := make(chan error)
+				go func() {
+					doneErr <- (o.sensor).Refresh(ctxWithTimeout)
+				}()
+
+				select {
+				case err := <-doneErr:
+					if logger, ok := ctxWithTimeout.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+						if err == nil {
+							logger.Info("Refresh successfull", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+						} else {
+							logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+						}
+					}
+				case <-ctxWithTimeout.Done():
+					if logger, ok := ctxWithTimeout.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
+						logger.Warn("sensor refresh timeout", "err", err.Error(), "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 					}
 				}
 			}
+
 			ticker := time.NewTicker(o.refreshInterval)
 			for {
-				ctxWithTimeout, cancel := context.WithTimeout(ctx, o.refreshInterval*RefreshTimeoutFactor)
 				select {
 				case <-ticker.C:
-					refreshFunc(ctxWithTimeout)
+					refreshWithTimeoutFunc(ctx)
 				case <-o.triggerRefresh:
-					refreshFunc(ctxWithTimeout)
-				case <-ctxWithTimeout.Done():
 					if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-						msg := fmt.Sprintf("sensor refresh timeout after %dsec", int(o.refreshInterval.Seconds())*RefreshTimeoutFactor)
-						logger.Warn(msg, "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+						logger.Info("trigger instant sensor refresh")
 					}
+					refreshWithTimeoutFunc(ctx)
 				case <-ctx.Done():
 					ticker.Stop()
-					cancel()
 					close(o.triggerRefresh)
 					if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
 						logger.Info("sensor refresh stopped", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 					}
 					return
 				}
-				cancel()
 			}
 		}()
 
