@@ -41,6 +41,7 @@ type SensorConfig struct {
 	Enabled         bool
 	MaxAge          time.Duration
 	RefreshInterval time.Duration
+	RefreshTimeout  time.Duration
 	CleanInterval   time.Duration
 }
 
