@@ -110,7 +110,7 @@ func (o *AutoRefreshSensor) Start(ctx context.Context) error {
 	return nil
 }
 
-func (o *AutoRefreshSensor) TriggerRefresh(ctx context.Context) error {
+func (o *AutoRefreshSensor) TriggerInstantRefresh(ctx context.Context) error {
 	done := make(chan bool)
 	go func() {
 		o.triggerRefresh <- true
@@ -120,10 +120,8 @@ func (o *AutoRefreshSensor) TriggerRefresh(ctx context.Context) error {
 	select {
 	case <-done:
 		return nil
-	case <-time.After(60 * time.Second):
-		return fmt.Errorf("manual refresh timeout")
 	case <-ctx.Done():
-		return fmt.Errorf("manual refresh timeout")
+		return fmt.Errorf("instant refresh timeout")
 	}
 }
 

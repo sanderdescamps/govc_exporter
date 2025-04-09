@@ -32,7 +32,7 @@ type Sensor interface {
 	Match(string) bool
 	Kind() string
 	GetAllJsons() (map[string][]byte, error)
-	TriggerRefresh(context.Context) error
+	TriggerInstantRefresh(context.Context) error
 }
 
 type CleanOnlySensor interface {

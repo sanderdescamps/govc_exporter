@@ -226,7 +226,7 @@ func (c *VCenterScraper) GetSensorRefreshByName(name string) Sensor {
 func (c *VCenterScraper) RefreshSensor(ctx context.Context, names ...string) error {
 	for _, s := range c.SensorList() {
 		if helper.AnyMatch(s, names...) {
-			err := s.TriggerRefresh(ctx)
+			err := s.TriggerInstantRefresh(ctx)
 			if err != nil {
 				return err
 			}

@@ -155,7 +155,7 @@ func (o *OnDemandSensor) WaitTillStartup() {
 	o.started.Wait()
 }
 
-func (o *OnDemandSensor) TriggerRefresh(ctx context.Context) error {
+func (o *OnDemandSensor) TriggerInstantRefresh(ctx context.Context) error {
 	return nil
 }
 
