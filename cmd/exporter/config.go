@@ -146,15 +146,17 @@ func LoadConfig() Config {
 	a.Flag("scraper.vm", "Enable virtualmachine sensor").Default("True").BoolVar(&cfg.ScraperConfig.VirtualMachine.Enabled)
 	a.Flag("scraper.vm.max_age", "time in seconds vm's are cached").Default("2m").DurationVar(&cfg.ScraperConfig.VirtualMachine.MaxAge)
 	a.Flag("scraper.vm.refresh_interval", "interval vm's are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.VirtualMachine.RefreshInterval)
+	a.Flag("scraper.vm.refresh_timeout", "the maximum amount of time a sensor refresh can take. Default is 3 times the refresh_interval").DurationVar(&cfg.ScraperConfig.VirtualMachine.RefreshTimeout)
 	a.Flag("scraper.vm.clean_interval", "interval to clean up old metrics").Default("5s").DurationVar(&cfg.ScraperConfig.VirtualMachine.CleanInterval)
 	a.Flag("collector.vm.legacy", "Collect legacy metrics. Should all be available via scraper.vm.perf").Default("false").BoolVar(&cfg.CollectorConfig.VMLegacyMetrics)
 	a.Flag("collector.vm.disk", "Collect extra vm disk metrics").Default("false").BoolVar(&cfg.CollectorConfig.VMAdvancedStorageMetrics)
 	a.Flag("collector.vm.network", "Collect extra vm network metrics").Default("false").BoolVar(&cfg.CollectorConfig.VMAdvancedNetworkMetrics)
 
-	// scraper.host.perf
+	// scraper.vm.perf
 	a.Flag("scraper.vm.perf", "Enable vm performance metrics").Default("False").BoolVar(&cfg.ScraperConfig.VirtualMachinePerf.Enabled)
 	a.Flag("scraper.vm.perf.max_age", "time in seconds perf metrics are cached").Default("10m").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.MaxAge)
 	a.Flag("scraper.vm.perf.refresh_interval", "perf metrics refresh interval").Default("55s").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.RefreshInterval)
+	a.Flag("scraper.vm.perf.refresh_timeout", "the maximum amount of time a sensor refresh can take. Default is 3 times the refresh_interval").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.RefreshTimeout)
 	a.Flag("scraper.vm.perf.clean_interval", "interval to clean up old metrics").Default("5s").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.CleanInterval)
 	a.Flag("scraper.vm.perf.max_sample_window", "max window metrics are collected").Default("5m").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.MaxSampleWindow)
 	a.Flag("scraper.vm.perf.sample_interval", "time between metrics").Default("20s").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.SampleInterval)

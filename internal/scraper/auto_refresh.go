@@ -67,17 +67,18 @@ func (o *AutoRefreshSensor) Start(ctx context.Context) error {
 				}()
 
 				select {
-				case err := <-doneErr:
+				case refreshErr := <-doneErr:
 					if logger, ok := ctxWithTimeout.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-						if err == nil {
+						if refreshErr == nil {
 							logger.Info("Refresh successfull", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 						} else {
-							logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+							logger.Warn("Failed to refresh sensor", "err", refreshErr.Error(), "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 						}
 					}
 				case <-ctxWithTimeout.Done():
 					if logger, ok := ctxWithTimeout.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-						logger.Warn("sensor refresh timeout", "err", err.Error(), "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+						msg := fmt.Sprintf("sensor refresh timeout after %dsec", int(o.refreshTimeout.Seconds()))
+						logger.Warn(msg, "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 					}
 				}
 			}

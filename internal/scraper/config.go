@@ -49,6 +49,7 @@ type PerfSensorConfig struct {
 	Enabled         bool
 	MaxAge          time.Duration
 	RefreshInterval time.Duration
+	RefreshTimeout  time.Duration
 	CleanInterval   time.Duration
 	MaxSampleWindow time.Duration
 	SampleInterval  time.Duration
@@ -61,6 +62,7 @@ func (c *PerfSensorConfig) SensorConfig() SensorConfig {
 		Enabled:         c.Enabled,
 		MaxAge:          c.MaxAge,
 		RefreshInterval: c.RefreshInterval,
+		RefreshTimeout:  c.RefreshTimeout,
 		CleanInterval:   c.CleanInterval,
 	}
 }
