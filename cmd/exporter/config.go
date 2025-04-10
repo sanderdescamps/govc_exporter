@@ -23,6 +23,10 @@ type Config struct {
 	ScraperConfig      *scraper.Config
 	CollectorConfig    *collector.Config
 	PromlogConfig      *promslog.Config
+
+	// MemoryLimit is the memory limit in MB for the process.
+	// It is set to 0 if not specified.
+	MemoryLimitMB int64
 }
 
 func (c Config) Validate() error {
@@ -53,6 +57,9 @@ func LoadConfig() Config {
 	flag.AddFlags(a, cfg.PromlogConfig)
 	a.Version(version.Print("govc_exporter"))
 	a.HelpFlag.Short('h')
+
+	//Memory
+	a.Flag("memlimit", "Memory (soft) limit in MB. Same as GOMEMLIMIT").Default("2048").Int64Var(&cfg.MemoryLimitMB)
 
 	//web
 	a.Flag("web.listen-address", "Address on which to expose metrics and web interface.").Default(":9752").StringVar(&cfg.ListenAddress)
