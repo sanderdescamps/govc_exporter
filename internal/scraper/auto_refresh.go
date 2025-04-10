@@ -2,6 +2,7 @@ package scraper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -71,6 +72,8 @@ func (o *AutoRefreshSensor) Start(ctx context.Context) error {
 					if logger, ok := ctxWithTimeout.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
 						if refreshErr == nil {
 							logger.Info("Refresh successfull", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
+						} else if errors.Is(refreshErr, ErrSensorAlreadyRunning) {
+							logger.Warn("Sensor already running", "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 						} else {
 							logger.Warn("Failed to refresh sensor", "err", refreshErr.Error(), "sensor_name", o.sensor.Name(), "sensor_kind", o.sensor.Kind())
 						}
