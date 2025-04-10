@@ -47,31 +47,37 @@ func (p *VCenterThrottlePool) Reauthenticate() error {
 	}
 	defer p.clientReAuthLock.Unlock()
 
-	client, release, err := p.ThrottlerPool.Drain()
+	_, release, err := p.ThrottlerPool.Drain()
 	if err != nil {
 		return fmt.Errorf("failed to drain client pool: %w", err)
 	}
 	defer release()
 
-	if client == nil || client.Client == nil {
-		client, err := NewVCenterClient(p.endpoint, p.username, p.password)
-		if err != nil {
-			return err
-		}
-		p.poolObject = client
-	} else {
-		ctx := context.Background()
-		session, err := p.poolObject.SessionManager.UserSession(ctx)
-		if err != nil {
-			return err
-		} else if session == nil {
-			userInfo := url.UserPassword(p.username, p.password)
-			err := p.poolObject.Login(ctx, userInfo)
-			if err != nil {
-				return err
-			}
-		}
+	// if client == nil || client.Client == nil {
+	// 	client, err := NewVCenterClient(p.endpoint, p.username, p.password)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	p.poolObject = client
+	// } else {
+	// 	ctx := context.Background()
+	// 	session, err := p.poolObject.SessionManager.UserSession(ctx)
+	// 	if err != nil {
+	// 		return err
+	// 	} else if session == nil {
+	// 		userInfo := url.UserPassword(p.username, p.password)
+	// 		err := p.poolObject.Login(ctx, userInfo)
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 	}
+	// }
+
+	client, err := NewVCenterClient(p.endpoint, p.username, p.password)
+	if err != nil {
+		return err
 	}
+	p.poolObject = client
 
 	return nil
 }
