@@ -184,6 +184,13 @@ Flags:
       --scraper.on_demand.clean_interval=5s  
                                  interval to clean up old metrics
 ```
+#### GOMEMLIMIT (--memlimit)
+
+This exporter is somewhat atypical, as it stores a significant amount of data in memory. With the default Go garbage collection settings, it is likely to consume a large amount of memory or even run out of memory. To mitigate this, it's important to set the memory limit either via the environment variable `GOMEMLIMIT` or via the `--memlimit` flag. The default is set to 2048MiB, which should be sufficient for environments with up to 3000 VMs.
+
+For more info:
+* https://weaviate.io/blog/gomemlimit-a-game-changer-for-high-memory-applications
+* https://tip.golang.org/doc/gc-guide#Memory_limit
 
 # Get metrics
 
