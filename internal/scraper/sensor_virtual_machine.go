@@ -59,48 +59,19 @@ func (s *VirtualMachineSensor) Refresh(ctx context.Context) error {
 func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine, error) {
 	s.metrics.Status.Reset()
 	var hostRefs []types.ManagedObjectReference
+
 	hostRefs, err := func() ([]types.ManagedObjectReference, error) {
-		resultChan := make(chan *[]types.ManagedObjectReference)
-		quitChan := make(chan bool)
-		go func() {
-			ticker := time.NewTicker(1 * time.Second)
-			for {
-				select {
-				case <-ticker.C:
-					if s.scraper.Host != nil {
-						refs := s.scraper.Host.GetAllRefs()
-						if refs != nil {
-							resultChan <- &refs
-							break
-						}
-						if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-							logger.Info("VM sensor is waiting for hosts")
-						}
-
-					} else {
-						if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-							logger.Info("No host sensor found")
-						}
-					}
-
-				case <-quitChan:
-					return
-				}
-			}
-		}()
-
-		select {
-		case <-time.After(20 * time.Second):
-			quitChan <- true
+		if s.scraper.Host == nil {
 			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-				logger.Warn("Scraper can not request virtual machines without hosts")
-			}
-			return nil, fmt.Errorf("waiting for hosts timeout")
-		case refs := <-resultChan:
-			return *refs, nil
-		}
-	}()
+				logger.Warn("VM sensor cannot operate without host sensor")
 
+			}
+			return nil, fmt.Errorf("no host sensor found")
+		}
+		s.scraper.Host.WaitTillStartup()
+
+		return s.scraper.Host.GetAllRefs(), nil
+	}()
 	if err != nil {
 		s.metrics.Status.Fail()
 		return nil, err
@@ -110,7 +81,7 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 	wg.Add(len(hostRefs))
 	resultChan := make(chan *[]mo.VirtualMachine, len(hostRefs))
 	errChan := make(chan error, len(hostRefs))
-	for _, host := range hostRefs {
+	for _, hostRef := range hostRefs {
 		go func() {
 			t1 := time.Now()
 			client, release, err := s.scraper.clientPool.Acquire()
@@ -124,7 +95,7 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 			m := view.NewManager(client.Client)
 			v, err := m.CreateContainerView(
 				ctx,
-				host,
+				hostRef,
 				[]string{"VirtualMachine"},
 				true,
 			)
@@ -136,7 +107,7 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 
 			var items []mo.VirtualMachine
 			err = v.Retrieve(
-				context.Background(),
+				ctx,
 				[]string{"VirtualMachine"},
 				[]string{
 					"name",
@@ -156,7 +127,8 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 			)
 			t3 := time.Now()
 			if err != nil {
-				errChan <- err
+				msg := fmt.Sprintf("failed to get VMs for %s", hostRef.Value)
+				errChan <- fmt.Errorf(msg+": %w", err)
 			} else {
 				resultChan <- &items
 				s.metrics.ClientWaitTime.Update(t2.Sub(t1))
@@ -203,10 +175,16 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 				}
 			case err := <-errChan:
 				if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-					logger.Error("failed to get vm's from host", "err", err)
+					logger.Error("failed to get vm's for host", "err", err)
 				}
 				s.metrics.Status.Fail()
 			case <-readyChan:
+				close(readyChan)
+				close(resultChan)
+				return
+			case <-ctx.Done():
+				close(readyChan)
+				close(resultChan)
 				return
 			}
 		}

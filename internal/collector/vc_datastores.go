@@ -170,6 +170,15 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 
 		if kind == "vmfs" {
 			if vmfsInfo != nil {
+				var ssd string
+				var local string
+				if vmfsInfo.Ssd != nil {
+					ssd = strconv.FormatBool(*vmfsInfo.Ssd)
+				}
+				if vmfsInfo.Local != nil {
+					local = strconv.FormatBool(*vmfsInfo.Local)
+				}
+
 				vmfsLabelValues := append(
 					labelValues,
 					vmfsInfo.Uuid,
@@ -179,8 +188,8 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 						}
 						return ""
 					}(),
-					strconv.FormatBool(*vmfsInfo.Ssd),
-					strconv.FormatBool(*vmfsInfo.Local),
+					ssd,
+					local,
 				)
 				ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
 					c.vmfsInfo, prometheus.GaugeValue, 1, vmfsLabelValues...,

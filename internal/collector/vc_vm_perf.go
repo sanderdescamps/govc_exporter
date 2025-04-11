@@ -43,12 +43,16 @@ func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 
 	for _, ref := range c.scraper.VM.GetAllRefs() {
 		vm := c.scraper.VM.Get(ref)
+		if vm == nil {
+			continue
+		}
 
 		extraLabelValues := func() []string {
 			result := []string{}
 
 			for _, tagCat := range c.extraLabels {
 				tag := c.scraper.Tags.GetTag(vm.Self, tagCat)
+
 				if tag != nil {
 					result = append(result, tag.Name)
 				} else {

@@ -6,9 +6,9 @@ import (
 	"log"
 	"net"
 	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/prometheus/common/promslog"
@@ -46,7 +46,13 @@ func run() {
 
 	logger := promslog.New(config.PromlogConfig)
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
-	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "user", version.BuildUser, "date", version.BuildDate, "tags", version.GetTags())
+	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "date", version.BuildDate, "tags", version.GetTags())
+
+	if os.Getenv("GOMEMLIMIT") == "" && config.MemoryLimitMB > 0 {
+		logger.Debug(fmt.Sprintf("Set memory limit to %dMiB", config.MemoryLimitMB))
+		debug.SetMemoryLimit(config.MemoryLimitMB * 1 << 20)
+	}
+	logger.Debug(fmt.Sprintf("Memory limit set to %dMiB", debug.SetMemoryLimit(-1)*1>>20))
 
 	//Scraper
 	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
@@ -97,5 +103,5 @@ func run() {
 
 	scrap.Stop(ctx)
 	logger.Info("Shutdown complete.")
-	os.Exit(0)
+	// os.Exit(0)
 }

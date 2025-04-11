@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/common/promslog/flag"
 	"github.com/prometheus/common/version"
 	"github.com/sanderdescamps/govc_exporter/internal/collector"
+	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -22,6 +23,10 @@ type Config struct {
 	ScraperConfig      *scraper.Config
 	CollectorConfig    *collector.Config
 	PromlogConfig      *promslog.Config
+
+	// MemoryLimit is the memory limit in MB for the process.
+	// It is set to 0 if not specified.
+	MemoryLimitMB int64
 }
 
 func (c Config) Validate() error {
@@ -52,6 +57,9 @@ func LoadConfig() Config {
 	flag.AddFlags(a, cfg.PromlogConfig)
 	a.Version(version.Print("govc_exporter"))
 	a.HelpFlag.Short('h')
+
+	//Memory
+	a.Flag("memlimit", "Memory (soft) limit in MB. Same as GOMEMLIMIT").Default("2048").Int64Var(&cfg.MemoryLimitMB)
 
 	//web
 	a.Flag("web.listen-address", "Address on which to expose metrics and web interface.").Default(":9752").StringVar(&cfg.ListenAddress)
@@ -84,7 +92,7 @@ func LoadConfig() Config {
 	a.Flag("collector.vm.tag_label", "List of vmware tag categories to collect which will be added as label in metrics").StringsVar(&cfg.CollectorConfig.VMTagLabels)
 
 	//scraper
-	a.Flag("scraper.vc.url", "vc api username").Envar("VC_URL").Required().StringVar(&cfg.ScraperConfig.Endpoint)
+	a.Flag("scraper.vc.url", "vc api username").Envar("VC_URL").Required().StringVar(&cfg.ScraperConfig.VCenter)
 	a.Flag("scraper.vc.username", "vc api username").Envar("VC_USERNAME").Required().StringVar(&cfg.ScraperConfig.Username)
 	a.Flag("scraper.vc.password", "vc api password").Envar("VC_PASSWORD").Required().StringVar(&cfg.ScraperConfig.Password)
 	a.Flag("scraper.client_pool_size", "number of simultanious requests to vCenter api").Default("5").IntVar(&cfg.ScraperConfig.ClientPoolSize)
@@ -145,15 +153,17 @@ func LoadConfig() Config {
 	a.Flag("scraper.vm", "Enable virtualmachine sensor").Default("True").BoolVar(&cfg.ScraperConfig.VirtualMachine.Enabled)
 	a.Flag("scraper.vm.max_age", "time in seconds vm's are cached").Default("2m").DurationVar(&cfg.ScraperConfig.VirtualMachine.MaxAge)
 	a.Flag("scraper.vm.refresh_interval", "interval vm's are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.VirtualMachine.RefreshInterval)
+	a.Flag("scraper.vm.refresh_timeout", "the maximum amount of time a sensor refresh can take. Default is 3 times the refresh_interval").DurationVar(&cfg.ScraperConfig.VirtualMachine.RefreshTimeout)
 	a.Flag("scraper.vm.clean_interval", "interval to clean up old metrics").Default("5s").DurationVar(&cfg.ScraperConfig.VirtualMachine.CleanInterval)
 	a.Flag("collector.vm.legacy", "Collect legacy metrics. Should all be available via scraper.vm.perf").Default("false").BoolVar(&cfg.CollectorConfig.VMLegacyMetrics)
 	a.Flag("collector.vm.disk", "Collect extra vm disk metrics").Default("false").BoolVar(&cfg.CollectorConfig.VMAdvancedStorageMetrics)
 	a.Flag("collector.vm.network", "Collect extra vm network metrics").Default("false").BoolVar(&cfg.CollectorConfig.VMAdvancedNetworkMetrics)
 
-	// scraper.host.perf
+	// scraper.vm.perf
 	a.Flag("scraper.vm.perf", "Enable vm performance metrics").Default("False").BoolVar(&cfg.ScraperConfig.VirtualMachinePerf.Enabled)
 	a.Flag("scraper.vm.perf.max_age", "time in seconds perf metrics are cached").Default("10m").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.MaxAge)
 	a.Flag("scraper.vm.perf.refresh_interval", "perf metrics refresh interval").Default("55s").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.RefreshInterval)
+	a.Flag("scraper.vm.perf.refresh_timeout", "the maximum amount of time a sensor refresh can take. Default is 3 times the refresh_interval").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.RefreshTimeout)
 	a.Flag("scraper.vm.perf.clean_interval", "interval to clean up old metrics").Default("5s").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.CleanInterval)
 	a.Flag("scraper.vm.perf.max_sample_window", "max window metrics are collected").Default("5m").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.MaxSampleWindow)
 	a.Flag("scraper.vm.perf.sample_interval", "time between metrics").Default("20s").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.SampleInterval)
@@ -170,14 +180,14 @@ func LoadConfig() Config {
 		os.Exit(2)
 	}
 
-	cfg.ScraperConfig.Tags.CategoryToCollect = dedup(mergeLists(
+	cfg.ScraperConfig.Tags.CategoryToCollect = helper.Union(
 		cfg.CollectorConfig.ClusterTagLabels,
 		cfg.CollectorConfig.DatastoreTagLabels,
 		cfg.CollectorConfig.HostTagLabels,
 		cfg.CollectorConfig.ResourcePoolTagLabels,
 		cfg.CollectorConfig.StoragePodTagLabels,
 		cfg.CollectorConfig.VMTagLabels,
-	))
+	)
 
 	return cfg
 }

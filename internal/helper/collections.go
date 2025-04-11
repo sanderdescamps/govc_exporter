@@ -36,8 +36,16 @@ func Subtract[T comparable](a []T, b []T) []T {
 	return diff
 }
 
-func Union[T comparable](a []T, b []T) []T {
-	return Dedup(append(a, b...))
+// Union returns the union of all slices in a
+// It is commutative, i.e. Union(a, b) == Union(b, a)
+// It is not guaranteed that the order of the elements in the result is the same as in the input slices
+// The result is deduplicated
+func Union[T comparable](a ...[]T) []T {
+	elements := make([]T, 0)
+	for _, slice := range a {
+		elements = append(elements, slice...)
+	}
+	return Dedup(elements)
 }
 
 func Intersect[T comparable](a []T, b []T) []T {

@@ -31,7 +31,7 @@ func (q *TimeQueue[T]) Len() int {
 	return len(q.queue)
 }
 
-func (q *TimeQueue[T]) insert(obj QueueObj[T]) {
+func (q *TimeQueue[T]) insert(obj *QueueObj[T]) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	if q.queue == nil {
@@ -40,7 +40,7 @@ func (q *TimeQueue[T]) insert(obj QueueObj[T]) {
 	q.queue = append(q.queue, nil)
 	i := sort.Search(len(q.queue), func(i int) bool { return q.queue[i] == nil || obj.Timestamp.Before(q.queue[i].Timestamp) })
 	copy(q.queue[i+1:], q.queue[i:])
-	q.queue[i] = &obj
+	q.queue[i] = obj
 }
 
 func (q *TimeQueue[T]) pop() (time.Time, *T) {
@@ -53,7 +53,7 @@ func (q *TimeQueue[T]) pop() (time.Time, *T) {
 }
 
 func (q *TimeQueue[T]) Add(timestamp time.Time, obj *T) {
-	q.insert(QueueObj[T]{
+	q.insert(&QueueObj[T]{
 		Timestamp: timestamp,
 		Obj:       obj,
 	})
