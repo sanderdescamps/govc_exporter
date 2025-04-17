@@ -51,7 +51,7 @@ type BaseSensor[K comparable, T any | mo.ManagedEntity] struct {
 	cache         map[K]*CacheItem[T]
 	scraper       *VCenterScraper
 
-	lock       sync.Mutex
+	lock       sync.RWMutex
 	sensorLock sync.Mutex
 	metrics    struct {
 		QueryTime      *SensorMetricDuration
@@ -87,8 +87,8 @@ func (s *BaseSensor[K, T]) Clean(ctx context.Context, maxAge time.Duration) {
 }
 
 func (s *BaseSensor[K, T]) Get(ref K) *T {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 	if o, ok := s.cache[ref]; ok {
 		return o.Item
 	}
@@ -97,8 +97,8 @@ func (s *BaseSensor[K, T]) Get(ref K) *T {
 
 func (s *BaseSensor[K, T]) GetAll() []*T {
 	result := []*T{}
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 	for _, v := range s.cache {
 		result = append(result, v.Item)
 	}
@@ -112,8 +112,8 @@ type TimeData[T any] struct {
 
 func (s *BaseSensor[K, T]) GetAllSnapshots() []Snapshot[T] {
 	result := []Snapshot[T]{}
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 	for _, v := range s.cache {
 		result = append(result, v.ToSnapshot())
 	}
@@ -122,8 +122,8 @@ func (s *BaseSensor[K, T]) GetAllSnapshots() []Snapshot[T] {
 
 func (s *BaseSensor[K, T]) GetAllRefs() []K {
 	result := []K{}
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 	if len(s.cache) == 0 {
 		return nil
 	}
@@ -145,8 +145,8 @@ func (s *BaseSensor[K, T]) Update(ref K, item *T) {
 
 func (s *BaseSensor[K, T]) GetAllJsons() (map[string][]byte, error) {
 	result := map[string][]byte{}
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 	for i, cacheItem := range s.cache {
 		name := ""
 		key := reflect.ValueOf(i).Interface()
