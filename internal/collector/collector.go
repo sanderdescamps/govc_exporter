@@ -52,8 +52,8 @@ func NewVCCollector(ctx context.Context, conf *Config, scraper *scraper.VCenterS
 	}
 }
 
-func (c *VCCollector) GetMetricHandler() func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (c *VCCollector) GetMetricHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		params := r.URL.Query()
 
@@ -120,11 +120,11 @@ func (c *VCCollector) GetMetricHandler() func(w http.ResponseWriter, r *http.Req
 			MaxRequestsInFlight: c.conf.MaxRequests,
 		})
 		h.ServeHTTP(w, r)
-	}
+	})
 }
 
-func (c *VCCollector) GetRefreshHandler() func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (c *VCCollector) GetRefreshHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		sensorReq := r.PathValue("sensor")
 
@@ -189,11 +189,11 @@ func (c *VCCollector) GetRefreshHandler() func(w http.ResponseWriter, r *http.Re
 				"status": http.StatusBadRequest,
 			})
 		}
-	}
+	})
 }
 
-func (c *VCCollector) GetDumpHandler() func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (c *VCCollector) GetDumpHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		include := []string{}
 		sensorReq := r.PathValue("sensor")
@@ -296,5 +296,5 @@ func (c *VCCollector) GetDumpHandler() func(w http.ResponseWriter, r *http.Reque
 		if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
 			logger.Info(fmt.Sprintf("Dump successful. Check %s for results", dirPath))
 		}
-	}
+	})
 }
