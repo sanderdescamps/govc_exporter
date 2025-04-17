@@ -2,6 +2,7 @@ package timequeue_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,5 +56,30 @@ func TestTimeQueue_PopOlderOrEqualThan(t *testing.T) {
 			continue
 		}
 		break
+	}
+}
+
+func TestTimeQueue_PopAllItems(t *testing.T) {
+	q := timequeue.TimeQueue[string]{}
+	items := []string{"first", "second", "third", "fourth"}
+	q.Add(time.Now().Add(5*time.Second), &items[0])
+	q.Add(time.Now().Add(7*time.Second), &items[2])
+	q.Add(time.Now().Add(6*time.Second), &items[1])
+	q.Add(time.Now().Add(8*time.Second), &items[3])
+
+	go func() {
+		for i := 0; i < 100; i++ {
+			item := fmt.Sprintf("item: %d (%d)", i, time.Now().UnixNano())
+			q.Add(time.Now().Add(time.Duration(i)*time.Second), &item)
+		}
+	}()
+	time.Sleep(200 * time.Microsecond)
+	for i := range q.PopAllItems() {
+		fmt.Printf("%s\n", *i)
+	}
+	fmt.Print(strings.Repeat("-", 50) + "\n")
+	time.Sleep(1 * time.Second)
+	for i := range q.PopAllItems() {
+		fmt.Printf("%s\n", *i)
 	}
 }

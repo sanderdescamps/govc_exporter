@@ -62,7 +62,7 @@ func (c *esxPerfCollector) Collect(ch chan<- prometheus.Metric) {
 		labelValues := []string{me2id(host.ManagedEntity), host.Name, parentChain.DC, parentChain.Cluster}
 		labelValues = append(labelValues, extraLabelValues...)
 
-		for _, metric := range c.scraper.HostPerf.PopAll(ref) {
+		for metric := range c.scraper.HostPerf.PopAllItems(ref) {
 			perfMetricLabelValues := append(labelValues, metric.Name, metric.Unit)
 			ch <- prometheus.NewMetricWithTimestamp(metric.TimeStamp, prometheus.MustNewConstMetric(
 				c.perfMetric, prometheus.GaugeValue, metric.Value, perfMetricLabelValues...,
