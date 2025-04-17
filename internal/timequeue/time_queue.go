@@ -2,6 +2,7 @@ package timequeue
 
 import (
 	"encoding/json"
+	"iter"
 	"sort"
 	"sync"
 	"time"
@@ -52,6 +53,17 @@ func (q *TimeQueue[T]) pop() (time.Time, *T) {
 	return time.Time{}, nil
 }
 
+func (q *TimeQueue[T]) PopAllItems() iter.Seq[*T] {
+	return func(yield func(*T) bool) {
+		items := q.PopAll()
+		for _, v := range items {
+			if !yield(v.Obj) {
+				return
+			}
+		}
+	}
+}
+
 func (q *TimeQueue[T]) Add(timestamp time.Time, obj *T) {
 	q.insert(&QueueObj[T]{
 		Timestamp: timestamp,
@@ -60,6 +72,8 @@ func (q *TimeQueue[T]) Add(timestamp time.Time, obj *T) {
 }
 
 func (q *TimeQueue[T]) Pop() (time.Time, *T) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
 	return q.pop()
 }
 

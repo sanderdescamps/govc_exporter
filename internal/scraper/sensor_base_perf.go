@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log/slog"
 	"sync"
 	"time"
@@ -68,6 +69,13 @@ func (s *BasePerfSensor) Clean(ctx context.Context, maxAge time.Duration) {
 func (s *BasePerfSensor) PopAll(ref types.ManagedObjectReference) []*Metric {
 	if perfMetrics, ok := s.perfMetrics[ref]; ok {
 		return perfMetrics.PopAll()
+	}
+	return nil
+}
+
+func (s *BasePerfSensor) PopAllItems(ref types.ManagedObjectReference) iter.Seq[*Metric] {
+	if perfMetrics, ok := s.perfMetrics[ref]; ok {
+		return perfMetrics.PopAllItems()
 	}
 	return nil
 }
