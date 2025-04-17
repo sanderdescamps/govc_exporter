@@ -18,8 +18,8 @@ import (
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
-func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func defaultHandler(metricsPath string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
 			<head><title>govc Exporter</title></head>
 			<body>
@@ -27,7 +27,7 @@ func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Requ
 			<p><a href="` + metricsPath + `">Metrics</a></p>
 			</body>
 			</html>`))
-	}
+	})
 }
 
 func main() {
@@ -79,15 +79,16 @@ func run() {
 		},
 	}
 
-	http.HandleFunc(config.MetricPath, coll.GetMetricHandler())
+	http.Handle(config.MetricPath, coll.GetMetricHandler())
+	// http.Handle("/pprof/metrics", coll.GetMetricHandlerCPUPProf("metrics"))
 	if config.AllowManualRefresh {
-		http.HandleFunc("/refresh/{sensor}", coll.GetRefreshHandler())
+		http.Handle("/refresh/{sensor}", coll.GetRefreshHandler())
 	}
 	if config.AllowDumps {
-		http.HandleFunc("/dump", coll.GetDumpHandler())
-		http.HandleFunc("/dump/{sensor}", coll.GetDumpHandler())
+		http.Handle("/dump", coll.GetDumpHandler())
+		http.Handle("/dump/{sensor}", coll.GetDumpHandler())
 	}
-	http.HandleFunc("/", defaultHandler(config.MetricPath))
+	http.Handle("/", defaultHandler(config.MetricPath))
 
 	// make it a goroutine
 	go server.ListenAndServe()
@@ -96,12 +97,30 @@ func run() {
 	// listen for the interrupt signal
 	<-ctx.Done()
 
+	stopCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	shutdown := make(chan error)
+
 	// stop the server
-	if err := server.Shutdown(context.Background()); err != nil {
-		log.Fatalf("could not shutdown: %v\n", err)
+	go func() {
+		err := server.Shutdown(stopCtx)
+		if err != nil {
+			shutdown <- err
+		}
+		scrap.Stop(ctx)
+		shutdown <- nil
+	}()
+	select {
+	case err := <-shutdown:
+		if err != nil {
+			log.Fatalf("could not shutdown: %v\n", err)
+			os.Exit(1)
+		}
+	case err := <-stopCtx.Done():
+		log.Fatalf("shutdown timeout: %v\n", err)
+		os.Exit(1)
 	}
 
-	scrap.Stop(ctx)
 	logger.Info("Shutdown complete.")
-	// os.Exit(0)
 }
