@@ -183,7 +183,9 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 				close(resultChan)
 				return
 			case <-ctx.Done():
-				close(readyChan)
+				if readyChan != nil {
+					close(readyChan)
+				}
 				close(resultChan)
 				return
 			}
