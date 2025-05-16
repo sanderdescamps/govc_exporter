@@ -51,6 +51,10 @@ func (s *HostSensor) Refresh(ctx context.Context) error {
 	}
 
 	for _, entity := range entities {
+		// set some unused parts of the object to nil to reduse memory usage
+		entity.Summary.Hardware.OtherIdentifyingInfo = nil
+		entity.Summary.Runtime = nil
+		entity.Config = nil
 		s.Update(entity.Self, &entity)
 	}
 
