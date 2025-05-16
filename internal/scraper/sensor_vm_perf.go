@@ -60,9 +60,7 @@ func (s *VMPerfSensor) Refresh(ctx context.Context) error {
 		if _, ok := s.perfMetrics[entity]; !ok {
 			s.perfMetrics[entity] = NewMetricQueue()
 		}
-		for _, metric := range EntityMetricToMetric(metricSerie) {
-			s.perfMetrics[entity].Add(metric)
-		}
+		s.perfMetrics[entity].Add(EntityMetricToMetric(metricSerie)...)
 	}
 	return nil
 }

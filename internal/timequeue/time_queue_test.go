@@ -3,24 +3,43 @@ package timequeue_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	timequeue "github.com/sanderdescamps/govc_exporter/internal/timequeue"
 )
 
+type TestItem struct {
+	Name      string
+	timestamp time.Time
+}
+
+func NewTestItem(name string) *TestItem {
+	return &TestItem{Name: name, timestamp: time.Now()}
+}
+
+func (t TestItem) Timestamp() time.Time {
+	return time.Now()
+}
+
 func TestTimeQueue_Pop(t *testing.T) {
-	q := timequeue.TimeQueue[string]{}
-	items := []string{"first", "second", "third", "fourth"}
-	q.Add(time.Now().Add(5*time.Second), &items[0])
-	q.Add(time.Now().Add(7*time.Second), &items[2])
-	q.Add(time.Now().Add(6*time.Second), &items[1])
-	q.Add(time.Now().Add(8*time.Second), &items[3])
+	q := timequeue.TimeQueue[TestItem]{}
+	items := []*TestItem{
+		NewTestItem("first"),
+		NewTestItem("second"),
+		NewTestItem("third"),
+		NewTestItem("fourth"),
+	}
+	q.Add(items[0])
+	q.Add(items[2])
+	q.Add(items[1])
+	q.Add(items[3])
 
 	for {
-		timestamp, item := q.Pop()
+		item := q.Pop()
 		if item != nil {
-			fmt.Printf("%s -> %s\n", timestamp.String(), *item)
+			fmt.Printf("%s -> %s\n", item.Timestamp().String(), item.Name)
 			continue
 		}
 		break
@@ -29,14 +48,19 @@ func TestTimeQueue_Pop(t *testing.T) {
 }
 
 func TestTimeQueue_PopOlderOrEqualThan(t *testing.T) {
-	q := timequeue.TimeQueue[string]{}
-	items := []string{"first", "second", "third", "fourth"}
-	now := time.Now()
-	q.Add(now.Add(5*time.Second), &items[0])
-	q.Add(now.Add(7*time.Second), &items[2])
-	q.Add(now.Add(6*time.Second), &items[1])
-	q.Add(now.Add(8*time.Second), &items[3])
+	q := timequeue.TimeQueue[TestItem]{}
+	items := []*TestItem{
+		NewTestItem("first"),
+		NewTestItem("second"),
+		NewTestItem("third"),
+		NewTestItem("fourth"),
+	}
+	q.Add(items[0])
+	q.Add(items[2])
+	q.Add(items[1])
+	q.Add(items[3])
 
+	now := time.Now()
 	older := q.PopOlderOrEqualThan(now.Add(6 * time.Second))
 	if len(older) != 2 {
 		t.Fatalf("Incorrect number of items popped from queue")
@@ -46,13 +70,13 @@ func TestTimeQueue_PopOlderOrEqualThan(t *testing.T) {
 		t.Fatalf("Incorrect number of items remaining in queue")
 	}
 	for _, obj := range older {
-		t.Logf("POP %s -> %s\n", obj.Timestamp.String(), *obj.Obj)
+		t.Logf("POP %s -> %s\n", obj.Timestamp().String(), obj.Name)
 	}
 
 	for {
-		timestamp, item := q.Pop()
+		item := q.Pop()
 		if item != nil {
-			t.Logf("REMAIN %s -> %s\n", timestamp.String(), *item)
+			t.Logf("REMAIN %s -> %s\n", item.Timestamp().String(), item.Name)
 			continue
 		}
 		break
@@ -60,26 +84,36 @@ func TestTimeQueue_PopOlderOrEqualThan(t *testing.T) {
 }
 
 func TestTimeQueue_PopAllItems(t *testing.T) {
-	q := timequeue.TimeQueue[string]{}
-	items := []string{"first", "second", "third", "fourth"}
-	q.Add(time.Now().Add(5*time.Second), &items[0])
-	q.Add(time.Now().Add(7*time.Second), &items[2])
-	q.Add(time.Now().Add(6*time.Second), &items[1])
-	q.Add(time.Now().Add(8*time.Second), &items[3])
+	q := timequeue.TimeQueue[TestItem]{}
 
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
 		for i := 0; i < 100; i++ {
-			item := fmt.Sprintf("item: %d (%d)", i, time.Now().UnixNano())
-			q.Add(time.Now().Add(time.Duration(i)*time.Second), &item)
+			time.Sleep(5 * time.Microsecond)
+			item := fmt.Sprintf("worker 1.%d", i)
+			q.Add(NewTestItem(item))
 		}
+		wg.Done()
 	}()
-	time.Sleep(200 * time.Microsecond)
+	wg.Add(1)
+	go func() {
+		for i := 0; i < 100; i++ {
+			time.Sleep(5 * time.Microsecond)
+			item := fmt.Sprintf("worker 2.%d", i)
+			q.Add(NewTestItem(item))
+		}
+		wg.Done()
+	}()
+
+	time.Sleep(100 * time.Microsecond)
 	for i := range q.PopAllItems() {
-		fmt.Printf("%s\n", *i)
+		fmt.Printf("%s\n", i.Name)
 	}
+
+	wg.Wait()
 	fmt.Print(strings.Repeat("-", 50) + "\n")
-	time.Sleep(1 * time.Second)
 	for i := range q.PopAllItems() {
-		fmt.Printf("%s\n", *i)
+		fmt.Printf("%s\n", i.Name)
 	}
 }

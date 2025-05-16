@@ -16,19 +16,19 @@ type Metric struct {
 	Unit      string                       `json:"unit"`
 	Instance  string                       `json:"instance"`
 	Value     float64                      `json:"value"`
-	TimeStamp time.Time                    `json:"time_stamp"`
+	timeStamp time.Time                    `json:"time_stamp"`
 }
 
-func (m Metric) GetTimestamp() time.Time {
-	return m.TimeStamp
+func (m Metric) Timestamp() time.Time {
+	return m.timeStamp
 }
 
-func EntityMetricToMetric(entiry performance.EntityMetric) []Metric {
-	result := []Metric{}
+func EntityMetricToMetric(entiry performance.EntityMetric) []*Metric {
+	result := []*Metric{}
 	for id, sample := range entiry.SampleInfo {
 		for _, entityValue := range entiry.Value {
 			result = append(result,
-				Metric{
+				&Metric{
 					Ref:      entiry.Entity,
 					Name:     entityValue.Name,
 					Unit:     entityValue.Unit,
@@ -43,7 +43,7 @@ func EntityMetricToMetric(entiry performance.EntityMetric) []Metric {
 						}
 						return 0
 					}(),
-					TimeStamp: sample.Timestamp,
+					timeStamp: sample.Timestamp,
 				},
 			)
 		}

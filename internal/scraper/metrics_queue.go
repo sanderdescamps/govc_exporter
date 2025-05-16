@@ -4,8 +4,8 @@ import (
 	"github.com/sanderdescamps/govc_exporter/internal/timequeue"
 )
 
-type MetricQueue = timequeue.EventQueue[Metric]
+type MetricQueue = timequeue.TimeQueue[Metric]
 
 func NewMetricQueue() *MetricQueue {
-	return timequeue.NewEventQueue[Metric]()
+	return timequeue.NewTimeQueue[Metric]()
 }

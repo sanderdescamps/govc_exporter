@@ -8,19 +8,20 @@ import (
 	"time"
 )
 
-type QueueObj[T any] struct {
-	Timestamp time.Time `json:"time_stamp"`
-	Obj       *T        `json:"obj"`
+type TimeQueue[T Event] struct {
+	lock  sync.RWMutex
+	queue []*T
 }
 
-type TimeQueue[T any] struct {
-	lock  sync.RWMutex
-	queue []*QueueObj[T] `json:"queue"`
+func NewTimeQueue[T Event]() *TimeQueue[T] {
+	return &TimeQueue[T]{
+		queue: []*T{},
+	}
 }
 
 func (q *TimeQueue[T]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
-		Queue []*QueueObj[T] `json:"queue"`
+		Queue []*T `json:"queue"`
 	}{
 		Queue: q.queue,
 	})
@@ -32,62 +33,58 @@ func (q *TimeQueue[T]) Len() int {
 	return len(q.queue)
 }
 
-func (q *TimeQueue[T]) insert(obj *QueueObj[T]) {
+func (q *TimeQueue[T]) Add(objs ...*T) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	if q.queue == nil {
-		q.queue = []*QueueObj[T]{}
-	}
-	q.queue = append(q.queue, nil)
-	i := sort.Search(len(q.queue), func(i int) bool { return q.queue[i] == nil || obj.Timestamp.Before(q.queue[i].Timestamp) })
-	copy(q.queue[i+1:], q.queue[i:])
-	q.queue[i] = obj
+	q.insert(objs...)
 }
 
-func (q *TimeQueue[T]) pop() (time.Time, *T) {
+func (q *TimeQueue[T]) insert(objs ...*T) {
+	if q.queue == nil {
+		q.queue = []*T{}
+	}
+	for _, obj := range objs {
+		if obj == nil {
+			continue
+		}
+		q.queue = append(q.queue, nil)
+		i := sort.Search(len(q.queue), func(i int) bool { return q.queue[i] == nil || (*obj).Timestamp().Before((*q.queue[i]).Timestamp()) })
+		copy(q.queue[i+1:], q.queue[i:])
+		q.queue[i] = obj
+	}
+}
+
+func (q *TimeQueue[T]) pop() *T {
 	if len(q.queue) > 0 {
 		first, new_queue := q.queue[0], q.queue[1:]
 		q.queue = new_queue
-		return first.Timestamp, first.Obj
+		return first
 	}
-	return time.Time{}, nil
+	return nil
 }
 
-func (q *TimeQueue[T]) PopAllItems() iter.Seq[*T] {
-	return func(yield func(*T) bool) {
-		items := q.PopAll()
-		for _, v := range items {
-			if !yield(v.Obj) {
-				return
-			}
-		}
-	}
+// Empty the queue and return a popper function with all the items
+func (q *TimeQueue[T]) popAll() []*T {
+	dump := q.queue
+	q.queue = nil
+
+	return dump
 }
 
-func (q *TimeQueue[T]) Add(timestamp time.Time, obj *T) {
-	q.insert(&QueueObj[T]{
-		Timestamp: timestamp,
-		Obj:       obj,
-	})
-}
-
-func (q *TimeQueue[T]) Pop() (time.Time, *T) {
+func (q *TimeQueue[T]) Pop() *T {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	return q.pop()
 }
 
 // Empty the queue and return a popper function with all the items
-func (q *TimeQueue[T]) PopAll() []*QueueObj[T] {
+func (q *TimeQueue[T]) PopAll() []*T {
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	queueCopy := q.queue
-	q.queue = nil
-
-	return queueCopy
+	return q.popAll()
 }
 
-func (q *TimeQueue[T]) PopOlderOrEqualThan(t time.Time) []*QueueObj[T] {
+func (q *TimeQueue[T]) PopOlderOrEqualThan(t time.Time) []*T {
 	if len(q.queue) == 0 {
 		return nil
 	}
@@ -95,7 +92,7 @@ func (q *TimeQueue[T]) PopOlderOrEqualThan(t time.Time) []*QueueObj[T] {
 	i := func() int {
 		q.lock.RLock()
 		defer q.lock.RUnlock()
-		return sort.Search(len(q.queue), func(i int) bool { return t.Before(q.queue[i].Timestamp) })
+		return sort.Search(len(q.queue), func(i int) bool { return t.Before((*q.queue[i]).Timestamp()) })
 	}()
 
 	q.lock.Lock()
@@ -105,4 +102,15 @@ func (q *TimeQueue[T]) PopOlderOrEqualThan(t time.Time) []*QueueObj[T] {
 	q.queue = younger
 
 	return older
+}
+
+func (q *TimeQueue[T]) PopAllItems() iter.Seq[*T] {
+	return func(yield func(*T) bool) {
+		items := q.PopAll()
+		for _, v := range items {
+			if !yield(v) {
+				return
+			}
+		}
+	}
 }

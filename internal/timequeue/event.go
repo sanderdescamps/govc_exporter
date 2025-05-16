@@ -3,5 +3,5 @@ package timequeue
 import "time"
 
 type Event interface {
-	GetTimestamp() time.Time
+	Timestamp() time.Time
 }
