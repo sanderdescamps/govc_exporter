@@ -9,7 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"runtime/pprof"
+	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/common/promslog"
 
@@ -31,12 +34,29 @@ func defaultHandler(metricsPath string) http.Handler {
 }
 
 func main() {
-	run()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	if cpuPProf := os.Getenv("CPU_PPROF"); cpuPProf != "" {
+		if pprofEnabled, err := strconv.ParseBool(cpuPProf); err == nil && pprofEnabled {
+
+			pprofFile, err := createPProfFile("global-CPU")
+			if err != nil {
+				panic(err)
+			}
+			defer pprofFile.Close()
+
+			if err := pprof.StartCPUProfile(pprofFile); err != nil {
+				panic(err)
+			}
+			defer pprof.StopCPUProfile()
+		}
+
+	}
+	run(ctx)
 }
 
-func run() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
+func run(ctx context.Context) {
 
 	config := LoadConfig()
 	if err := config.Validate(); err != nil {

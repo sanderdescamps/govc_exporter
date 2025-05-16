@@ -4,11 +4,15 @@ import (
 	"time"
 )
 
-type EventQueue[T Event] struct {
+type EventQueue[T interface {
+	GetTimestamp() time.Time
+}] struct {
 	TimeQueue[T]
 }
 
-func NewEventQueue[T Event]() *EventQueue[T] {
+func NewEventQueue[T interface {
+	GetTimestamp() time.Time
+}]() *EventQueue[T] {
 	return &EventQueue[T]{
 		TimeQueue: TimeQueue[T]{},
 	}

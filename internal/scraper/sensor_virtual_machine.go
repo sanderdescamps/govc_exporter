@@ -126,6 +126,20 @@ func (s *VirtualMachineSensor) vmQuery(ctx context.Context) ([]mo.VirtualMachine
 				&items,
 			)
 			t3 := time.Now()
+
+			// Remove some unused parts of the object to reduse memory usage
+			for _, item := range items {
+				item.AvailableField = nil
+				item.ConfigIssue = nil
+				item.EffectiveRole = nil
+				item.DisabledMethod = nil
+				item.DeclaredAlarmState = nil
+				item.Layout = nil
+				item.Config.ExtraConfig = nil
+				item.Runtime.FeatureRequirement = nil
+				item.Config.Hardware.Device = nil
+			}
+
 			if err != nil {
 				msg := fmt.Sprintf("failed to get VMs for %s", hostRef.Value)
 				errChan <- fmt.Errorf(msg+": %w", err)
