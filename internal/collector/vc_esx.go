@@ -189,8 +189,8 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 
 		parentChain := c.scraper.GetParentChain(h.Self)
 
-		powerState := ConvertHostSystemPowerStateToValue(summary.Runtime.PowerState)
-		connState := ConvertHostSystemConnectionStateToValue(summary.Runtime.ConnectionState)
+		powerState := ConvertHostSystemPowerStateToValue(h.Runtime.PowerState)
+		connState := ConvertHostSystemConnectionStateToValue(h.Runtime.ConnectionState)
 		maintenance := b2f(h.Runtime.InMaintenanceMode)
 		extraLabelValues := func() []string {
 			result := []string{}

@@ -73,6 +73,9 @@ func NewBaseSensor[K comparable, T any | mo.ManagedEntity](name string, kind str
 func (s *BaseSensor[K, T]) Clean(ctx context.Context, maxAge time.Duration) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if len(s.cache) < 1 {
+		return
+	}
 	cleanupCount := 0
 	for k, v := range s.cache {
 		if v.Expired(maxAge) {
@@ -83,10 +86,11 @@ func (s *BaseSensor[K, T]) Clean(ctx context.Context, maxAge time.Duration) {
 
 	if cleanupCount > 0 {
 		if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-			msg := fmt.Sprintf("Clean %s objects from sensor cache", cleanupCount)
+			msg := fmt.Sprintf("Clean %d objects from sensor cache", cleanupCount)
 			logger.Debug(msg, "kind", s.Kind())
 		}
 	}
+
 }
 
 func (s *BaseSensor[K, T]) Get(ref K) *T {
