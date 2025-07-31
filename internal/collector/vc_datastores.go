@@ -37,7 +37,7 @@ func NewDatastoreCollector(scraper *scraper.VCenterScraper, cConf Config) *datas
 	}
 
 	hostLables := append(labels, "esx", "esx_id")
-	vmfsLabels := append(labels, "uuid", "naa", "ssh", "local")
+	vmfsLabels := append(labels, "uuid", "naa", "ssd", "local")
 	return &datastoreCollector{
 		scraper:     scraper,
 		extraLabels: extraLabels,

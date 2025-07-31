@@ -3,6 +3,7 @@ package scraper
 import (
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"golang.org/x/exp/constraints"
@@ -40,4 +41,8 @@ func AllTrue(slice []bool) bool {
 		}
 	}
 	return true
+}
+
+func cleanString(s string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 }

@@ -501,20 +501,20 @@ func ConvertManagedEntityStatusToValue(s types.ManagedEntityStatus) float64 {
 	return 0
 }
 
-func ConvertVirtualMachineGuestStateToValue(s types.VirtualMachineGuestState) float64 {
-	if s == types.VirtualMachineGuestStateNotRunning {
-		return 1.0
-	} else if s == types.VirtualMachineGuestStateResetting {
-		return 2.0
-	} else if s == types.VirtualMachineGuestStateShuttingDown {
-		return 3.0
-	} else if s == types.VirtualMachineGuestStateStandby {
-		return 4.0
-	} else if s == types.VirtualMachineGuestStateRunning {
-		return 5.0
-	}
-	return 0
-}
+// func ConvertVirtualMachineGuestStateToValue(s types.VirtualMachineGuestState) float64 {
+// 	if s == types.VirtualMachineGuestStateNotRunning {
+// 		return 1.0
+// 	} else if s == types.VirtualMachineGuestStateResetting {
+// 		return 2.0
+// 	} else if s == types.VirtualMachineGuestStateShuttingDown {
+// 		return 3.0
+// 	} else if s == types.VirtualMachineGuestStateStandby {
+// 		return 4.0
+// 	} else if s == types.VirtualMachineGuestStateRunning {
+// 		return 5.0
+// 	}
+// 	return 0
+// }
 
 func ConvertVirtualMachineToolsStatusToValue(s types.VirtualMachineToolsStatus) float64 {
 	if s == types.VirtualMachineToolsStatusToolsNotInstalled {

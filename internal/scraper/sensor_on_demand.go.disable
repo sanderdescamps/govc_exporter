@@ -31,7 +31,7 @@ type OnDemandSensor struct {
 	stop    chan bool
 }
 
-func NewOnDemandSensor(scraper *VCenterScraper, config SensorConfig) *OnDemandSensor {
+func NewOnDemandSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *OnDemandSensor {
 	var sensor OnDemandSensor
 	sensor = OnDemandSensor{
 		BaseSensor: *NewBaseSensor[types.ManagedObjectReference, mo.ManagedEntity](

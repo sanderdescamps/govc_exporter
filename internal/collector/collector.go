@@ -3,14 +3,12 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"path"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -126,175 +124,139 @@ func (c *VCCollector) GetMetricHandler() http.Handler {
 func (c *VCCollector) GetRefreshHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		sensorReq := r.PathValue("sensor")
+		sensorName := r.PathValue("sensor")
 
-		sensor := c.scraper.GetSensorRefreshByName(sensorReq)
-		if sensor != nil {
-			sensorName := sensor.Name()
-			if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
-				logger.Info("Trigger manual refresh", "sensor_name", sensorName)
-			}
+		err := c.scraper.TriggerSensorRefreshByName(ctx, sensorName)
 
-			ctxWithTimeout, cancel := context.WithTimeout(ctx, 60*time.Second)
-			defer cancel()
-			done := make(chan error)
-			go func() {
-				err := sensor.Refresh(ctxWithTimeout)
-				done <- err
-			}()
-			select {
-			case err := <-done:
-				if err == nil {
-					if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
-						logger.Info("Refresh successfull", "sensor_name", sensorName)
-					}
-
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusOK)
-					json.NewEncoder(w).Encode(map[string]any{
-						"msg":         "refresh successfull",
-						"sensor_name": sensorName,
-						"status":      200,
-					})
-				} else {
-					if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
-						logger.Warn("Failed to refresh sensor", "err", err.Error(), "sensor_name", sensorName)
-					}
-
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					json.NewEncoder(w).Encode(map[string]any{
-						"msg":         "Failed to refresh sensor",
-						"sensor_name": sensorName,
-						"err":         err.Error(),
-						"status":      http.StatusInternalServerError,
-					})
-				}
-			case <-ctxWithTimeout.Done():
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]any{
-					"msg":         "sensor refresh timeout",
-					"sensor_name": sensorName,
-					"err":         fmt.Errorf("sensor refresh timeout"),
-					"status":      http.StatusInternalServerError,
-				})
-			}
-
+		w.Header().Set("Content-Type", "application/json")
+		if errors.Is(err, scraper.ErrSensorNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":         "refresh successfull",
+				"sensor_name": sensorName,
+				"status":      404,
+			})
+		} else if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":         "Unknown error",
+				"sensor_name": sensorName,
+				"status":      502,
+			})
 		} else {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
+			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]any{
-				"msg":    fmt.Sprintf("Invalid sensor %s", sensorReq),
-				"status": http.StatusBadRequest,
+				"msg":         "Refresh on sensor succesfully triggered",
+				"sensor_name": sensorName,
+				"status":      200,
 			})
 		}
 	})
 }
 
-func (c *VCCollector) GetDumpHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		include := []string{}
-		sensorReq := r.PathValue("sensor")
-		if sensorReq != "" {
-			include = append(include, sensorReq)
-		} else {
-			params := r.URL.Query()
-			if f, ok := params["collect[]"]; ok {
-				include = append(include, f...)
-			} else if f, ok := params["collect"]; ok {
-				include = append(include, f...)
-			} else {
-				include = append(include, "all")
-			}
+// func (c *VCCollector) GetDumpHandler() http.Handler {
+// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// 		ctx := r.Context()
+// 		include := []string{}
+// 		sensorReq := r.PathValue("sensor")
+// 		if sensorReq != "" {
+// 			include = append(include, sensorReq)
+// 		} else {
+// 			params := r.URL.Query()
+// 			if f, ok := params["collect[]"]; ok {
+// 				include = append(include, f...)
+// 			} else if f, ok := params["collect"]; ok {
+// 				include = append(include, f...)
+// 			} else {
+// 				include = append(include, "all")
+// 			}
+// 		}
 
-		}
+// 		sensors := []scraper.Sensor{}
+// 		for _, sensor := range c.scraper.SensorList() {
+// 			match := false
+// 			for _, i := range include {
+// 				if sensor.Match(i) {
+// 					match = true
+// 					break
+// 				}
+// 			}
+// 			if match {
+// 				sensors = append(sensors, sensor)
+// 			}
+// 		}
 
-		sensors := []scraper.Sensor{}
-		for _, sensor := range c.scraper.SensorList() {
-			match := false
-			for _, i := range include {
-				if sensor.Match(i) {
-					match = true
-					break
-				}
-			}
-			if match {
-				sensors = append(sensors, sensor)
-			}
-		}
+// 		if len(sensors) < 1 {
+// 			if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+// 				logger.Warn("Failed to create dump. Invalid sensor type", "type", include)
+// 			}
 
-		if len(sensors) < 1 {
-			if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
-				logger.Warn("Failed to create dump. Invalid sensor type", "type", include)
-			}
+// 			w.Header().Set("Content-Type", "application/json")
+// 			w.WriteHeader(http.StatusBadRequest)
+// 			json.NewEncoder(w).Encode(map[string]any{
+// 				"msg":    fmt.Sprintf("Failed to create dump. Invalid sensor type %v", include),
+// 				"status": http.StatusBadRequest,
+// 			})
+// 			return
+// 		}
+// 		if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+// 			logger.Info("Creating dump of sensors objects.", "sensors", func() []string {
+// 				result := []string{}
+// 				for _, s := range sensors {
+// 					result = append(result, s.Name())
+// 				}
+// 				return result
+// 			})
+// 		}
 
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]any{
-				"msg":    fmt.Sprintf("Failed to create dump. Invalid sensor type %v", include),
-				"status": http.StatusBadRequest,
-			})
-			return
-		}
-		if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
-			logger.Info("Creating dump of sensors objects.", "sensors", func() []string {
-				result := []string{}
-				for _, s := range sensors {
-					result = append(result, s.Name())
-				}
-				return result
-			})
-		}
+// 		dirPath := ""
+// 		for i := 0; true; i++ {
+// 			dirPath = fmt.Sprintf("./dumps/%s_%d", time.Now().Format("20060201"), i)
+// 			if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+// 				if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+// 					logger.Debug("Create dump path", "path", dirPath)
+// 				}
 
-		dirPath := ""
-		for i := 0; true; i++ {
-			dirPath = fmt.Sprintf("./dumps/%s_%d", time.Now().Format("20060201"), i)
-			if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-				if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
-					logger.Debug("Create dump path", "path", dirPath)
-				}
+// 				err := os.MkdirAll(dirPath, 0775)
+// 				if err != nil {
+// 					if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+// 						logger.Warn("Failed to create dump", "err", err)
+// 					}
+// 					w.Header().Set("Content-Type", "application/json")
+// 					w.WriteHeader(http.StatusInternalServerError)
+// 					json.NewEncoder(w).Encode(map[string]any{
+// 						"msg":    "Failed to create dump",
+// 						"err":    err.Error(),
+// 						"status": http.StatusInternalServerError,
+// 					})
+// 					return
+// 				}
+// 				break
+// 			}
+// 		}
 
-				err := os.MkdirAll(dirPath, 0775)
-				if err != nil {
-					if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
-						logger.Warn("Failed to create dump", "err", err)
-					}
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					json.NewEncoder(w).Encode(map[string]any{
-						"msg":    "Failed to create dump",
-						"err":    err.Error(),
-						"status": http.StatusInternalServerError,
-					})
-					return
-				}
-				break
-			}
-		}
+// 		for _, sensor := range sensors {
 
-		for _, sensor := range sensors {
+// 			jsonMap, err := sensor.GetAllJsons()
+// 			if err != nil {
+// 				w.Header().Set("Content-Type", "application/json")
+// 				w.WriteHeader(http.StatusInternalServerError)
+// 				json.NewEncoder(w).Encode(map[string]any{
+// 					"msg":    "Failed to create dump",
+// 					"err":    err.Error(),
+// 					"status": http.StatusInternalServerError,
+// 				})
+// 				return
+// 			}
+// 			for name, jsonString := range jsonMap {
+// 				filePath := path.Join(dirPath, fmt.Sprintf("%s-%s.json", sensor.Name(), name))
+// 				os.WriteFile(filePath, jsonString, os.ModePerm)
+// 			}
+// 		}
 
-			jsonMap, err := sensor.GetAllJsons()
-			if err != nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]any{
-					"msg":    "Failed to create dump",
-					"err":    err.Error(),
-					"status": http.StatusInternalServerError,
-				})
-				return
-			}
-			for name, jsonString := range jsonMap {
-				filePath := path.Join(dirPath, fmt.Sprintf("%s-%s.json", sensor.Name(), name))
-				os.WriteFile(filePath, jsonString, os.ModePerm)
-			}
-		}
-
-		if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
-			logger.Info(fmt.Sprintf("Dump successful. Check %s for results", dirPath))
-		}
-	})
-}
+// 		if logger, ok := ctx.Value(ContextKeyCollectorLogger{}).(*slog.Logger); ok {
+// 			logger.Info(fmt.Sprintf("Dump successful. Check %s for results", dirPath))
+// 		}
+// 	})
+// }

@@ -1,6 +1,8 @@
 package collector
 
 import (
+	"context"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
@@ -78,12 +80,12 @@ func (c *clusterCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *clusterCollector) Collect(ch chan<- prometheus.Metric) {
-	if c.scraper.Cluster == nil {
+	if !c.scraper.Cluster.Enabled() {
 		return
 	}
-	clusterData := c.scraper.Cluster.GetAllSnapshots()
-	for _, snap := range clusterData {
-		timestamp, p := snap.Timestamp, snap.Item
+	ctx := context.Background()
+	for cluster, err := range c.scraper.DB.GetAllClusterIter(ctx) {
+		timestamp, p := cluster.Timestamp, snap.Item
 		summary := p.Summary.GetComputeResourceSummary()
 		if summary == nil {
 			continue
