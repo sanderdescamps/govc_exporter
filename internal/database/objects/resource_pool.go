@@ -25,5 +25,15 @@ type ResourcePool struct {
 	CompressedMemory             float64 `json:"compressed_memory"`
 	MemoryAllocationLimit        float64 `json:"memory_allocation_limit"`
 	CPUAllocationLimit           float64 `json:"cpu_allocation_limit"`
-	OverallStatus                float64 `json:"overall_status"`
+	OverallStatus                string  `json:"overall_status"`
+}
+
+// Return OverallStatus as float64
+//
+//	0 => (Gray) The status is unknown.
+//	1 => (Red) The entity definitely has a problem.
+//	2 => (Yellow) The entity might have a problem.
+//	3 => (Green) The entity is OK.
+func (p *ResourcePool) OverallStatusFloat64() float64 {
+	return ColorToFloat64(p.OverallStatus)
 }

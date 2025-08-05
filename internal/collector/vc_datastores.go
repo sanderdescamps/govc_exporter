@@ -1,12 +1,11 @@
 package collector
 
 import (
-	"reflect"
+	"context"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
-	"github.com/vmware/govmomi/vim25/types"
 )
 
 const (
@@ -84,128 +83,62 @@ func (c *datastoreCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
-	if c.scraper.Datastore == nil {
+	if !c.scraper.Datastore.Enabled() {
 		return
 	}
-	datastoreData := c.scraper.Datastore.GetAllSnapshots()
-	for _, snap := range datastoreData {
-		timestamp, d := snap.Timestamp, snap.Item
-		summary := d.Summary
+	ctx := context.Background()
+	for datastore := range c.scraper.DB.GetAllDatastoreIter(ctx) {
 
-		kind := "NONE"
-		var vmfsInfo *types.HostVmfsVolume = nil
-
-		if d.Info != nil {
-			iInfo := reflect.ValueOf(d.Info).Elem().Interface()
-			switch parsedInfo := iInfo.(type) {
-			case types.LocalDatastoreInfo:
-				kind = "local"
-			case types.VmfsDatastoreInfo:
-				kind = "vmfs"
-				if parsedInfo.Vmfs != nil {
-					vmfsInfo = parsedInfo.Vmfs
-				}
-			case types.NasDatastoreInfo:
-				kind = "nas"
-			case types.PMemDatastoreInfo:
-				kind = "pmem"
-			case types.VsanDatastoreInfo:
-				kind = "vsan"
-			case types.VvolDatastoreInfo:
-				kind = "vvol"
-			}
+		extraLabelValues := []string{}
+		objectTags := c.scraper.DB.GetTags(ctx, datastore.Self)
+		for _, tagCat := range c.extraLabels {
+			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
 
-		parentChain := c.scraper.GetParentChain(d.Self)
-
-		extraLabelValues := func() []string {
-			result := []string{}
-
-			for _, tagCat := range c.extraLabels {
-				tag := c.scraper.Tags.GetTag(d.Self, tagCat)
-				if tag != nil {
-					result = append(result, tag.Name)
-				} else {
-					result = append(result, "")
-				}
-			}
-			return result
-		}()
-
-		labelValues := []string{me2id(d.ManagedEntity), summary.Name, parentChain.SPOD, kind}
+		labelValues := []string{datastore.Self.ID(), datastore.Name, datastore.DatastoreCluster, datastore.Kind}
 		labelValues = append(labelValues, extraLabelValues...)
 
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.accessible, prometheus.GaugeValue, b2f(summary.Accessible), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+			c.accessible, prometheus.GaugeValue, b2f(datastore.Accessible), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.capacity, prometheus.GaugeValue, float64(summary.Capacity), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+			c.capacity, prometheus.GaugeValue, float64(datastore.Capacity), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.freeSpace, prometheus.GaugeValue, float64(summary.FreeSpace), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+			c.freeSpace, prometheus.GaugeValue, float64(datastore.FreeSpace), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.maintenance, prometheus.GaugeValue, ConvertDatastoreMaintenanceModeStateToValue(summary.MaintenanceMode), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+			c.maintenance, prometheus.GaugeValue, datastore.MaintenanceStatusFloat64(), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(d.OverallStatus), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+			c.overallStatus, prometheus.GaugeValue, datastore.OverallStatusFloat64(), labelValues...,
 		))
 
-		for _, host := range d.Host {
-			hostEntity := c.scraper.Host.Get(host.Key)
-			if hostEntity != nil {
-				hostLabelValues := append(labelValues, hostEntity.Name, hostEntity.Self.Value)
-				ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-					c.hostAccessible, prometheus.GaugeValue, b2f(*host.MountInfo.Accessible), hostLabelValues...,
-				))
-				ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-					c.hostMounted, prometheus.GaugeValue, b2f(*host.MountInfo.Mounted), hostLabelValues...,
-				))
-				ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-					c.hostVmknicActive, prometheus.GaugeValue, b2f(*host.MountInfo.VmknicActive), hostLabelValues...,
-				))
-			}
-
+		for _, mountInfo := range datastore.HostMountInfo {
+			hostLabelValues := append(labelValues, mountInfo.Host, mountInfo.HostID)
+			ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+				c.hostAccessible, prometheus.GaugeValue, b2f(mountInfo.Accessable), hostLabelValues...,
+			))
+			ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+				c.hostMounted, prometheus.GaugeValue, b2f(mountInfo.Mounted), hostLabelValues...,
+			))
+			ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+				c.hostVmknicActive, prometheus.GaugeValue, b2f(mountInfo.VmknicActiveNic), hostLabelValues...,
+			))
 		}
 
-		if kind == "vmfs" {
-			if vmfsInfo != nil {
-				var ssd string
-				var local string
-				if vmfsInfo.Ssd != nil {
-					ssd = strconv.FormatBool(*vmfsInfo.Ssd)
-				}
-				if vmfsInfo.Local != nil {
-					local = strconv.FormatBool(*vmfsInfo.Local)
-				}
-
-				vmfsLabelValues := append(
-					labelValues,
-					vmfsInfo.Uuid,
-					func() string {
-						for _, extent := range vmfsInfo.Extent {
-							return extent.DiskName
-						}
-						return ""
-					}(),
-					ssd,
-					local,
-				)
-				ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-					c.vmfsInfo, prometheus.GaugeValue, 1, vmfsLabelValues...,
-				))
-			}
+		if vmfsInfo := datastore.VmfsInfo; vmfsInfo != nil {
+			vmfsLabelValues := append(
+				labelValues,
+				vmfsInfo.UUID,
+				vmfsInfo.NAA,
+				strconv.FormatBool(vmfsInfo.SSD),
+				strconv.FormatBool(vmfsInfo.Local),
+			)
+			ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
+				c.vmfsInfo, prometheus.GaugeValue, 1, vmfsLabelValues...,
+			))
 		}
 	}
 
-}
-
-func ConvertDatastoreMaintenanceModeStateToValue(d string) float64 {
-	dTyped := types.DatastoreSummaryMaintenanceModeState(d)
-	if dTyped == types.DatastoreSummaryMaintenanceModeStateEnteringMaintenance {
-		return 1.0
-	} else if dTyped == types.DatastoreSummaryMaintenanceModeStateInMaintenance {
-		return 2.0
-	}
-	return 0
 }

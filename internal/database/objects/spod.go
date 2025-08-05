@@ -9,7 +9,6 @@ type StoragePod struct {
 	Name       string                  `json:"name"`
 	Datacenter string                  `json:"datacenter"`
 
-	Capacity      float64 `json:"capacity"`
-	FreeSpace     float64 `json:"free_space"`
-	OverallStatus float64 `json:"overall_status"`
+	Capacity  float64 `json:"capacity"`
+	FreeSpace float64 `json:"free_space"`
 }

@@ -2,7 +2,6 @@ package scraper
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"reflect"
 	"sync"
@@ -22,7 +21,7 @@ const HOST_SENSOR_NAME = "HostSensor"
 type HostSensor struct {
 	metricshelper.MetricHelperDefault
 	logger.SensorLogger
-	started       helper.StartedCheck
+	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
 	manualRefresh chan struct{}
 	stopChan      chan struct{}
@@ -32,7 +31,9 @@ type HostSensor struct {
 func NewHostSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *HostSensor {
 	return &HostSensor{
 		config:              config,
+		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
+		manualRefresh:       make(chan struct{}),
 		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(HOST_SENSOR_NAME)),
 		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(HOST_SENSOR_NAME),
 	}
@@ -66,7 +67,7 @@ func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 
 	var entities []mo.HostSystem
 	err = v.Retrieve(
-		context.Background(),
+		ctx,
 		[]string{"HostSystem"},
 		[]string{
 			"name",
@@ -76,6 +77,7 @@ func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 			"config.storageDevice",
 			"config.fileSystemVolume",
 			// "network",
+			"hardware",
 		},
 		&entities,
 	)
@@ -85,45 +87,59 @@ func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 	}
 
 	for _, entity := range entities {
-		entity.Summary.Hardware.OtherIdentifyingInfo = nil
-		entity.Summary.Runtime = nil
-		entity.Config = nil
-
 		oHost := ConvertToHost(ctx, scraper, entity, time.Now())
-		scraper.DB.SetHost(ctx, &oHost, s.config.MaxAge)
+		scraper.DB.SetHost(ctx, oHost, s.config.MaxAge)
 	}
 	return nil
 }
 
-func (s *HostSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
+func (s *HostSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	if !s.started.IsStarted() {
+		err := s.refresh(ctx, scraper)
+		if err != nil {
+			return err
+		}
+		s.started.Started()
+	} else {
+		return ErrSensorAlreadyStarted
+	}
+	return nil
+}
+
+func (s *HostSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
-	defer ticker.Stop()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				s.refresh(ctx, scraper)
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("refresh successful")
-				} else {
-					s.SensorLogger.Error("refresh failed", "err", err)
-				}
-				s.started.Started()
+				go func() {
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("refresh successful")
+					} else {
+						s.SensorLogger.Error("refresh failed", "err", err)
+					}
+				}()
 			case <-s.manualRefresh:
-				s.SensorLogger.Info("trigger manual refresh")
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("manual refresh successful")
-				} else {
-					s.SensorLogger.Error("manual refresh failed", "err", err)
-				}
+				go func() {
+					s.SensorLogger.Info("trigger manual refresh")
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("manual refresh successful")
+					} else {
+						s.SensorLogger.Error("manual refresh failed", "err", err)
+					}
+				}()
 			case <-s.stopChan:
 				s.started.Stopped()
-				return
+				ticker.Stop()
+			case <-ctx.Done():
+				s.started.Stopped()
+				ticker.Stop()
 			}
 		}
 	}()
+	return nil
 }
 
 func (s *HostSensor) StopRefresher(ctx context.Context) {
@@ -143,7 +159,7 @@ func (s *HostSensor) WaitTillStartup() {
 }
 
 func (s *HostSensor) Match(name string) bool {
-	return helper.NewMatcher("keyword").Match(name)
+	return helper.NewMatcher("host", "esx").Match(name)
 }
 
 func (s *HostSensor) Enabled() bool {
@@ -151,11 +167,11 @@ func (s *HostSensor) Enabled() bool {
 }
 
 func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem, t time.Time) objects.Host {
-	self := objects.NewManagedObjectReference(h.Self.Type, h.Self.Value)
+	self := objects.NewManagedObjectReferenceFromVMwareRef(h.Self)
 
 	var parent *objects.ManagedObjectReference
 	if h.Parent != nil {
-		p := objects.NewManagedObjectReference(parent.Type, parent.Value)
+		p := objects.NewManagedObjectReferenceFromVMwareRef(*h.Parent)
 		parent = &p
 	}
 
@@ -167,7 +183,7 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 	}
 
 	if host.Parent != nil {
-		parentChain := scraper.GetParentChain(*host.Parent)
+		parentChain := scraper.DB.GetParentChain(ctx, *host.Parent)
 		host.Cluster = parentChain.Cluster
 		host.Datacenter = parentChain.DC
 	}
@@ -175,11 +191,11 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 	summary := h.Summary
 	host.UptimeSeconds = float64(summary.QuickStats.Uptime)
 	host.RebootRequired = summary.RebootRequired
-	host.OverallStatus = ConvertManagedEntityStatusToValue(summary.OverallStatus)
 	host.UsedCPUMhz = float64(summary.QuickStats.OverallCpuUsage)
 	host.UsedMemBytes = float64(int64(summary.QuickStats.OverallMemoryUsage) * int64(1024*1024))
 	host.NumberOfVMs = float64(len(h.Vm))
 	host.NumberOfDatastores = float64(len(h.Datastore))
+	host.OverallStatus = string(summary.OverallStatus)
 
 	if product := summary.Config.Product; product != nil {
 		host.OSVersion = product.FullName
@@ -196,22 +212,25 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 				host.AssetTag = i.IdentifierValue
 			}
 			if i.IdentifierType.GetElementDescription().Key == "ServiceTag" {
-				host.AssetTag = i.IdentifierValue
+				host.ServiceTag = i.IdentifierValue
 			}
 		}
 		host.Vendor = hardware.Vendor
 		host.Model = hardware.Model
 	}
+	if h.Hardware != nil && h.Hardware.BiosInfo != nil {
+		host.BiosVersion = h.Hardware.BiosInfo.BiosVersion
+	}
 
-	runtime := summary.Runtime
-	host.PowerState = fmt.Sprintf("%s", runtime.PowerState)
-	host.ConnectionState = fmt.Sprintf("%s", runtime.ConnectionState)
+	runtime := h.Runtime
+	host.PowerState = string(runtime.PowerState)
+	host.ConnectionState = string(runtime.ConnectionState)
 	host.Maintenance = runtime.InMaintenanceMode
 
 	if healthSystemRuntime := runtime.HealthSystemRuntime; healthSystemRuntime != nil {
 		if systemHealthInfo := healthSystemRuntime.SystemHealthInfo; systemHealthInfo != nil {
 			for _, info := range systemHealthInfo.NumericSensorInfo {
-				host.SystemHealthNumerivSensor = append(host.SystemHealthNumerivSensor,
+				host.SystemHealthNumericSensors = append(host.SystemHealthNumericSensors,
 					objects.HostNumericSensorHealth{
 						Name:  info.Name,
 						Type:  info.SensorType,
@@ -226,6 +245,35 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 						}(),
 					},
 				)
+			}
+		}
+
+		if hardwareStatusInfo := healthSystemRuntime.HardwareStatusInfo; hardwareStatusInfo != nil {
+			for _, baseInfo := range hardwareStatusInfo.CpuStatusInfo {
+				info := baseInfo.GetHostHardwareElementInfo()
+				if info != nil {
+					host.HardwareStatus = append(host.HardwareStatus,
+						objects.HardwareStatus{
+							Name:    info.Name,
+							Type:    "cpu",
+							Status:  string(info.Status.GetElementDescription().Key),
+							Summary: string(info.Status.GetElementDescription().Summary),
+						},
+					)
+				}
+			}
+			for _, baseInfo := range hardwareStatusInfo.MemoryStatusInfo {
+				info := baseInfo.GetHostHardwareElementInfo()
+				if info != nil {
+					host.HardwareStatus = append(host.HardwareStatus,
+						objects.HardwareStatus{
+							Name:    info.Name,
+							Type:    "memory",
+							Status:  string(info.Status.GetElementDescription().Key),
+							Summary: string(info.Status.GetElementDescription().Summary),
+						},
+					)
+				}
 			}
 		}
 	}
@@ -256,10 +304,11 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 
 				host.IscsiHBA = append(host.IscsiHBA, objects.IscsiHostBusAdapter{
 					HostBusAdapter: objects.HostBusAdapter{
-						Name:   hba.Device,
-						Model:  cleanString(hba.Model),
-						Driver: hba.Driver,
-						State:  hba.Status,
+						Name:     hba.Device,
+						Model:    cleanString(hba.Model),
+						Protocol: hba.StorageProtocol,
+						Driver:   hba.Driver,
+						State:    hba.Status,
 					},
 					IQN:             hba.IScsiName,
 					DiscoveryTarget: iscsiDiscoveryTarget,
@@ -275,14 +324,170 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 			default:
 				baseHba := adapter.GetHostHostBusAdapter()
 				host.GenericHBA = append(host.GenericHBA, objects.HostBusAdapter{
-					Name:   baseHba.Device,
-					Model:  cleanString(baseHba.Model),
-					Driver: baseHba.Driver,
-					State:  baseHba.Status,
+					Name:     baseHba.Device,
+					Model:    cleanString(baseHba.Model),
+					Driver:   baseHba.Driver,
+					State:    baseHba.Status,
+					Protocol: baseHba.StorageProtocol,
 				})
 			}
 		}
 	}
 
+	host.IscsiMultiPathPaths = getHostMultiPathPaths(h)
+	host.SCSILuns = getAllScsiLuns(h)
+
 	return host
+}
+
+func getHostMultiPathPaths(host mo.HostSystem) []objects.IscsiPath {
+	hbaDeviceNameFunc := getHostHBADeviceNameLookupFunc(host)
+	lunCanonnicalNameLookup := getHostLunCanonicalNameLookupFunc(host)
+	scsiLunLookupFunc := getHostScsiLunLookupFunc(host)
+
+	iscsiPaths := []objects.IscsiPath{}
+	if host.Config != nil && host.Config.StorageDevice != nil {
+		for _, logicalUnit := range host.Config.StorageDevice.MultipathInfo.Lun {
+			uuid := logicalUnit.Id
+			naa := lunCanonnicalNameLookup(uuid)
+			scsiLun := scsiLunLookupFunc(naa)
+			for _, path := range logicalUnit.Path {
+				device := hbaDeviceNameFunc(path.Adapter)
+
+				transportInterface := reflect.ValueOf(path.Transport).Elem().Interface()
+				switch transport := transportInterface.(type) {
+				case types.HostInternetScsiTargetTransport:
+					for _, address := range transport.Address {
+						iscsiPaths = append(iscsiPaths, objects.IscsiPath{
+							Device:        device,
+							NAA:           naa,
+							TargetIQN:     transport.IScsiName,
+							TargetAddress: address,
+							DatastoreName: scsiLun.Datastore,
+							State:         path.State,
+						})
+					}
+					// default:
+					// 	iscsiPaths = append(iscsiPaths, iscsiPath{
+					// 		Device:        device,
+					// 		NAA:           naa,
+					// 		TargetIQN:     "",
+					// 		TargetAddress: "",
+					// 		DatastoreName: scsiLun.Datastore,
+					// 		State:         path.State,
+					// 	})
+				}
+			}
+		}
+	}
+
+	return iscsiPaths
+}
+
+func getHostHBADeviceNameLookupFunc(host mo.HostSystem) func(hbaKey string) string {
+	hbaDevices := map[string]string{}
+	if host.Config != nil && host.Config.StorageDevice != nil {
+		for _, adapter := range host.Config.StorageDevice.HostBusAdapter {
+			hbaDevices[adapter.GetHostHostBusAdapter().Key] = adapter.GetHostHostBusAdapter().Device
+		}
+	}
+	return func(hbaKey string) string {
+		if val, ok := hbaDevices[hbaKey]; ok {
+			return val
+		}
+		return ""
+	}
+}
+
+func getHostLunCanonicalNameLookupFunc(host mo.HostSystem) func(lunID string) string {
+	naas := map[string]string{}
+	if host.Config != nil && host.Config.StorageDevice != nil {
+		for _, lun := range host.Config.StorageDevice.ScsiLun {
+			naas[lun.GetScsiLun().Uuid] = lun.GetScsiLun().CanonicalName
+		}
+	}
+
+	return func(lunID string) string {
+		if val, ok := naas[lunID]; ok {
+			return val
+		}
+		return ""
+	}
+}
+
+func getHostScsiLunLookupFunc(host mo.HostSystem) func(canonicalName string) objects.ScsiLun {
+	scsiLuns := map[string]objects.ScsiLun{}
+
+	for _, l := range getAllScsiLuns(host) {
+		scsiLuns[l.CanonicalName] = l
+	}
+
+	return func(canonicalName string) objects.ScsiLun {
+		if val, ok := scsiLuns[canonicalName]; ok {
+			return val
+		}
+		return objects.ScsiLun{}
+	}
+}
+
+func getAllScsiLuns(host mo.HostSystem) []objects.ScsiLun {
+	mountInfoMap := map[string]types.HostFileSystemMountInfo{}
+	if host.Config != nil && host.Config.FileSystemVolume != nil {
+		for _, info := range host.Config.FileSystemVolume.MountInfo {
+			volumeInterface := reflect.ValueOf(info.Volume).Elem().Interface()
+			switch volume := volumeInterface.(type) {
+			case types.HostVmfsVolume:
+				for _, extend := range volume.Extent {
+					mountInfoMap[extend.DiskName] = info
+				}
+			default:
+				continue
+			}
+		}
+	}
+
+	scsiLuns := map[string]types.ScsiLun{}
+	if host.Config != nil && host.Config.StorageDevice != nil {
+		for _, l := range host.Config.StorageDevice.ScsiLun {
+			lun := l.GetScsiLun()
+			if lun != nil {
+				scsiLuns[lun.CanonicalName] = *lun
+			}
+		}
+	}
+
+	result := []objects.ScsiLun{}
+	if host.Config != nil && host.Config.StorageDevice != nil {
+		for _, l := range host.Config.StorageDevice.ScsiLun {
+			lun := l.GetScsiLun()
+			if mountInfo, ok := mountInfoMap[lun.CanonicalName]; ok {
+				volume := mountInfo.Volume.GetHostFileSystemVolume()
+				result = append(result, objects.ScsiLun{
+					CanonicalName: lun.CanonicalName,
+					Model:         cleanString(lun.Model),
+					Vendor:        cleanString(lun.Vendor),
+					Datastore: func() string {
+						if volume != nil {
+							return volume.Name
+						}
+						return "unknown"
+					}(),
+					Mounted: func() bool {
+						if mountInfo.MountInfo.Mounted != nil {
+							return *mountInfo.MountInfo.Mounted
+						}
+						return false
+					}(),
+					Accessible: func() bool {
+						if mountInfo.MountInfo.Accessible != nil {
+							return *mountInfo.MountInfo.Accessible
+						}
+						return false
+					}(),
+				})
+			}
+
+		}
+	}
+	return result
 }

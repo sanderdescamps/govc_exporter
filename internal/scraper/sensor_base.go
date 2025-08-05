@@ -22,7 +22,7 @@ func NewBaseSensor(moType string, moProperties []string) *BaseSensor {
 
 func (s *BaseSensor) baseRefresh(ctx context.Context, scraper *VCenterScraper, res interface{}) (metricshelper.RefreshStats, error) {
 	t1 := time.Now()
-	client, release, err := scraper.clientPool.Acquire()
+	client, release, err := scraper.clientPool.AcquireWithContext(ctx)
 	if err != nil {
 		return metricshelper.RefreshStats{
 			Failed: true,
@@ -46,7 +46,7 @@ func (s *BaseSensor) baseRefresh(ctx context.Context, scraper *VCenterScraper, r
 	defer v.Destroy(ctx)
 
 	err = v.Retrieve(
-		context.Background(),
+		ctx,
 		[]string{s.moType},
 		s.moProperties,
 		res,
@@ -56,10 +56,7 @@ func (s *BaseSensor) baseRefresh(ctx context.Context, scraper *VCenterScraper, r
 		ClientWaitTime: t2.Sub(t1),
 		QueryTime:      t3.Sub(t2),
 		Failed: func() bool {
-			if err != nil {
-				return true
-			}
-			return false
+			return err != nil
 		}(),
 	}, err
 }

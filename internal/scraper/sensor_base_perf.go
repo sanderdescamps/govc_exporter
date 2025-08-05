@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sanderdescamps/govc_exporter/internal/database"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
 	"github.com/vmware/govmomi/performance"
@@ -99,44 +98,13 @@ func SetInstance(i string) PerfOption {
 	}
 }
 
-// func EntityMetricToMetric(entiry performance.EntityMetric) []*objects.Metric {
-// 	result := []*objects.Metric{}
-// 	for id, sample := range entiry.SampleInfo {
-// 		for _, entityValue := range entiry.Value {
-// 			result = append(result,
-// 				&objects.Metric{
-// 					Ref:      entiry.Entity,
-// 					Name:     entityValue.Name,
-// 					Unit:     entityValue.Unit,
-// 					Instance: entityValue.Instance,
-// 					Value: func() float64 {
-// 						if entityValue.Value != nil {
-// 							if len(entiry.SampleInfo) == len(entityValue.Value) {
-// 								return float64(entityValue.Value[id])
-// 							} else {
-// 								return Avg(entityValue.Value)
-// 							}
-// 						}
-// 						return 0
-// 					}(),
-// 					Timestamp: sample.Timestamp,
-// 				},
-// 			)
-// 		}
-
-// 	}
-// 	return result
-// }
-
-func EntityMetricToTimeItem(entiry performance.EntityMetric) []database.TimeItem {
-	result := []database.TimeItem{}
+func EntityMetricToMetric(entiry performance.EntityMetric) []objects.Metric {
+	result := []objects.Metric{}
 	for id, sample := range entiry.SampleInfo {
 		for _, entityValue := range entiry.Value {
-			oRef := objects.NewManagedObjectReference(entiry.Entity.Type, entiry.Entity.Value)
-
 			result = append(result,
-				&objects.Metric{
-					Ref:      oRef,
+				objects.Metric{
+					Ref:      objects.NewManagedObjectReferenceFromVMwareRef(entiry.Entity),
 					Name:     entityValue.Name,
 					Unit:     entityValue.Unit,
 					Instance: entityValue.Instance,

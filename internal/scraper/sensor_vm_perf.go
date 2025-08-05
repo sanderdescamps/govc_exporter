@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
 	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
@@ -35,7 +36,7 @@ type VMPerfSensor struct {
 	BasePerfSensor
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
-	started       helper.StartedCheck
+	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
 	manualRefresh chan struct{}
 	stopChan      chan struct{}
@@ -52,7 +53,9 @@ func NewVMPerfSensor(scraper *VCenterScraper, config PerfSensorConfig, l *slog.L
 
 	var sensor VMPerfSensor = VMPerfSensor{
 		BasePerfSensor:      *NewBasePerfSensor(config, metrics),
+		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
+		manualRefresh:       make(chan struct{}),
 		config:              config,
 		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(VM_PERF_SENSOR_NAME)),
 		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(VM_PERF_SENSOR_NAME),
@@ -62,6 +65,12 @@ func NewVMPerfSensor(scraper *VCenterScraper, config PerfSensorConfig, l *slog.L
 
 func (s *VMPerfSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
 	(scraper.VM).(*VirtualMachineSensor).WaitTillStartup()
+
+	if ok := s.sensorLock.TryLock(); !ok {
+		return ErrSensorAlreadyRunning
+	}
+	defer s.sensorLock.Unlock()
+
 	oVMRefs := scraper.DB.GetAllVMRefs(ctx)
 	if len(oVMRefs) < 1 {
 		s.SensorLogger.Info("No VMs found, no vm perf metrics available")
@@ -70,7 +79,7 @@ func (s *VMPerfSensor) refresh(ctx context.Context, scraper *VCenterScraper) err
 
 	var vmRefs []types.ManagedObjectReference
 	for _, ref := range oVMRefs {
-		vmRefs = append(vmRefs, types.ManagedObjectReference{Type: ref.Type, Value: ref.Value})
+		vmRefs = append(vmRefs, ref.ToVMwareRef())
 	}
 
 	metricSeries, refreshStats, err := s.BasePerfSensor.QueryEntiryMetrics(ctx, scraper, vmRefs)
@@ -79,9 +88,9 @@ func (s *VMPerfSensor) refresh(ctx context.Context, scraper *VCenterScraper) err
 		return err
 	}
 	for _, metricSerie := range metricSeries {
-		entity := metricSerie.Entity
-		metrics := EntityMetricToTimeItem(metricSerie)
-		err := scraper.MetricsDB.AddVmMetrics(ctx, entity.Value, metrics...)
+		entityRef := objects.NewManagedObjectReferenceFromVMwareRef(metricSerie.Entity)
+		metrics := EntityMetricToMetric(metricSerie)
+		err := scraper.MetricsDB.AddVmMetrics(ctx, entityRef, metrics...)
 		if err != nil {
 			return err
 		}
@@ -89,35 +98,53 @@ func (s *VMPerfSensor) refresh(ctx context.Context, scraper *VCenterScraper) err
 	return nil
 }
 
-func (s *VMPerfSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
+func (s *VMPerfSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	if !s.started.IsStarted() {
+		err := s.refresh(ctx, scraper)
+		if err != nil {
+			return err
+		}
+		s.started.Started()
+	} else {
+		return ErrSensorAlreadyStarted
+	}
+	return nil
+}
+
+func (s *VMPerfSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
-	defer ticker.Stop()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				s.refresh(ctx, scraper)
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("refresh successful")
-				} else {
-					s.SensorLogger.Error("refresh failed", "err", err)
-				}
-				s.started.Started()
+				go func() {
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("refresh successful")
+					} else {
+						s.SensorLogger.Error("refresh failed", "err", err)
+					}
+				}()
 			case <-s.manualRefresh:
-				s.SensorLogger.Info("trigger manual refresh")
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("manual refresh successful")
-				} else {
-					s.SensorLogger.Error("manual refresh failed", "err", err)
-				}
+				go func() {
+					s.SensorLogger.Info("trigger manual refresh")
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("manual refresh successful")
+					} else {
+						s.SensorLogger.Error("manual refresh failed", "err", err)
+					}
+				}()
 			case <-s.stopChan:
 				s.started.Stopped()
-				return
+				ticker.Stop()
+			case <-ctx.Done():
+				s.started.Stopped()
+				ticker.Stop()
 			}
 		}
 	}()
+	return nil
 }
 
 func (s *VMPerfSensor) StopRefresher(ctx context.Context) {

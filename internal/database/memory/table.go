@@ -3,21 +3,29 @@ package memory_db
 import (
 	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"reflect"
 	"sync"
 	"time"
 )
 
+const (
+	CLEANUP_INTERVAL = 5 * time.Second
+)
+
+var ErrKeyNotFound = errors.New("key not found")
+
 type Table struct {
-	data            map[string]*Item
-	lock            sync.RWMutex
-	cleanupInterval time.Duration
-	stopChan        chan struct{}
+	data     map[string]*Item
+	lock     sync.RWMutex
+	stopChan chan struct{}
 }
 
 func NewTable() *Table {
 	return &Table{
-		data: make(map[string]*Item),
+		data:     make(map[string]*Item),
+		stopChan: make(chan struct{}),
 	}
 }
 func (t *Table) Set(key string, value interface{}) error {
@@ -40,7 +48,7 @@ func (t *Table) Get(key string, res interface{}) error {
 
 	val, exists := t.data[key]
 	if !exists {
-		return errors.New("key not found")
+		return ErrKeyNotFound
 	}
 
 	resv := reflect.ValueOf(res)
@@ -48,7 +56,7 @@ func (t *Table) Get(key string, res interface{}) error {
 		return errors.New("input error. Value must be a pointer")
 	}
 
-	valv := reflect.ValueOf(val)
+	valv := reflect.ValueOf(val.value)
 	if !valv.Type().AssignableTo(resv.Elem().Type()) {
 		return fmt.Errorf("type mismatch: cannot assign %s to %s",
 			valv.Type(), resv.Elem().Type())
@@ -117,8 +125,22 @@ func (t *Table) GetAll(res interface{}) error {
 	return nil
 }
 
+func (t *Table) GetAllIter() iter.Seq[any] {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	allValPnts := maps.Values(t.data)
+	return func(yield func(any) bool) {
+		for v := range allValPnts {
+			if !yield(v.value) {
+				return
+			}
+		}
+	}
+}
+
 func (s *Table) StartCleaner() {
-	ticker := time.NewTicker(s.cleanupInterval)
+	ticker := time.NewTicker(CLEANUP_INTERVAL)
 	defer ticker.Stop()
 	go func() {
 		for {

@@ -19,7 +19,7 @@ type ResourcePoolSensor struct {
 	BaseSensor
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
-	started       helper.StartedCheck
+	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
 	manualRefresh chan struct{}
 	stopChan      chan struct{}
@@ -34,7 +34,9 @@ func NewResourcePoolSensor(scraper *VCenterScraper, config SensorConfig, l *slog
 				"name",
 				"summary",
 			}),
+		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
+		manualRefresh:       make(chan struct{}),
 		config:              config,
 		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(RESOURCE_POOL_SENSOR_NAME)),
 		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(RESOURCE_POOL_SENSOR_NAME),
@@ -42,6 +44,11 @@ func NewResourcePoolSensor(scraper *VCenterScraper, config SensorConfig, l *slog
 }
 
 func (s *ResourcePoolSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
+	if ok := s.sensorLock.TryLock(); !ok {
+		return ErrSensorAlreadyRunning
+	}
+	defer s.sensorLock.Unlock()
+
 	var resourcePools []mo.ResourcePool
 	stats, err := s.baseRefresh(ctx, scraper, &resourcePools)
 	s.MetricHelperDefault.LoadStats(stats)
@@ -51,7 +58,7 @@ func (s *ResourcePoolSensor) refresh(ctx context.Context, scraper *VCenterScrape
 
 	for _, rp := range resourcePools {
 		oRPool := ConvertToResourcePool(ctx, scraper, rp, time.Now())
-		err := scraper.DB.SetResourcePool(ctx, &oRPool, s.config.MaxAge)
+		err := scraper.DB.SetResourcePool(ctx, oRPool, s.config.MaxAge)
 		if err != nil {
 			return err
 		}
@@ -60,35 +67,53 @@ func (s *ResourcePoolSensor) refresh(ctx context.Context, scraper *VCenterScrape
 	return nil
 }
 
-func (s *ResourcePoolSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
+func (s *ResourcePoolSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	if !s.started.IsStarted() {
+		err := s.refresh(ctx, scraper)
+		if err != nil {
+			return err
+		}
+		s.started.Started()
+	} else {
+		return ErrSensorAlreadyStarted
+	}
+	return nil
+}
+
+func (s *ResourcePoolSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
-	defer ticker.Stop()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				s.refresh(ctx, scraper)
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("refresh successful")
-				} else {
-					s.SensorLogger.Error("refresh failed", "err", err)
-				}
-				s.started.Started()
+				go func() {
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("refresh successful")
+					} else {
+						s.SensorLogger.Error("refresh failed", "err", err)
+					}
+				}()
 			case <-s.manualRefresh:
-				s.SensorLogger.Info("trigger manual refresh")
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("manual refresh successful")
-				} else {
-					s.SensorLogger.Error("manual refresh failed", "err", err)
-				}
+				go func() {
+					s.SensorLogger.Info("trigger manual refresh")
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("manual refresh successful")
+					} else {
+						s.SensorLogger.Error("manual refresh failed", "err", err)
+					}
+				}()
 			case <-s.stopChan:
 				s.started.Stopped()
-				return
+				ticker.Stop()
+			case <-ctx.Done():
+				s.started.Stopped()
+				ticker.Stop()
 			}
 		}
 	}()
+	return nil
 }
 
 func (s *ResourcePoolSensor) StopRefresher(ctx context.Context) {
@@ -108,7 +133,7 @@ func (s *ResourcePoolSensor) WaitTillStartup() {
 }
 
 func (s *ResourcePoolSensor) Match(name string) bool {
-	return helper.NewMatcher("keyword").Match(name)
+	return helper.NewMatcher("resource_pool", "resourcepool", "repool").Match(name)
 }
 
 func (s *ResourcePoolSensor) Enabled() bool {
@@ -116,11 +141,11 @@ func (s *ResourcePoolSensor) Enabled() bool {
 }
 
 func ConvertToResourcePool(ctx context.Context, scraper *VCenterScraper, p mo.ResourcePool, t time.Time) objects.ResourcePool {
-	self := objects.NewManagedObjectReference(p.Self.Type, p.Self.Value)
+	self := objects.NewManagedObjectReferenceFromVMwareRef(p.Self)
 
 	var parent *objects.ManagedObjectReference
 	if p.Parent != nil {
-		p := objects.NewManagedObjectReference(parent.Type, parent.Value)
+		p := objects.NewManagedObjectReferenceFromVMwareRef(*p.Parent)
 		parent = &p
 	}
 
@@ -132,7 +157,7 @@ func ConvertToResourcePool(ctx context.Context, scraper *VCenterScraper, p mo.Re
 	}
 
 	if pool.Parent != nil {
-		parentChain := scraper.GetParentChain(*pool.Parent)
+		parentChain := scraper.DB.GetParentChain(ctx, *pool.Parent)
 		pool.Datacenter = parentChain.DC
 	}
 
@@ -156,8 +181,8 @@ func ConvertToResourcePool(ctx context.Context, scraper *VCenterScraper, p mo.Re
 		if limit := summary.Config.CpuAllocation.Limit; limit != nil {
 			pool.CPUAllocationLimit = float64((*limit) * mb)
 		}
+		pool.OverallStatus = string(summary.Runtime.OverallStatus)
 	}
-	pool.OverallStatus = ConvertManagedEntityStatusToValue(p.OverallStatus)
 
 	return pool
 }

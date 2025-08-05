@@ -218,3 +218,17 @@ When enabled with `--web.allow-dumps`, the exporter can take a datadump of all t
     curl -s "localhost:9752/dump/<sensor_name>"
     curl -s "localhost:9752/dump/vm"
     curl -s "localhost:9752/dump?collect=vm&collect=perfvm"
+
+# Testing
+
+## vcsim
+
+### Generate export from existing vcenter
+
+    export GOVC_URL=https://<username>:<password>@<vcenter-url>:8989/sdk 
+    export GOVC_INSECURE=true
+    govc object.save -d <path_to_export_dir>
+
+### Populate vcsim with the saved export
+
+    vcsim --username testuser --password testpass --load <path_to_export_dir>

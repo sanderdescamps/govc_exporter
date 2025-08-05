@@ -13,9 +13,9 @@ import (
 	"github.com/vmware/govmomi/vim25/mo"
 )
 
-const STORAGE_POD_SENSOR_NAME = "StoragePodSensor"
+const DATACENTER_SENSOR_NAME = "Datacenter"
 
-type StoragePodSensor struct {
+type DatacenterSensor struct {
 	BaseSensor
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
@@ -26,39 +26,38 @@ type StoragePodSensor struct {
 	config        SensorConfig
 }
 
-func NewStoragePodSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *StoragePodSensor {
-	return &StoragePodSensor{
+func NewDatacenterSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *DatacenterSensor {
+	return &DatacenterSensor{
 		BaseSensor: *NewBaseSensor(
-			"StoragePod", []string{
+			"Datacenter", []string{
 				"parent",
 				"name",
-				"summary",
 			}),
 		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
 		manualRefresh:       make(chan struct{}),
 		config:              config,
-		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(STORAGE_POD_SENSOR_NAME)),
-		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(STORAGE_POD_SENSOR_NAME),
+		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(DATACENTER_SENSOR_NAME)),
+		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(DATACENTER_SENSOR_NAME),
 	}
 }
 
-func (s *StoragePodSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
+func (s *DatacenterSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
 	if ok := s.sensorLock.TryLock(); !ok {
 		return ErrSensorAlreadyRunning
 	}
 	defer s.sensorLock.Unlock()
 
-	var spods []mo.StoragePod
-	stats, err := s.baseRefresh(ctx, scraper, &spods)
+	var datacenters []mo.Datacenter
+	stats, err := s.baseRefresh(ctx, scraper, &datacenters)
 	s.MetricHelperDefault.LoadStats(stats)
 	if err != nil {
 		return err
 	}
 
-	for _, spod := range spods {
-		oSpod := ConvertToStoragePod(ctx, scraper, spod, time.Now())
-		err := scraper.DB.SetStoragePod(ctx, oSpod, s.config.MaxAge)
+	for _, dc := range datacenters {
+		oDC := ConvertToDatacenter(ctx, scraper, dc, time.Now())
+		err := scraper.DB.SetDatacenter(ctx, oDC, s.config.MaxAge)
 		if err != nil {
 			return err
 		}
@@ -67,7 +66,7 @@ func (s *StoragePodSensor) refresh(ctx context.Context, scraper *VCenterScraper)
 	return nil
 }
 
-func (s *StoragePodSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+func (s *DatacenterSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
 	if !s.started.IsStarted() {
 		err := s.refresh(ctx, scraper)
 		if err != nil {
@@ -80,7 +79,7 @@ func (s *StoragePodSensor) Init(ctx context.Context, scraper *VCenterScraper) er
 	return nil
 }
 
-func (s *StoragePodSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
+func (s *DatacenterSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
 	go func() {
 		for {
@@ -116,55 +115,45 @@ func (s *StoragePodSensor) StartRefresher(ctx context.Context, scraper *VCenterS
 	return nil
 }
 
-func (s *StoragePodSensor) StopRefresher(ctx context.Context) {
+func (s *DatacenterSensor) StopRefresher(ctx context.Context) {
 	close(s.stopChan)
 }
 
-func (s *StoragePodSensor) TriggerManualRefresh(ctx context.Context) {
+func (s *DatacenterSensor) TriggerManualRefresh(ctx context.Context) {
 	s.manualRefresh <- struct{}{}
 }
 
-func (s *StoragePodSensor) Kind() string {
-	return "StoragePodSensor"
+func (s *DatacenterSensor) Kind() string {
+	return DATACENTER_SENSOR_NAME
 }
 
-func (s *StoragePodSensor) WaitTillStartup() {
+func (s *DatacenterSensor) WaitTillStartup() {
 	s.started.Wait()
 }
 
-func (s *StoragePodSensor) Match(name string) bool {
-	return helper.NewMatcher("storagepod", "storage_pod", "datastore_cluster", "datastorecluster").Match(name)
+func (s *DatacenterSensor) Match(name string) bool {
+	return helper.NewMatcher("datacenter", "dc").Match(name)
 }
 
-func (s *StoragePodSensor) Enabled() bool {
+func (s *DatacenterSensor) Enabled() bool {
 	return true
 }
 
-func ConvertToStoragePod(ctx context.Context, scraper *VCenterScraper, p mo.StoragePod, t time.Time) objects.StoragePod {
-	self := objects.NewManagedObjectReferenceFromVMwareRef(p.Self)
+func ConvertToDatacenter(ctx context.Context, scraper *VCenterScraper, dc mo.Datacenter, t time.Time) objects.Datacenter {
+	self := objects.NewManagedObjectReferenceFromVMwareRef(dc.Self)
 
 	var parent *objects.ManagedObjectReference
-	if p.Parent != nil {
-		p := objects.NewManagedObjectReferenceFromVMwareRef(*p.Parent)
+	if dc.Parent != nil {
+		p := objects.NewManagedObjectReferenceFromVMwareRef(*dc.Parent)
 		parent = &p
 	}
 
-	spod := objects.StoragePod{
+	datacenter := objects.Datacenter{
 		Timestamp: t,
-		Name:      p.Name,
+		Name:      dc.Name,
 		Self:      self,
 		Parent:    parent,
 	}
 
-	if spod.Parent != nil {
-		parentChain := scraper.DB.GetParentChain(ctx, *spod.Parent)
-		spod.Datacenter = parentChain.DC
-	}
-
-	if summary := p.Summary; summary != nil {
-		spod.Capacity = float64(summary.Capacity)
-		spod.FreeSpace = float64(summary.FreeSpace)
-	}
-
-	return spod
+	return datacenter
 }

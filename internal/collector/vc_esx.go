@@ -1,9 +1,9 @@
 package collector
 
 import (
+	"context"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
@@ -38,7 +38,9 @@ type esxCollector struct {
 	systemHealthStatusSensor       *prometheus.Desc
 
 	// only used when advancedStorageMetrics == true
-	hbaStatus                *prometheus.Desc
+	genericHBAStatus *prometheus.Desc
+	iscsiHBAStatus   *prometheus.Desc
+
 	hbaIscsiSendTargetInfo   *prometheus.Desc
 	hbaIscsiStaticTargetInfo *prometheus.Desc
 	multipathPathState       *prometheus.Desc
@@ -56,10 +58,11 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf Config) *esxCollecto
 		labels = append(labels, extraLabels...)
 	}
 
-	infoLabels := append(labels, "os_version", "vendor", "model", "asset_tag", "service_tag")
+	infoLabels := append(labels, "os_version", "vendor", "model", "asset_tag", "service_tag", "bios_version")
 	sysNumLabels := append(labels, "sensor_id", "sensor_name", "sensor_type", "sensor_unit")
 	sysStatusLabels := append(labels, "sensor_type", "sensor_name")
-	hbaLabels := append(labels, "adapter_name", "src_name", "driver", "model")
+	genericHBALabels := append(labels, "adapter_name", "driver", "model")
+	iscsiHBALabels := append(labels, "adapter_name", "iqn", "driver", "model")
 	iscsiHbaSendTargetLabels := append(labels, "adapter_name", "src_name", "driver", "model", "target_address")
 	iscsiHbaStaticTargetLabels := append(labels, "adapter_name", "src_name", "driver", "model", "target_address", "target_name", "discovery_method")
 	multipathLabels := append(labels, "adapter_name", "target_address", "target_name", "disk_name", "datastore")
@@ -128,9 +131,12 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf Config) *esxCollecto
 			"system hardware status sensors", sysStatusLabels, nil),
 
 		//STORAGE
-		hbaStatus: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_status"),
-			"HBA status", hbaLabels, nil),
+		genericHBAStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "generic_hba_status"),
+			"Status of generic HBA cards", genericHBALabels, nil),
+		iscsiHBAStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "iscsi_hba_status"),
+			"Status of iscsi HBA card", iscsiHBALabels, nil),
 		hbaIscsiSendTargetInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_iscsi_send_target_info"),
 			"The configured iSCSI send target entries", iscsiHbaSendTargetLabels, nil),
@@ -170,196 +176,134 @@ func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.scsiLunAccessible
 	ch <- c.hbaIscsiSendTargetInfo
 	ch <- c.hbaIscsiStaticTargetInfo
-	ch <- c.hbaStatus
+	ch <- c.genericHBAStatus
+	ch <- c.iscsiHBAStatus
 	ch <- c.multipathPathState
 	ch <- c.vmNumTotal
 	ch <- c.info
 }
 
 func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
-	if c.scraper.Host == nil {
+	if !c.scraper.Host.Enabled() {
 		return
 	}
-	hostData := c.scraper.Host.GetAllSnapshots()
-	for _, snap := range hostData {
-		timestamp, h := snap.Timestamp, snap.Item
+	ctx := context.Background()
+	for host := range c.scraper.DB.GetAllHostIter(ctx) {
+		extraLabelValues := []string{}
+		objectTags := c.scraper.DB.GetTags(ctx, host.Self)
+		for _, tagCat := range c.extraLabels {
+			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
+		}
 
-		summary := h.Summary
-		qs := summary.QuickStats
-
-		parentChain := c.scraper.GetParentChain(h.Self)
-
-		powerState := ConvertHostSystemPowerStateToValue(h.Runtime.PowerState)
-		connState := ConvertHostSystemConnectionStateToValue(h.Runtime.ConnectionState)
-		maintenance := b2f(h.Runtime.InMaintenanceMode)
-		extraLabelValues := func() []string {
-			result := []string{}
-			for _, tagCat := range c.extraLabels {
-				tag := c.scraper.Tags.GetTag(h.Self, tagCat)
-				if tag != nil {
-					result = append(result, tag.Name)
-				} else {
-					result = append(result, "")
-				}
-			}
-			return result
-		}()
-		labelValues := []string{me2id(h.ManagedEntity), h.Name, parentChain.DC, parentChain.Cluster}
+		labelValues := []string{host.Self.ID(), host.Name, host.Datacenter, host.Cluster}
 		labelValues = append(labelValues, extraLabelValues...)
+		infoLabelValues := append(labelValues, host.OSVersion, host.Vendor, host.Model, host.AssetTag, host.ServiceTag, host.BiosVersion)
 
-		os_version := summary.Config.Product.FullName
-		vendor := summary.Hardware.Vendor
-		model := summary.Hardware.Model
-		asset_tag := ""
-		service_tag := ""
-		for _, i := range summary.Hardware.OtherIdentifyingInfo {
-			if i.IdentifierType.GetElementDescription().Key == "AssetTag" {
-				asset_tag = i.IdentifierValue
-			}
-			if i.IdentifierType.GetElementDescription().Key == "ServiceTag" {
-				service_tag = i.IdentifierValue
-			}
-		}
-		infoLabelValues := append(labelValues, os_version, vendor, model, asset_tag, service_tag)
-
-		if h.Runtime.HealthSystemRuntime != nil {
-			if h.Runtime.HealthSystemRuntime.SystemHealthInfo != nil {
-				for _, info := range h.Runtime.HealthSystemRuntime.SystemHealthInfo.NumericSensorInfo {
-					sysLabelsValues := append(labelValues, info.Id, info.Name, info.SensorType, info.BaseUnits)
-					ch <- prometheus.NewMetricWithTimestamp(timestamp,
-						prometheus.MustNewConstMetric(
-							c.systemHealthNumericSensorValue, prometheus.GaugeValue, float64(info.CurrentReading), sysLabelsValues...,
-						))
-					ch <- prometheus.NewMetricWithTimestamp(timestamp,
-						prometheus.MustNewConstMetric(
-							c.systemHealthNumericSensorState, prometheus.GaugeValue, ConvertHostSystemHardwareStateToValue(info.HealthState.GetElementDescription()), sysLabelsValues...,
-						))
-
-				}
-			}
-			if h.Runtime.HealthSystemRuntime.HardwareStatusInfo != nil {
-				for _, info := range h.Runtime.HealthSystemRuntime.HardwareStatusInfo.MemoryStatusInfo {
-					elementInfo := info.GetHostHardwareElementInfo()
-					sysLabelsValues := append(labelValues, "memory", elementInfo.Name)
-					status := ConvertHostSystemHardwareStateToValue(elementInfo.Status.GetElementDescription())
-					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-						c.systemHealthStatusSensor, prometheus.GaugeValue, status, sysLabelsValues...,
-					))
-				}
-				for _, info := range h.Runtime.HealthSystemRuntime.HardwareStatusInfo.CpuStatusInfo {
-					elementInfo := info.GetHostHardwareElementInfo()
-					sysLabelsValues := append(labelValues, "cpu", elementInfo.Name)
-					status := ConvertHostSystemHardwareStateToValue(elementInfo.Status.GetElementDescription())
-					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-						c.systemHealthStatusSensor, prometheus.GaugeValue, status, sysLabelsValues...,
-					))
-				}
-			}
+		for _, health := range host.SystemHealthNumericSensors {
+			sysLabelsValues := append(labelValues, health.ID, health.Name, health.Type, health.Unit)
+			ch <- prometheus.NewMetricWithTimestamp(host.Timestamp,
+				prometheus.MustNewConstMetric(
+					c.systemHealthNumericSensorValue, prometheus.GaugeValue, health.Value, sysLabelsValues...,
+				))
+			ch <- prometheus.NewMetricWithTimestamp(host.Timestamp,
+				prometheus.MustNewConstMetric(
+					c.systemHealthNumericSensorState, prometheus.GaugeValue, health.HealthStatus(), sysLabelsValues...,
+				))
 		}
 
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+		for _, elementStatus := range host.HardwareStatus {
+			sysLabelsValues := append(labelValues, "memory", elementStatus.Name)
+			ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+				c.systemHealthStatusSensor, prometheus.GaugeValue, elementStatus.HealthStatus(), sysLabelsValues...,
+			))
+		}
+
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 			c.info, prometheus.GaugeValue, 1, infoLabelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.powerState, prometheus.GaugeValue, powerState, labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.powerState, prometheus.GaugeValue, host.PowerStateFloat64(), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.connectionState, prometheus.GaugeValue, connState, labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.connectionState, prometheus.GaugeValue, host.ConnectionStateFloat64(), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.maintenance, prometheus.GaugeValue, maintenance, labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.maintenance, prometheus.GaugeValue, b2f(host.Maintenance), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.uptimeSeconds, prometheus.GaugeValue, float64(summary.QuickStats.Uptime), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.uptimeSeconds, prometheus.GaugeValue, host.UptimeSeconds, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.rebootRequired, prometheus.GaugeValue, b2f(summary.RebootRequired), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.rebootRequired, prometheus.GaugeValue, b2f(host.RebootRequired), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.cpuCoresTotal, prometheus.GaugeValue, float64(summary.Hardware.NumCpuCores), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.cpuCoresTotal, prometheus.GaugeValue, host.CPUCoresTotal, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.cpuThreadsTotal, prometheus.GaugeValue, float64(summary.Hardware.NumCpuThreads), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.cpuThreadsTotal, prometheus.GaugeValue, host.CPUThreadsTotal, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.availCPUMhz, prometheus.GaugeValue, float64(int64(summary.Hardware.NumCpuCores)*int64(summary.Hardware.CpuMhz)), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.availCPUMhz, prometheus.GaugeValue, host.AvailCPUMhz, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.usedCPUMhz, prometheus.GaugeValue, float64(qs.OverallCpuUsage), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.usedCPUMhz, prometheus.GaugeValue, host.UsedCPUMhz, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.availMemBytes, prometheus.GaugeValue, float64(summary.Hardware.MemorySize), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.availMemBytes, prometheus.GaugeValue, host.AvailCPUMhz, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.usedMemBytes, prometheus.GaugeValue, float64(int64(qs.OverallMemoryUsage)*int64(1024*1024)), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.usedMemBytes, prometheus.GaugeValue, host.UsedCPUMhz, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(h.OverallStatus), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.overallStatus, prometheus.GaugeValue, host.OverallStatusFloat64(), labelValues...,
 		))
 
-		vmsOnHost := c.scraper.VM.GetHostVMs(snap.Item.Self)
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.vmNumTotal, prometheus.GaugeValue, float64(len(vmsOnHost)), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+			c.vmNumTotal, prometheus.GaugeValue, host.NumberOfVMs, labelValues...,
 		))
-		if c.enableStorageMetrics && h.Config != nil {
-			if h.Config.StorageDevice != nil {
-				//HBA's
-				for _, adapter := range h.Config.StorageDevice.HostBusAdapter {
-					hbaInterface := reflect.ValueOf(adapter).Elem().Interface()
-					switch hba := hbaInterface.(type) {
-					case types.HostInternetScsiHba:
-						hbaLabelValues := append(labelValues, hba.Device, hba.IScsiName, hba.Driver, cleanString(hba.Model))
-						ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-							c.hbaStatus, prometheus.GaugeValue, ConvertHBAStatusToValue(hba.Status), hbaLabelValues...,
-						))
-						for _, target := range hba.ConfiguredSendTarget {
-							iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port))
-							ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-								c.hbaIscsiSendTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
-							))
-						}
-						for _, target := range hba.ConfiguredStaticTarget {
-							iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port), target.IScsiName, target.DiscoveryMethod)
-							ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-								c.hbaIscsiStaticTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
-							))
-						}
-					// case types.HostBlockHba:
-					// case types.HostFibreChannelHba:
-					// case types.HostParallelScsiHba:
-					// case types.HostPcieHba:
-					// case types.HostRdmaDevice:
-					// case types.HostSerialAttachedHba:
-					// case types.HostTcpHba:
-					default:
-						baseAdapter := adapter.GetHostHostBusAdapter()
-						hbaLabelValues := append(labelValues, baseAdapter.Device, "", baseAdapter.Driver, cleanString(baseAdapter.Model))
-						status := adapter.GetHostHostBusAdapter().Status
-						ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-							c.hbaStatus, prometheus.GaugeValue, ConvertHBAStatusToValue(status), hbaLabelValues...,
-						))
-					}
+		if c.enableStorageMetrics {
+			for _, hba := range host.GenericHBA {
+				hbaLabelValues := append(labelValues, hba.Name, hba.Driver, hba.Model)
+				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+					c.genericHBAStatus, prometheus.GaugeValue, hba.StatusFloat64(), hbaLabelValues...,
+				))
+			}
+
+			for _, hba := range host.IscsiHBA {
+				hbaLabelValues := append(labelValues, hba.Name, hba.IQN, hba.Driver, hba.Model)
+				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+					c.iscsiHBAStatus, prometheus.GaugeValue, hba.StatusFloat64(), hbaLabelValues...,
+				))
+				for _, target := range hba.DiscoveryTarget {
+					iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port))
+					ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+						c.hbaIscsiSendTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
+					))
 				}
-
-				//MultiPath path state
-				multipaths := getHostMultiPathPaths(h)
-				for _, p := range multipaths {
-					pathLabelValues := append(labelValues, p.Device, p.TargetAddress, p.TargetIQN, p.NAA, p.DatastoreName)
-					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-						c.multipathPathState, prometheus.GaugeValue, p.Value(), pathLabelValues...,
+				for _, target := range hba.StaticTarget {
+					iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port), target.IQN, target.DiscoveryMethod)
+					ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+						c.hbaIscsiStaticTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
 					))
 				}
 
-				//Datastore Mount state
-				for _, lun := range getAllScsiLuns(h) {
-					vmfsLabelValues := append(labelValues, lun.Vendor, lun.Model, lun.CanonicalName, lun.Datastore)
-					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-						c.scsiLunMounted, prometheus.GaugeValue, b2f(lun.Mounted), vmfsLabelValues...,
-					))
-					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-						c.scsiLunAccessible, prometheus.GaugeValue, b2f(lun.Accessable), vmfsLabelValues...,
-					))
-				}
+			}
+
+			for _, p := range host.IscsiMultiPathPaths {
+				pathLabelValues := append(labelValues, p.Device, p.TargetAddress, p.TargetIQN, p.NAA, p.DatastoreName)
+				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+					c.multipathPathState, prometheus.GaugeValue, p.StateFloat64(), pathLabelValues...,
+				))
+			}
+
+			for _, lun := range host.SCSILuns {
+				vmfsLabelValues := append(labelValues, lun.Vendor, lun.Model, lun.CanonicalName, lun.Datastore)
+				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+					c.scsiLunMounted, prometheus.GaugeValue, b2f(lun.Mounted), vmfsLabelValues...,
+				))
+				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+					c.scsiLunAccessible, prometheus.GaugeValue, b2f(lun.Accessible), vmfsLabelValues...,
+				))
 			}
 		}
 	}
@@ -540,72 +484,4 @@ func getAllScsiLuns(host mo.HostSystem) []scsiLun {
 		}
 	}
 	return result
-}
-
-// Converters
-func ConvertHostSystemPowerStateToValue(s types.HostSystemPowerState) float64 {
-	if s == types.HostSystemPowerStateStandBy {
-		return 1.0
-	} else if s == types.HostSystemPowerStatePoweredOn {
-		return 2.0
-	}
-	return 0
-}
-
-func ConvertHostSystemConnectionStateToValue(s types.HostSystemConnectionState) float64 {
-	if s == types.HostSystemConnectionStateNotResponding {
-		return 1.0
-	} else if s == types.HostSystemConnectionStateConnected {
-		return 2.0
-	}
-	return 0
-}
-
-func ConvertHostSystemStandbyModeToValue(s types.HostStandbyMode) float64 {
-	if s == types.HostStandbyModeExiting {
-		return 1.0
-	} else if s == types.HostStandbyModeEntering {
-		return 2.0
-	} else if s == types.HostStandbyModeIn {
-		return 3.0
-	}
-	return 0
-}
-
-func ConvertHostSystemHardwareStateToValue(s *types.ElementDescription) float64 {
-	if s == nil {
-		return 0
-	} else if strings.EqualFold(s.Key, "Red") {
-		return 1.0
-	} else if strings.EqualFold(s.Key, "Yellow") {
-		return 2.0
-	} else if strings.EqualFold(s.Key, "Green") {
-		return 3.0
-	}
-	return 0
-}
-
-func ConvertMultipathStateToValue(s types.MultipathState) float64 {
-	if s == types.MultipathStateDead {
-		return 1.0
-	} else if s == types.MultipathStateDisabled {
-		return 2.0
-	} else if s == types.MultipathStateStandby {
-		return 3.0
-	} else if s == types.MultipathStateActive {
-		return 4.0
-	}
-	return 0
-}
-
-func ConvertHBAStatusToValue(status string) float64 {
-	// Valid values include "online", "offline", "unbound", and "unknown".
-	if strings.EqualFold(status, "unbound") {
-		return 1.0
-	} else if strings.EqualFold(status, "offline") {
-		return 2.0
-	} else if strings.EqualFold(status, "online") {
-		return 3.0
-	}
-	return 0
 }

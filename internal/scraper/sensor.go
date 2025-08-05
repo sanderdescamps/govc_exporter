@@ -7,7 +7,8 @@ import (
 )
 
 type Sensor interface {
-	StartRefresher(ctx context.Context, scraper *VCenterScraper)
+	Init(ctx context.Context, scraper *VCenterScraper) error
+	StartRefresher(ctx context.Context, scraper *VCenterScraper) error
 	StopRefresher(ctx context.Context)
 	Enabled() bool
 	Kind() string

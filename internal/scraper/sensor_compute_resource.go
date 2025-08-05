@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
 	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
@@ -18,7 +19,7 @@ type ComputeResourceSensor struct {
 	BaseSensor
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
-	started       helper.StartedCheck
+	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
 	manualRefresh chan struct{}
 	stopChan      chan struct{}
@@ -33,7 +34,9 @@ func NewComputeResourceSensor(scraper *VCenterScraper, config SensorConfig, l *s
 				"name",
 				"summary",
 			}),
+		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
+		manualRefresh:       make(chan struct{}),
 		config:              config,
 		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(COMPUTE_RESOURCE_SENSOR_NAME)),
 		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(COMPUTE_RESOURCE_SENSOR_NAME),
@@ -41,6 +44,11 @@ func NewComputeResourceSensor(scraper *VCenterScraper, config SensorConfig, l *s
 }
 
 func (s *ComputeResourceSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
+	if ok := s.sensorLock.TryLock(); !ok {
+		return ErrSensorAlreadyRunning
+	}
+	defer s.sensorLock.Unlock()
+
 	var computeResources []mo.ComputeResource
 	stats, err := s.baseRefresh(ctx, scraper, &computeResources)
 	s.MetricHelperDefault.LoadStats(stats)
@@ -48,8 +56,9 @@ func (s *ComputeResourceSensor) refresh(ctx context.Context, scraper *VCenterScr
 		return err
 	}
 
-	for _, cluster := range computeResources {
-		err := scraper.DB.SetComputeResource(ctx, &cluster, s.config.MaxAge)
+	for _, compResource := range computeResources {
+		oCompResource := ConvertToComputeResource(ctx, scraper, compResource, time.Now())
+		err := scraper.DB.SetComputeResource(ctx, oCompResource, s.config.MaxAge)
 		if err != nil {
 			return err
 		}
@@ -58,35 +67,53 @@ func (s *ComputeResourceSensor) refresh(ctx context.Context, scraper *VCenterScr
 	return nil
 }
 
-func (s *ComputeResourceSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
+func (s *ComputeResourceSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	if !s.started.IsStarted() {
+		err := s.refresh(ctx, scraper)
+		if err != nil {
+			return err
+		}
+		s.started.Started()
+	} else {
+		return ErrSensorAlreadyStarted
+	}
+	return nil
+}
+
+func (s *ComputeResourceSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
-	defer ticker.Stop()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				s.refresh(ctx, scraper)
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("refresh successful")
-				} else {
-					s.SensorLogger.Error("refresh failed", "err", err)
-				}
-				s.started.Started()
+				go func() {
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("refresh successful")
+					} else {
+						s.SensorLogger.Error("refresh failed", "err", err)
+					}
+				}()
 			case <-s.manualRefresh:
-				s.SensorLogger.Info("trigger manual refresh")
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("manual refresh successful")
-				} else {
-					s.SensorLogger.Error("manual refresh failed", "err", err)
-				}
+				go func() {
+					s.SensorLogger.Info("trigger manual refresh")
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("manual refresh successful")
+					} else {
+						s.SensorLogger.Error("manual refresh failed", "err", err)
+					}
+				}()
 			case <-s.stopChan:
 				s.started.Stopped()
-				return
+				ticker.Stop()
+			case <-ctx.Done():
+				s.started.Stopped()
+				ticker.Stop()
 			}
 		}
 	}()
+	return nil
 }
 
 func (s *ComputeResourceSensor) StopRefresher(ctx context.Context) {
@@ -106,9 +133,28 @@ func (s *ComputeResourceSensor) WaitTillStartup() {
 }
 
 func (s *ComputeResourceSensor) Match(name string) bool {
-	return helper.NewMatcher("keyword").Match(name)
+	return helper.NewMatcher("compute-resource", "computeresource").Match(name)
 }
 
 func (s *ComputeResourceSensor) Enabled() bool {
 	return true
+}
+
+func ConvertToComputeResource(ctx context.Context, scraper *VCenterScraper, r mo.ComputeResource, t time.Time) objects.ComputeResource {
+	self := objects.NewManagedObjectReferenceFromVMwareRef(r.Self)
+
+	var parent *objects.ManagedObjectReference
+	if r.Parent != nil {
+		p := objects.NewManagedObjectReferenceFromVMwareRef(*r.Parent)
+		parent = &p
+	}
+
+	computeResource := objects.ComputeResource{
+		Timestamp: t,
+		Name:      r.Name,
+		Self:      self,
+		Parent:    parent,
+	}
+
+	return computeResource
 }

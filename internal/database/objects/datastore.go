@@ -10,13 +10,13 @@ type Datastore struct {
 	Self             ManagedObjectReference   `json:"self"`
 	Parent           *ManagedObjectReference  `json:"parent"`
 	Name             string                   `json:"name"`
-	Cluster          string                   `json:"cluster"`
+	DatastoreCluster string                   `json:"datastore_cluster"`
 	Kind             string                   `json:"kind"`
 	Capacity         float64                  `json:"capacity"`
 	FreeSpace        float64                  `json:"free_space"`
 	Accessible       bool                     `json:"accessible"`
 	Maintenance      string                   `json:"maintenance"`
-	OverallStatus    float64                  `json:"overall_status"`
+	OverallStatus    string                   `json:"overall_status"`
 	HostAccessible   float64                  `json:"host_accessible"`
 	HostMounted      float64                  `json:"host_mounted"`
 	HostVmknicActive float64                  `json:"host_vmknic_active"`
@@ -28,13 +28,23 @@ type Datastore struct {
 // 0=> running, not in maintenance
 // 1=> entering maintenance
 // 2=> in maintenance
-func (d Datastore) MaintenanceStatus() float64 {
+func (d *Datastore) MaintenanceStatusFloat64() float64 {
 	if strings.EqualFold(d.Maintenance, "enteringMaintenance") {
 		return 1.0
 	} else if strings.EqualFold(d.Maintenance, "inMaintenance") {
 		return 2.0
 	}
 	return 0
+}
+
+// Return OverallStatus as float64
+//
+//	0 => (Gray) The status is unknown.
+//	1 => (Red) The entity definitely has a problem.
+//	2 => (Yellow) The entity might have a problem.
+//	3 => (Green) The entity is OK.
+func (d *Datastore) OverallStatusFloat64() float64 {
+	return ColorToFloat64(d.OverallStatus)
 }
 
 type DatastoreVmfsInfo struct {

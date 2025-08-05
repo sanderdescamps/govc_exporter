@@ -9,8 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
-	"runtime/pprof"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -37,22 +35,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	if cpuPProf := os.Getenv("CPU_PPROF"); cpuPProf != "" {
-		if pprofEnabled, err := strconv.ParseBool(cpuPProf); err == nil && pprofEnabled {
+	// if cpuPProf := os.Getenv("CPU_PPROF"); cpuPProf != "" {
+	// 	if pprofEnabled, err := strconv.ParseBool(cpuPProf); err == nil && pprofEnabled {
 
-			pprofFile, err := createPProfFile("global-CPU")
-			if err != nil {
-				panic(err)
-			}
-			defer pprofFile.Close()
+	// 		pprofFile, err := createPProfFile("global-CPU")
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 		defer pprofFile.Close()
 
-			if err := pprof.StartCPUProfile(pprofFile); err != nil {
-				panic(err)
-			}
-			defer pprof.StopCPUProfile()
-		}
+	// 		if err := pprof.StartCPUProfile(pprofFile); err != nil {
+	// 			panic(err)
+	// 		}
+	// 		defer pprof.StopCPUProfile()
+	// 	}
 
-	}
+	// }
 	run(ctx)
 }
 
@@ -76,12 +74,12 @@ func run(ctx context.Context) {
 
 	//Scraper
 	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
-	scrap, err := scraper.NewVCenterScraper(ctxScraper, *config.ScraperConfig)
+	scrap, err := scraper.NewVCenterScraper(ctxScraper, *config.ScraperConfig, logger)
 	if err != nil {
 		logger.Error("Failed to create VCenterScraper", "err", err)
 		return
 	}
-	err = scrap.Start(ctxScraper)
+	err = scrap.Start(ctxScraper, logger)
 	if err != nil {
 		logger.Error("Failed to start VCenterScraper", "err", err)
 		return
@@ -100,13 +98,12 @@ func run(ctx context.Context) {
 	}
 
 	http.Handle(config.MetricPath, coll.GetMetricHandler())
-	// http.Handle("/pprof/metrics", coll.GetMetricHandlerCPUPProf("metrics"))
 	if config.AllowManualRefresh {
 		http.Handle("/refresh/{sensor}", coll.GetRefreshHandler())
 	}
 	if config.AllowDumps {
-		http.Handle("/dump", coll.GetDumpHandler())
-		http.Handle("/dump/{sensor}", coll.GetDumpHandler())
+		http.Handle("/dump", scraper.GetDumpHandler(*scrap, logger))
+		http.Handle("/dump/{sensor}", scraper.GetDumpHandler(*scrap, logger))
 	}
 	http.Handle("/", defaultHandler(config.MetricPath))
 
@@ -128,7 +125,7 @@ func run(ctx context.Context) {
 		if err != nil {
 			shutdown <- err
 		}
-		scrap.Stop(ctx)
+		scrap.Stop(ctx, logger)
 		shutdown <- nil
 	}()
 	select {

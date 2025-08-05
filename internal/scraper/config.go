@@ -22,6 +22,8 @@ type Config struct {
 	Cluster            SensorConfig
 	ComputeResource    SensorConfig
 	Datastore          SensorConfig
+	Datacenter         SensorConfig
+	Folder             SensorConfig
 	Host               SensorConfig
 	HostPerf           PerfSensorConfig
 	ResourcePool       SensorConfig
@@ -99,6 +101,18 @@ func DefaultConfig() Config {
 			CleanInterval:   5 * time.Second,
 		},
 		ResourcePool: SensorConfig{
+			Enabled:         true,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
+		},
+		Datacenter: SensorConfig{
+			Enabled:         true,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
+		},
+		Folder: SensorConfig{
 			Enabled:         true,
 			MaxAge:          120 * time.Second,
 			RefreshInterval: 60 * time.Second,
@@ -194,9 +208,10 @@ func (c Config) Endpoint() string {
 	if groups[3] != "" {
 		port, _ = strconv.Atoi(groups[3])
 	} else {
-		if scheme == "https" {
+		switch scheme {
+		case "https":
 			port = 443
-		} else if scheme == "http" {
+		case "http":
 			port = 80
 		}
 	}

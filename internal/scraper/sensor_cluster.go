@@ -11,7 +11,6 @@ import (
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
 	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
 	"github.com/vmware/govmomi/vim25/mo"
-	"github.com/vmware/govmomi/vim25/types"
 )
 
 const CLUSTER_SENSOR_NAME = "ClusterSensor"
@@ -20,7 +19,7 @@ type ClusterSensor struct {
 	BaseSensor
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
-	started       helper.StartedCheck
+	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
 	manualRefresh chan struct{}
 	stopChan      chan struct{}
@@ -28,15 +27,16 @@ type ClusterSensor struct {
 }
 
 func NewClusterSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *ClusterSensor {
-	var sensor ClusterSensor
-	sensor = ClusterSensor{
+	var sensor ClusterSensor = ClusterSensor{
 		BaseSensor: *NewBaseSensor(
 			"ClusterComputeResource", []string{
 				"parent",
 				"name",
 				"summary",
 			}),
+		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
+		manualRefresh:       make(chan struct{}),
 		config:              config,
 		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(CLUSTER_SENSOR_NAME)),
 		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(CLUSTER_SENSOR_NAME),
@@ -46,6 +46,11 @@ func NewClusterSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logg
 }
 
 func (s *ClusterSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
+	if ok := s.sensorLock.TryLock(); !ok {
+		return ErrSensorAlreadyRunning
+	}
+	defer s.sensorLock.Unlock()
+
 	var clusters []mo.ClusterComputeResource
 	stats, err := s.baseRefresh(ctx, scraper, &clusters)
 	s.MetricHelperDefault.LoadStats(stats)
@@ -55,7 +60,7 @@ func (s *ClusterSensor) refresh(ctx context.Context, scraper *VCenterScraper) er
 
 	for _, cluster := range clusters {
 		oCluster := ConvertToCluster(ctx, scraper, cluster, time.Now())
-		err := scraper.DB.SetCluster(ctx, &oCluster, s.config.MaxAge)
+		err := scraper.DB.SetCluster(ctx, oCluster, s.config.MaxAge)
 		if err != nil {
 			return err
 		}
@@ -64,35 +69,54 @@ func (s *ClusterSensor) refresh(ctx context.Context, scraper *VCenterScraper) er
 	return nil
 }
 
-func (s *ClusterSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
+func (s *ClusterSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	if !s.started.IsStarted() {
+		err := s.refresh(ctx, scraper)
+		if err != nil {
+			return err
+		}
+		s.started.Started()
+	} else {
+		return ErrSensorAlreadyStarted
+	}
+	return nil
+}
+
+func (s *ClusterSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
-	defer ticker.Stop()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				s.refresh(ctx, scraper)
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("refresh successful")
-				} else {
-					s.SensorLogger.Error("refresh failed", "err", err)
-				}
-				s.started.Started()
+				go func() {
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("refresh successful")
+					} else {
+						s.SensorLogger.Error("refresh failed", "err", err)
+					}
+				}()
 			case <-s.manualRefresh:
-				s.SensorLogger.Info("trigger manual refresh")
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("manual refresh successful")
-				} else {
-					s.SensorLogger.Error("manual refresh failed", "err", err)
-				}
+				go func() {
+					s.SensorLogger.Info("trigger manual refresh")
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("manual refresh successful")
+					} else {
+						s.SensorLogger.Error("manual refresh failed", "err", err)
+					}
+				}()
 			case <-s.stopChan:
 				s.started.Stopped()
-				return
+				ticker.Stop()
+			case <-ctx.Done():
+				s.started.Stopped()
+				ticker.Stop()
 			}
 		}
 	}()
+
+	return nil
 }
 
 func (s *ClusterSensor) StopRefresher(ctx context.Context) {
@@ -112,7 +136,7 @@ func (s *ClusterSensor) WaitTillStartup() {
 }
 
 func (s *ClusterSensor) Match(name string) bool {
-	return helper.NewMatcher("keyword").Match(name)
+	return helper.NewMatcher("cluster").Match(name)
 }
 
 func (s *ClusterSensor) Enabled() bool {
@@ -120,11 +144,11 @@ func (s *ClusterSensor) Enabled() bool {
 }
 
 func ConvertToCluster(ctx context.Context, scraper *VCenterScraper, c mo.ClusterComputeResource, t time.Time) objects.Cluster {
-	self := objects.NewManagedObjectReference(c.Self.Type, c.Self.Value)
+	self := objects.NewManagedObjectReferenceFromVMwareRef(c.Self)
 
 	var parent *objects.ManagedObjectReference
 	if c.Parent != nil {
-		p := objects.NewManagedObjectReference(parent.Type, parent.Value)
+		p := objects.NewManagedObjectReferenceFromVMwareRef(*c.Parent)
 		parent = &p
 	}
 
@@ -136,7 +160,7 @@ func ConvertToCluster(ctx context.Context, scraper *VCenterScraper, c mo.Cluster
 	}
 
 	if cluster.Parent != nil {
-		parentChain := scraper.GetParentChain(*cluster.Parent)
+		parentChain := scraper.DB.GetParentChain(ctx, *cluster.Parent)
 		cluster.Datacenter = parentChain.DC
 	}
 
@@ -149,18 +173,8 @@ func ConvertToCluster(ctx context.Context, scraper *VCenterScraper, c mo.Cluster
 		cluster.NumCPUThreads = float64(summary.NumCpuThreads)
 		cluster.NumEffectiveHosts = float64(summary.NumEffectiveHosts)
 		cluster.NumHosts = float64(summary.NumHosts)
-		cluster.OverallStatus = ConvertManagedEntityStatusToValue(summary.OverallStatus)
+		cluster.OverallStatus = string(summary.OverallStatus)
 	}
-	return cluster
-}
 
-func ConvertManagedEntityStatusToValue(s types.ManagedEntityStatus) float64 {
-	if s == types.ManagedEntityStatusRed {
-		return 1.0
-	} else if s == types.ManagedEntityStatusYellow {
-		return 2.0
-	} else if s == types.ManagedEntityStatusGreen {
-		return 3.0
-	}
-	return 0
+	return cluster
 }

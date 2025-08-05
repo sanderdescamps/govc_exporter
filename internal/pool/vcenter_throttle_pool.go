@@ -53,26 +53,6 @@ func (p *VCenterThrottlePool) Reauthenticate() error {
 	}
 	defer release()
 
-	// if client == nil || client.Client == nil {
-	// 	client, err := NewVCenterClient(p.endpoint, p.username, p.password)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	p.poolObject = client
-	// } else {
-	// 	ctx := context.Background()
-	// 	session, err := p.poolObject.SessionManager.UserSession(ctx)
-	// 	if err != nil {
-	// 		return err
-	// 	} else if session == nil {
-	// 		userInfo := url.UserPassword(p.username, p.password)
-	// 		err := p.poolObject.Login(ctx, userInfo)
-	// 		if err != nil {
-	// 			return err
-	// 		}
-	// 	}
-	// }
-
 	client, err := NewVCenterClient(p.endpoint, p.username, p.password)
 	if err != nil {
 		return err
@@ -83,13 +63,17 @@ func (p *VCenterThrottlePool) Reauthenticate() error {
 }
 
 func (p *VCenterThrottlePool) Acquire() (*govmomi.Client, func(), error) {
+	ctx := context.Background()
+	return p.AcquireWithContext(ctx)
+}
+
+func (p *VCenterThrottlePool) AcquireWithContext(ctx context.Context) (*govmomi.Client, func(), error) {
 	var authErr error
 	for retry := 0; retry < 2; retry++ {
-		client, release, err := p.ThrottlerPool.Acquire()
+		client, release, err := p.ThrottlerPool.AcquireWithContext(ctx)
 		if err != nil {
 			return nil, release, err
 		}
-		ctx := context.Background()
 		if session, sessionErr := client.SessionManager.UserSession(ctx); session == nil {
 			release()
 			authErr = p.Reauthenticate()
@@ -107,13 +91,17 @@ func (p *VCenterThrottlePool) Acquire() (*govmomi.Client, func(), error) {
 }
 
 func (p *VCenterThrottlePool) AcquireRest() (*rest.Client, func(), error) {
-	client, release, err := p.Acquire()
+	ctx := context.Background()
+	return p.AcquireRestWithContext(ctx)
+}
+
+func (p *VCenterThrottlePool) AcquireRestWithContext(ctx context.Context) (*rest.Client, func(), error) {
+	client, release, err := p.AcquireWithContext(ctx)
 	if err != nil {
 		return nil, release, err
 	}
 
 	restClient := rest.NewClient(client.Client)
-	ctx := context.Background()
 	userInfo := url.UserPassword(p.username, p.password)
 	if err := restClient.Login(ctx, userInfo); err != nil {
 		return nil, release, fmt.Errorf("failed to login rest client: %w", err)
@@ -121,8 +109,8 @@ func (p *VCenterThrottlePool) AcquireRest() (*rest.Client, func(), error) {
 	return restClient, release, nil
 }
 
-func (p *VCenterThrottlePool) Destroy() {
+func (p *VCenterThrottlePool) Destroy(ctx context.Context) {
 	if p.poolObject != nil {
-		p.poolObject.Logout(context.Background())
+		p.poolObject.Logout(ctx)
 	}
 }

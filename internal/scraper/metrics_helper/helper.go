@@ -56,13 +56,13 @@ func (h *MetricHelperDefault) GetLatestMetrics() []SensorMetric {
 		Sensor:     h.sensorName,
 		MetricName: "client_wait_time",
 		Value:      float64(h.clientWaitTime.Latest().Nanoseconds()),
-		Unit:       "namoseconds",
+		Unit:       "nanoseconds",
 	})
 	result = append(result, SensorMetric{
 		Sensor:     h.sensorName,
 		MetricName: "query_time",
 		Value:      float64(h.queryTime.Latest().Nanoseconds()),
-		Unit:       "namoseconds",
+		Unit:       "nanoseconds",
 	})
 	result = append(result, SensorMetric{
 		Sensor:     h.sensorName,

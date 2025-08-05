@@ -21,7 +21,7 @@ type DatastoreSensor struct {
 	BaseSensor
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
-	started       helper.StartedCheck
+	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
 	manualRefresh chan struct{}
 	stopChan      chan struct{}
@@ -37,7 +37,9 @@ func NewDatastoreSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Lo
 				"summary",
 				"info",
 			}),
+		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
+		manualRefresh:       make(chan struct{}),
 		config:              config,
 		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(DATASTORE_SENSOR_NAME)),
 		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(DATASTORE_SENSOR_NAME),
@@ -45,6 +47,11 @@ func NewDatastoreSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Lo
 }
 
 func (s *DatastoreSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
+	if ok := s.sensorLock.TryLock(); !ok {
+		return ErrSensorAlreadyRunning
+	}
+	defer s.sensorLock.Unlock()
+
 	var datastores []mo.Datastore
 	stats, err := s.baseRefresh(ctx, scraper, &datastores)
 	s.MetricHelperDefault.LoadStats(stats)
@@ -54,7 +61,7 @@ func (s *DatastoreSensor) refresh(ctx context.Context, scraper *VCenterScraper) 
 
 	for _, ds := range datastores {
 		oDS := ConvertToDatastore(ctx, scraper, ds, time.Now())
-		err := scraper.DB.SetDatastore(ctx, &oDS, s.config.MaxAge)
+		err := scraper.DB.SetDatastore(ctx, oDS, s.config.MaxAge)
 		if err != nil {
 			return err
 		}
@@ -63,35 +70,53 @@ func (s *DatastoreSensor) refresh(ctx context.Context, scraper *VCenterScraper) 
 	return nil
 }
 
-func (s *DatastoreSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
+func (s *DatastoreSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	if !s.started.IsStarted() {
+		err := s.refresh(ctx, scraper)
+		if err != nil {
+			return err
+		}
+		s.started.Started()
+	} else {
+		return ErrSensorAlreadyStarted
+	}
+	return nil
+}
+
+func (s *DatastoreSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
-	defer ticker.Stop()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				s.refresh(ctx, scraper)
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("refresh successful")
-				} else {
-					s.SensorLogger.Error("refresh failed", "err", err)
-				}
-				s.started.Started()
+				go func() {
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("refresh successful")
+					} else {
+						s.SensorLogger.Error("refresh failed", "err", err)
+					}
+				}()
 			case <-s.manualRefresh:
-				s.SensorLogger.Info("trigger manual refresh")
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("manual refresh successful")
-				} else {
-					s.SensorLogger.Error("manual refresh failed", "err", err)
-				}
+				go func() {
+					s.SensorLogger.Info("trigger manual refresh")
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("manual refresh successful")
+					} else {
+						s.SensorLogger.Error("manual refresh failed", "err", err)
+					}
+				}()
 			case <-s.stopChan:
 				s.started.Stopped()
-				return
+				ticker.Stop()
+			case <-ctx.Done():
+				s.started.Stopped()
+				ticker.Stop()
 			}
 		}
 	}()
+	return nil
 }
 
 func (s *DatastoreSensor) StopRefresher(ctx context.Context) {
@@ -111,7 +136,7 @@ func (s *DatastoreSensor) WaitTillStartup() {
 }
 
 func (s *DatastoreSensor) Match(name string) bool {
-	return helper.NewMatcher("keyword").Match(name)
+	return helper.NewMatcher("datastore", "ds").Match(name)
 }
 
 func (s *DatastoreSensor) Enabled() bool {
@@ -119,11 +144,11 @@ func (s *DatastoreSensor) Enabled() bool {
 }
 
 func ConvertToDatastore(ctx context.Context, scraper *VCenterScraper, d mo.Datastore, t time.Time) objects.Datastore {
-	self := objects.NewManagedObjectReference(d.Self.Type, d.Self.Value)
+	self := objects.NewManagedObjectReferenceFromVMwareRef(d.Self)
 
 	var parent *objects.ManagedObjectReference
 	if d.Parent != nil {
-		p := objects.NewManagedObjectReference(parent.Type, parent.Value)
+		p := objects.NewManagedObjectReferenceFromVMwareRef(*d.Parent)
 		parent = &p
 	}
 
@@ -143,8 +168,8 @@ func ConvertToDatastore(ctx context.Context, scraper *VCenterScraper, d mo.Datas
 	}
 
 	if datastore.Parent != nil {
-		parentChain := scraper.GetParentChain(*datastore.Parent)
-		datastore.Cluster = parentChain.SPOD
+		parentChain := scraper.DB.GetParentChain(ctx, *datastore.Parent)
+		datastore.DatastoreCluster = parentChain.SPOD
 	}
 
 	summary := d.Summary
@@ -152,10 +177,9 @@ func ConvertToDatastore(ctx context.Context, scraper *VCenterScraper, d mo.Datas
 	datastore.Capacity = float64(summary.Capacity)
 	datastore.FreeSpace = float64(summary.FreeSpace)
 	datastore.Maintenance = summary.MaintenanceMode
-	datastore.OverallStatus = ConvertManagedEntityStatusToValue(d.OverallStatus)
 
 	for _, hostMountInfo := range d.Host {
-		hostMountInfoRef := objects.NewManagedObjectReference(hostMountInfo.Key.Type, hostMountInfo.Key.Value)
+		hostMountInfoRef := objects.NewManagedObjectReferenceFromVMwareRef(hostMountInfo.Key)
 		host := scraper.DB.GetHost(ctx, hostMountInfoRef)
 		datastore.HostMountInfo = append(datastore.HostMountInfo, objects.DatastoreHostMountInfo{
 			Host:            host.Name,
@@ -165,6 +189,8 @@ func ConvertToDatastore(ctx context.Context, scraper *VCenterScraper, d mo.Datas
 			VmknicActiveNic: hostMountInfo.MountInfo.VmknicActive != nil && *hostMountInfo.MountInfo.VmknicActive,
 		})
 	}
+
+	datastore.OverallStatus = string(d.OverallStatus)
 
 	return datastore
 }

@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/prometheus/common/promslog"
+	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/property"
@@ -59,75 +59,18 @@ func TestVCenterScraper(t *testing.T) {
 	ctx := context.Background()
 	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
 
-	aCache, _ := scraper.NewVCenterScraper(ctxScraper, conf)
+	scraper, _ := scraper.NewVCenterScraper(ctxScraper, conf, logger)
 
-	t1 := time.Now()
-	aCache.Host.Refresh(ctxScraper)
-	t2 := time.Now()
-	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
-
-	aCache.Datastore.Refresh(ctxScraper)
-	t3 := time.Now()
-	fmt.Printf("fetching all datastores took %dms\n", t3.Sub(t2).Milliseconds())
-
-	aCache.SPOD.Refresh(ctxScraper)
-	t4 := time.Now()
-	fmt.Printf("fetching all spod took %dms\n", t4.Sub(t3).Milliseconds())
-
-	aCache.VM.Refresh(ctxScraper)
-	t5 := time.Now()
-	fmt.Printf("fetching all VMs took %dms\n", t5.Sub(t4).Milliseconds())
-
-	aCache.Cluster.Refresh(ctxScraper)
-	t6 := time.Now()
-	fmt.Printf("fetching all clusters took %dms\n", t6.Sub(t5).Milliseconds())
-
-	aCache.Tags.Refresh(ctxScraper)
-	t7 := time.Now()
-	fmt.Printf("fetching all tags took %dms\n", t7.Sub(t6).Milliseconds())
-	// for _, cat := range conf.TagsCategoryToCollect {
-	// 	catID := aCache.Tags.GetCategoryID(cat)
-	// 	for _, ref := range aCache.Tags.GetAllRefs() {
-	// 		tags := aCache.Tags.Get(ref)
-	// 		tagString := []string{}
-	// 		for _, tag := range tags {
-	// 			tagString = append(tagString)
-	// 		}
-	// 		fmt.Printf("tags for %s\n", ref)
-	// 	}
-	// }
-
-	fmt.Print("end")
-}
-
-func TestVCenterScraperStart(t *testing.T) {
-
-	conf := scraper.DefaultConfig()
-
-	conf.VCenter = "https://localhost:8989"
-	conf.Username = "testuser"
-	conf.Password = "testpass"
-	conf.Tags.CategoryToCollect = []string{"tenants"}
-
-	err := conf.Validate()
-	if err != nil {
-		t.Fatalf("Config validation failed: %v", err)
-	}
-
-	promlogConfig := &promslog.Config{
-		// Level:
-	}
-	logger := promslog.New(promlogConfig)
-	ctx := context.Background()
-	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
-
-	aCache, _ := scraper.NewVCenterScraper(ctxScraper, conf)
-
-	sensors := aCache.SensorList()
+	sensors := scraper.SensorList()
 	for _, sensor := range sensors {
-		logger.Info("Sensor", "name", sensor.Name(), "kind", sensor.Kind())
+		logger.Info("Sensor", "kind", sensor.Kind())
 	}
-	aCache.Start(ctxScraper)
+	scraper.Start(ctxScraper, logger)
+	logger.Info("test finished")
+
+	chain := scraper.DB.GetParentChain(ctx, objects.NewManagedObjectReference(objects.ManagedObjectTypesHost, "host-16064"))
+	logger.Info("parent chain", "chain", chain)
+	fmt.Print("end")
 
 }
 
@@ -732,38 +675,38 @@ func TestVMwareVMperHost2(t *testing.T) {
 	}
 }
 
-func TestHostPerf(t *testing.T) {
+// func TestHostPerf(t *testing.T) {
 
-	conf := scraper.DefaultConfig()
-	conf.VCenter = "https://localhost:8989"
-	conf.Username = "testuser"
-	conf.Password = "testpass"
-	conf.Tags.CategoryToCollect = []string{"tenants"}
+// 	conf := scraper.DefaultConfig()
+// 	conf.VCenter = "https://localhost:8989"
+// 	conf.Username = "testuser"
+// 	conf.Password = "testpass"
+// 	conf.Tags.CategoryToCollect = []string{"tenants"}
 
-	err := conf.Validate()
-	if err != nil {
-		t.Fatalf("Config validation failed: %v", err)
-	}
+// 	err := conf.Validate()
+// 	if err != nil {
+// 		t.Fatalf("Config validation failed: %v", err)
+// 	}
 
-	promlogConfig := &promslog.Config{
-		// Level:
-	}
-	logger := promslog.New(promlogConfig)
-	ctx := context.Background()
-	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
+// 	promlogConfig := &promslog.Config{
+// 		// Level:
+// 	}
+// 	logger := promslog.New(promlogConfig)
+// 	ctx := context.Background()
+// 	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
 
-	aCache, _ := scraper.NewVCenterScraper(ctxScraper, conf)
-	aCache.Host.Refresh(ctxScraper)
+// 	aCache, _ := scraper.NewVCenterScraper(ctxScraper, conf)
+// 	aCache.Host.Refresh(ctxScraper)
 
-	t1 := time.Now()
-	err = aCache.HostPerf.Refresh(ctxScraper)
-	t2 := time.Now()
+// 	t1 := time.Now()
+// 	err = aCache.HostPerf.Refresh(ctxScraper)
+// 	t2 := time.Now()
 
-	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
-	if err != nil {
-		logger.Error("error fetching metrics", "err", err)
-	}
-}
+// 	fmt.Printf("fetching all hosts took %dms\n", t2.Sub(t1).Milliseconds())
+// 	if err != nil {
+// 		logger.Error("error fetching metrics", "err", err)
+// 	}
+// }
 
 // func TestVMwareCache(t *testing.T) {
 // 	activeCache := collector.NewVCenterScraper(collector.VMwareConfig{

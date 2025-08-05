@@ -13,9 +13,9 @@ import (
 	"github.com/vmware/govmomi/vim25/mo"
 )
 
-const STORAGE_POD_SENSOR_NAME = "StoragePodSensor"
+const FOLDER_SENSOR_NAME = "Folder"
 
-type StoragePodSensor struct {
+type FolderSensor struct {
 	BaseSensor
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
@@ -26,39 +26,38 @@ type StoragePodSensor struct {
 	config        SensorConfig
 }
 
-func NewStoragePodSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *StoragePodSensor {
-	return &StoragePodSensor{
+func NewFolderSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *FolderSensor {
+	return &FolderSensor{
 		BaseSensor: *NewBaseSensor(
-			"StoragePod", []string{
+			"Folder", []string{
 				"parent",
 				"name",
-				"summary",
 			}),
 		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
 		manualRefresh:       make(chan struct{}),
 		config:              config,
-		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(STORAGE_POD_SENSOR_NAME)),
-		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(STORAGE_POD_SENSOR_NAME),
+		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(FOLDER_SENSOR_NAME)),
+		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(FOLDER_SENSOR_NAME),
 	}
 }
 
-func (s *StoragePodSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
+func (s *FolderSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
 	if ok := s.sensorLock.TryLock(); !ok {
 		return ErrSensorAlreadyRunning
 	}
 	defer s.sensorLock.Unlock()
 
-	var spods []mo.StoragePod
-	stats, err := s.baseRefresh(ctx, scraper, &spods)
+	var folders []mo.Folder
+	stats, err := s.baseRefresh(ctx, scraper, &folders)
 	s.MetricHelperDefault.LoadStats(stats)
 	if err != nil {
 		return err
 	}
 
-	for _, spod := range spods {
-		oSpod := ConvertToStoragePod(ctx, scraper, spod, time.Now())
-		err := scraper.DB.SetStoragePod(ctx, oSpod, s.config.MaxAge)
+	for _, folder := range folders {
+		oFolder := ConvertToFolder(ctx, scraper, folder, time.Now())
+		err := scraper.DB.SetFolder(ctx, oFolder, s.config.MaxAge)
 		if err != nil {
 			return err
 		}
@@ -67,7 +66,7 @@ func (s *StoragePodSensor) refresh(ctx context.Context, scraper *VCenterScraper)
 	return nil
 }
 
-func (s *StoragePodSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+func (s *FolderSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
 	if !s.started.IsStarted() {
 		err := s.refresh(ctx, scraper)
 		if err != nil {
@@ -80,7 +79,12 @@ func (s *StoragePodSensor) Init(ctx context.Context, scraper *VCenterScraper) er
 	return nil
 }
 
-func (s *StoragePodSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
+func (s *FolderSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
+	err := s.refresh(ctx, scraper)
+	if err != nil {
+		return err
+	}
+
 	ticker := time.NewTicker(s.config.RefreshInterval)
 	go func() {
 		for {
@@ -116,55 +120,45 @@ func (s *StoragePodSensor) StartRefresher(ctx context.Context, scraper *VCenterS
 	return nil
 }
 
-func (s *StoragePodSensor) StopRefresher(ctx context.Context) {
+func (s *FolderSensor) StopRefresher(ctx context.Context) {
 	close(s.stopChan)
 }
 
-func (s *StoragePodSensor) TriggerManualRefresh(ctx context.Context) {
+func (s *FolderSensor) TriggerManualRefresh(ctx context.Context) {
 	s.manualRefresh <- struct{}{}
 }
 
-func (s *StoragePodSensor) Kind() string {
-	return "StoragePodSensor"
+func (s *FolderSensor) Kind() string {
+	return FOLDER_SENSOR_NAME
 }
 
-func (s *StoragePodSensor) WaitTillStartup() {
+func (s *FolderSensor) WaitTillStartup() {
 	s.started.Wait()
 }
 
-func (s *StoragePodSensor) Match(name string) bool {
-	return helper.NewMatcher("storagepod", "storage_pod", "datastore_cluster", "datastorecluster").Match(name)
+func (s *FolderSensor) Match(name string) bool {
+	return helper.NewMatcher("folder").Match(name)
 }
 
-func (s *StoragePodSensor) Enabled() bool {
+func (s *FolderSensor) Enabled() bool {
 	return true
 }
 
-func ConvertToStoragePod(ctx context.Context, scraper *VCenterScraper, p mo.StoragePod, t time.Time) objects.StoragePod {
-	self := objects.NewManagedObjectReferenceFromVMwareRef(p.Self)
+func ConvertToFolder(ctx context.Context, scraper *VCenterScraper, f mo.Folder, t time.Time) objects.Folder {
+	self := objects.NewManagedObjectReferenceFromVMwareRef(f.Self)
 
 	var parent *objects.ManagedObjectReference
-	if p.Parent != nil {
-		p := objects.NewManagedObjectReferenceFromVMwareRef(*p.Parent)
+	if f.Parent != nil {
+		p := objects.NewManagedObjectReferenceFromVMwareRef(*f.Parent)
 		parent = &p
 	}
 
-	spod := objects.StoragePod{
+	folder := objects.Folder{
 		Timestamp: t,
-		Name:      p.Name,
+		Name:      f.Name,
 		Self:      self,
 		Parent:    parent,
 	}
 
-	if spod.Parent != nil {
-		parentChain := scraper.DB.GetParentChain(ctx, *spod.Parent)
-		spod.Datacenter = parentChain.DC
-	}
-
-	if summary := p.Summary; summary != nil {
-		spod.Capacity = float64(summary.Capacity)
-		spod.FreeSpace = float64(summary.FreeSpace)
-	}
-
-	return spod
+	return folder
 }

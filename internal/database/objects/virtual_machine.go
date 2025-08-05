@@ -15,8 +15,9 @@ type VirtualMachine struct {
 	UUID              string                  `json:"uuid"`
 	Template          bool                    `json:"template"`
 
-	Cluster    string `json:"cluster"`
-	Datacenter string `json:"datacenter"`
+	// Cluster      string `json:"cluster"`
+	Datacenter   string `json:"datacenter"`
+	ResourcePool string `json:"resource_pool"`
 
 	NumCPU                      float64 `json:"num_cpu"`
 	NumCoresPerSocket           float64 `json:"num_cores_per_socket"`
@@ -38,6 +39,7 @@ type VirtualMachine struct {
 	GuestHeartbeatStatus string  `json:"guest_heartbeat_status"`
 	GuestToolsStatus     string  `json:"guest_tools_status"`
 	GuestToolsVersion    string  `json:"guest_tools_version"`
+	GuestID              string  `json:"guest_id"`
 
 	// Legacy metrics
 	DistributedCPUEntitlement    float64 `json:"distributed_cpu_entitlement"`

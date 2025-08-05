@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,7 +25,7 @@ const VM_SENSOR_NAME = "VirtualMachineSensor"
 type VirtualMachineSensor struct {
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
-	started       helper.StartedCheck
+	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
 	manualRefresh chan struct{}
 	stopChan      chan struct{}
@@ -36,7 +37,9 @@ type VirtualMachineSensor struct {
 
 func NewVirtualMachineSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *VirtualMachineSensor {
 	var sensor VirtualMachineSensor = VirtualMachineSensor{
+		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
+		manualRefresh:       make(chan struct{}),
 		config:              config,
 		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(VM_SENSOR_NAME)),
 		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(VM_SENSOR_NAME),
@@ -51,13 +54,13 @@ func (s *VirtualMachineSensor) refresh(ctx context.Context, scraper *VCenterScra
 	}
 	defer s.sensorLock.Unlock()
 
-	vms, err := s.vmQuery(ctx, scraper)
+	vms, err := s.querryAllVMs(ctx, scraper)
 	if err != nil {
 		return err
 	}
 
 	for _, vm := range vms {
-		err := scraper.DB.SetVM(ctx, &vm, s.config.MaxAge)
+		err := scraper.DB.SetVM(ctx, vm, s.config.MaxAge)
 		if err != nil {
 			return err
 		}
@@ -65,40 +68,122 @@ func (s *VirtualMachineSensor) refresh(ctx context.Context, scraper *VCenterScra
 	return nil
 }
 
-func (s *VirtualMachineSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
+func (s *VirtualMachineSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	if !s.started.IsStarted() {
+		err := s.refresh(ctx, scraper)
+		if err != nil {
+			return err
+		}
+		s.started.Started()
+	} else {
+		return ErrSensorAlreadyStarted
+	}
+	return nil
+}
+
+func (s *VirtualMachineSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
-	defer ticker.Stop()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				s.refresh(ctx, scraper)
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("refresh successful")
-				} else {
-					s.SensorLogger.Error("refresh failed", "err", err)
-				}
-				s.started.Started()
+				go func() {
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("refresh successful")
+					} else {
+						s.SensorLogger.Error("refresh failed", "err", err)
+					}
+				}()
 			case <-s.manualRefresh:
-				s.SensorLogger.Info("trigger manual refresh")
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("manual refresh successful")
-				} else {
-					s.SensorLogger.Error("manual refresh failed", "err", err)
-				}
+				go func() {
+					s.SensorLogger.Info("trigger manual refresh")
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("manual refresh successful")
+					} else {
+						s.SensorLogger.Error("manual refresh failed", "err", err)
+					}
+				}()
 			case <-s.stopChan:
 				s.started.Stopped()
+				ticker.Stop()
+			case <-ctx.Done():
+				s.started.Stopped()
+				ticker.Stop()
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (s *VirtualMachineSensor) querryAllVMs(ctx context.Context, scraper *VCenterScraper) ([]objects.VirtualMachine, error) {
+	if scraper.Host == nil {
+		s.SensorLogger.Error("Can't query for vm's if host sensor is not defined")
+		return nil, fmt.Errorf("no host sensor found")
+	}
+	(scraper.Host).(*HostSensor).WaitTillStartup()
+
+	hostRefs := scraper.DB.GetAllHostRefs(ctx)
+
+	var wg sync.WaitGroup
+	wg.Add(len(hostRefs))
+	resultChan := make(chan *[]objects.VirtualMachine, len(hostRefs))
+	statsChan := make(chan metricshelper.RefreshStats, len(hostRefs))
+	allStats := []metricshelper.RefreshStats{}
+	for _, hostRef := range hostRefs {
+		go func() {
+			defer wg.Done()
+
+			vms, stats, err := s.queryVmsForHost(ctx, scraper, hostRef.ToVMwareRef())
+			if err != nil {
+				s.SensorLogger.Error("Failed to get vm's for host", "host", hostRef.Value, "err", err)
+				return
+			}
+			resultChan <- &vms
+			statsChan <- stats
+		}()
+	}
+
+	readyChan := make(chan bool)
+	allVMs := map[objects.ManagedObjectReference]objects.VirtualMachine{}
+
+	go func() {
+		for {
+			select {
+			case r := <-resultChan:
+				for _, vm := range *r {
+					if other, exist := allVMs[vm.Self]; exist {
+						if vm.TimeConfigChanged.After(other.TimeConfigChanged) {
+							allVMs[vm.Self] = vm
+						}
+					} else {
+						allVMs[vm.Self] = vm
+					}
+				}
+			case stat := <-statsChan:
+				allStats = append(allStats, stat)
+			case <-readyChan:
+				close(readyChan)
+				close(resultChan)
+				return
+			case <-ctx.Done():
+				close(resultChan)
 				return
 			}
 		}
 	}()
+
+	wg.Wait()
+	readyChan <- true
+
+	return slices.Collect(maps.Values(allVMs)), nil
 }
 
 func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCenterScraper, hostRef types.ManagedObjectReference) ([]objects.VirtualMachine, metricshelper.RefreshStats, error) {
 	t1 := time.Now()
-	client, release, err := scraper.clientPool.Acquire()
+	client, release, err := scraper.clientPool.AcquireWithContext(ctx)
 	if err != nil {
 		return nil, metricshelper.RefreshStats{Failed: true}, err
 	}
@@ -138,6 +223,9 @@ func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCe
 		&items,
 	)
 	t3 := time.Now()
+	if err != nil {
+		return nil, metricshelper.RefreshStats{Failed: true}, err
+	}
 
 	oVMs := []objects.VirtualMachine{}
 	for _, item := range items {
@@ -151,73 +239,6 @@ func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCe
 	}
 
 	return oVMs, refreshStats, nil
-}
-
-func (s *VirtualMachineSensor) vmQuery(ctx context.Context, scraper *VCenterScraper) ([]objects.VirtualMachine, error) {
-	if scraper.Host == nil {
-		s.SensorLogger.Error("Can't query for vm's if host sensor is not defined")
-		return nil, fmt.Errorf("no host sensor found")
-	}
-	(scraper.Host).(*HostSensor).WaitTillStartup()
-
-	hostRefs := scraper.DB.GetAllHostRefs(ctx)
-
-	var wg sync.WaitGroup
-	wg.Add(len(hostRefs))
-	resultChan := make(chan *[]objects.VirtualMachine, len(hostRefs))
-	statsChan := make(chan metricshelper.RefreshStats, len(hostRefs))
-	allStats := []metricshelper.RefreshStats{}
-	for _, hostRef := range hostRefs {
-		go func() {
-			defer wg.Done()
-
-			vms, stats, err := s.queryVmsForHost(ctx, scraper, types.ManagedObjectReference{
-				Type:  hostRef.Type,
-				Value: hostRef.Value,
-			})
-			if err != nil {
-				s.SensorLogger.Error("Failed to get vm's for host", "host", hostRef.Value, "err", err)
-				return
-			}
-			resultChan <- &vms
-			statsChan <- stats
-		}()
-	}
-
-	readyChan := make(chan bool)
-	allVMs := map[objects.ManagedObjectReference]objects.VirtualMachine{}
-
-	go func() {
-		for {
-			select {
-			case r := <-resultChan:
-				for _, vm := range *r {
-					if other, exist := allVMs[vm.Self]; exist {
-						if vm.TimeConfigChanged.After(other.TimeConfigChanged) {
-							allVMs[vm.Self] = vm
-						}
-					} else {
-						allVMs[vm.Self] = vm
-					}
-				}
-			case stat := <-statsChan:
-				allStats = append(allStats, stat)
-			case <-readyChan:
-				close(readyChan)
-				close(resultChan)
-				return
-			case <-ctx.Done():
-				close(readyChan)
-				close(resultChan)
-				return
-			}
-		}
-	}()
-
-	wg.Wait()
-	readyChan <- true
-
-	return slices.Collect(maps.Values(allVMs)), nil
 }
 
 func (s *VirtualMachineSensor) StopRefresher(ctx context.Context) {
@@ -237,7 +258,7 @@ func (s *VirtualMachineSensor) WaitTillStartup() {
 }
 
 func (s *VirtualMachineSensor) Match(name string) bool {
-	return helper.NewMatcher("keyword").Match(name)
+	return helper.NewMatcher("vm", "virtual_machine", "virtualmachine").Match(name)
 }
 
 func (s *VirtualMachineSensor) Enabled() bool {
@@ -245,11 +266,11 @@ func (s *VirtualMachineSensor) Enabled() bool {
 }
 
 func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo.VirtualMachine, t time.Time) objects.VirtualMachine {
-	self := objects.NewManagedObjectReference(vm.Self.Type, vm.Self.Value)
+	self := objects.NewManagedObjectReferenceFromVMwareRef(vm.Self)
 
 	var parent *objects.ManagedObjectReference
 	if vm.Parent != nil {
-		p := objects.NewManagedObjectReference(parent.Type, parent.Value)
+		p := objects.NewManagedObjectReferenceFromVMwareRef(*vm.Parent)
 		parent = &p
 	}
 
@@ -261,15 +282,19 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 	}
 
 	if virtualMachine.Parent != nil {
-		parentChain := scraper.GetParentChain(*virtualMachine.Parent)
+		parentChain := scraper.DB.GetParentChain(ctx, *virtualMachine.Parent)
 		virtualMachine.Datacenter = parentChain.DC
-		virtualMachine.Cluster = parentChain.Cluster
+		// virtualMachine.Cluster = parentChain.Cluster
 	}
 	mb := int64(1024 * 1024)
 	summary := vm.Summary
+	virtualMachine.OverallStatus = string(summary.OverallStatus)
 
 	if config := vm.Config; config != nil {
 
+		virtualMachine.UUID = config.Uuid
+		virtualMachine.GuestID = config.GuestId
+		virtualMachine.Template = config.Template
 		timeConfChanged, err := time.Parse(time.RFC3339Nano, config.ChangeVersion)
 		if err == nil {
 			virtualMachine.TimeConfigChanged = timeConfChanged
@@ -297,7 +322,7 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 		}
 
 		if tools := config.Tools; tools != nil {
-			virtualMachine.GuestToolsVersion = string(tools.ToolsVersion)
+			virtualMachine.GuestToolsVersion = strconv.Itoa(int(tools.ToolsVersion))
 		}
 
 		hardware := config.Hardware
@@ -308,9 +333,9 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 
 	runtime := summary.Runtime
 	virtualMachine.MaxCPUUsage = float64(runtime.MaxCpuUsage)
-	virtualMachine.PowerState = fmt.Sprintf("%s", runtime.PowerState)
+	virtualMachine.PowerState = string(runtime.PowerState)
 	if hostRef := runtime.Host; hostRef != nil {
-		oRef := objects.NewManagedObjectReference(hostRef.Type, hostRef.Value)
+		oRef := objects.NewManagedObjectReferenceFromVMwareRef(*hostRef)
 		if host := scraper.DB.GetHost(ctx, oRef); host != nil {
 			virtualMachine.HostInfo = objects.VirtualMachineHostInfo{
 				Host:       host.Name,
@@ -363,7 +388,13 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 		virtualMachine.Snapshot = append(virtualMachine.Snapshot, walkSnapshotTree(snapshots.RootSnapshotList)...)
 	}
 
-	virtualMachine.OverallStatus = string(vm.OverallStatus)
+	if rPool := vm.ResourcePool; rPool != nil {
+		rPoolRef := objects.NewManagedObjectReferenceFromVMwareRef(*rPool)
+
+		if rp := scraper.DB.GetResourcePool(ctx, rPoolRef); rp != nil {
+			virtualMachine.ResourcePool = rp.Name
+		}
+	}
 
 	return virtualMachine
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	kingpin "github.com/alecthomas/kingpin/v2"
 	"github.com/prometheus/common/promslog"
@@ -47,7 +48,18 @@ func (c Config) Validate() error {
 
 func LoadConfig() Config {
 	cfg := Config{
-		ScraperConfig:   &scraper.Config{},
+		ScraperConfig: &scraper.Config{
+			Datacenter: scraper.SensorConfig{
+				Enabled:         true,
+				MaxAge:          5 * time.Minute,
+				RefreshInterval: 25 * time.Second,
+			},
+			Folder: scraper.SensorConfig{
+				Enabled:         true,
+				MaxAge:          5 * time.Minute,
+				RefreshInterval: 25 * time.Second,
+			},
+		},
 		CollectorConfig: &collector.Config{},
 		PromlogConfig:   &promslog.Config{},
 	}
@@ -59,7 +71,7 @@ func LoadConfig() Config {
 	a.HelpFlag.Short('h')
 
 	//Memory
-	a.Flag("memlimit", "Memory (soft) limit in MB. Same as GOMEMLIMIT").Default("2048").Int64Var(&cfg.MemoryLimitMB)
+	a.Flag("memlimit", "Memory (soft) limit in MB. Same as GOMEMLIMIT").Default("0").Int64Var(&cfg.MemoryLimitMB)
 
 	//web
 	a.Flag("web.listen-address", "Address on which to expose metrics and web interface.").Default(":9752").StringVar(&cfg.ListenAddress)

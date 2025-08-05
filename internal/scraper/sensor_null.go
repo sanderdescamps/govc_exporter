@@ -16,12 +16,15 @@ func NewNullSensor(kind string) *NullSensor {
 	}
 }
 
-func (s *NullSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
-	return
+func (s *NullSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	return nil
+}
+
+func (s *NullSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
+	return nil
 }
 
 func (s *NullSensor) StopRefresher(ctx context.Context) {
-	return
 }
 
 func (s *NullSensor) Enabled() bool {
@@ -50,5 +53,4 @@ func (s *NullSensor) Match(string) bool {
 
 // TriggerManualRefresh implements Sensor.
 func (s *NullSensor) TriggerManualRefresh(ctx context.Context) {
-	return
 }

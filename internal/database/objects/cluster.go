@@ -19,5 +19,15 @@ type Cluster struct {
 	NumCPUThreads     float64 `json:"num_cpu_threads"`
 	NumEffectiveHosts float64 `json:"num_effective_hosts"`
 	NumHosts          float64 `json:"num_hosts"`
-	OverallStatus     float64 `json:"overall_status"`
+	OverallStatus     string  `json:"overall_status"`
+}
+
+// Return OverallStatus as float64
+//
+//	0 => (Gray) The status is unknown.
+//	1 => (Red) The entity definitely has a problem.
+//	2 => (Yellow) The entity might have a problem.
+//	3 => (Green) The entity is OK.
+func (c *Cluster) OverallStatusFloat64() float64 {
+	return ColorToFloat64(c.OverallStatus)
 }

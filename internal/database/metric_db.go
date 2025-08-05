@@ -2,19 +2,17 @@ package database
 
 import (
 	"context"
-	"time"
-)
 
-type TimeItem interface {
-	TimeKey() time.Time
-}
+	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
+)
 
 type MetricDB interface {
 	Connect(ctx context.Context) error
 	Disconnect(ctx context.Context) error
-	Add(ctx context.Context, key string, path string, data ...TimeItem) error
-	AddVmMetrics(ctx context.Context, VmID string, data ...TimeItem) error
-	AddHostMetrics(ctx context.Context, HostID string, data ...TimeItem) error
-	PopAll(ctx context.Context, key string, path string) []TimeItem
-	PopOlderOrEqualThan(ctx context.Context, key string, path string, olderThan time.Time) []TimeItem
+
+	AddVmMetrics(ctx context.Context, ref objects.ManagedObjectReference, data ...objects.Metric) error
+	AddHostMetrics(ctx context.Context, ref objects.ManagedObjectReference, data ...objects.Metric) error
+
+	PopAllHostMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric
+	PopAllVmMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric
 }

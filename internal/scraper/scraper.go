@@ -5,23 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/sanderdescamps/govc_exporter/internal/database"
 	memory_db "github.com/sanderdescamps/govc_exporter/internal/database/memory"
-	objects "github.com/sanderdescamps/govc_exporter/internal/database/object"
 	"github.com/sanderdescamps/govc_exporter/internal/pool"
 	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
 )
 
-type Error struct {
-	err  error
-	args []any
-}
+// type Error struct {
+// 	err  error
+// 	args []any
+// }
 
-func (e *Error) AddArg(key string, value any) *Error {
-	e.args = append(e.args, key, value)
-	return e
-}
+// func (e *Error) AddArg(key string, value any) *Error {
+// 	e.args = append(e.args, key, value)
+// 	return e
+// }
 
 type VCenterScraper struct {
 	clientPool pool.VCenterPool
@@ -39,9 +39,9 @@ type VCenterScraper struct {
 	SPOD             Sensor
 	ResourcePool     Sensor
 	Tags             Sensor
+	Datacenter       Sensor
+	Folder           Sensor
 	// Remain           *OnDemandSensor
-
-	errorChan chan Error
 }
 
 func NewVCenterScraper(ctx context.Context, conf Config, logger *slog.Logger) (*VCenterScraper, error) {
@@ -69,19 +69,7 @@ func NewVCenterScraper(ctx context.Context, conf Config, logger *slog.Logger) (*
 		config:     conf,
 		DB:         db,
 		MetricsDB:  metricsDb,
-		errorChan:  make(chan Error),
 	}
-
-	go func() {
-		for {
-			select {
-			case err := <-scraper.errorChan:
-				logger.Error(err.err.Error(), err.args...)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 
 	if conf.Cluster.Enabled {
 		scraper.Cluster = NewClusterSensor(&scraper, conf.Cluster, logger)
@@ -110,6 +98,7 @@ func NewVCenterScraper(ctx context.Context, conf Config, logger *slog.Logger) (*
 		}
 	} else {
 		scraper.Host = NewNullSensor(HOST_SENSOR_NAME)
+		scraper.HostPerf = NewNullSensor(HOST_PERF_SENSOR_NAME)
 	}
 
 	if conf.ResourcePool.Enabled {
@@ -133,6 +122,7 @@ func NewVCenterScraper(ctx context.Context, conf Config, logger *slog.Logger) (*
 		}
 	} else {
 		scraper.VM = NewNullSensor(VM_SENSOR_NAME)
+		scraper.VMPerf = NewNullSensor(VM_PERF_SENSOR_NAME)
 	}
 
 	if conf.Tags.Enabled {
@@ -142,20 +132,20 @@ func NewVCenterScraper(ctx context.Context, conf Config, logger *slog.Logger) (*
 		scraper.Tags = NewNullSensor("TagsSensor")
 	}
 
-	// scraper.Remain = NewOnDemandSensor(&scraper, SensorConfig{
-	// 	Enabled:       true,
-	// 	CleanInterval: conf.OnDemand.CleanInterval,
-	// 	MaxAge:        conf.OnDemand.MaxAge,
-	// })
+	if conf.Folder.Enabled {
+		scraper.Folder = NewFolderSensor(&scraper, conf.Folder, logger)
+	} else {
+		scraper.Folder = NewNullSensor(FOLDER_SENSOR_NAME)
+	}
+
+	if conf.Datacenter.Enabled {
+		scraper.Datacenter = NewDatacenterSensor(&scraper, conf.Datacenter, logger)
+	} else {
+		scraper.Datacenter = NewNullSensor(DATACENTER_SENSOR_NAME)
+	}
 
 	return &scraper, nil
-}
 
-func (c *VCenterScraper) HandleError(err error, args ...any) {
-	c.errorChan <- Error{
-		err:  err,
-		args: args,
-	}
 }
 
 var (
@@ -180,7 +170,7 @@ func (c *VCenterScraper) tcpConnectStatus() error {
 func (c *VCenterScraper) CollectMetrics() []metricshelper.SensorMetric {
 	metrics := []metricshelper.SensorMetric{}
 	metrics = append(metrics, c.ScraperMetrics()...)
-	for _, sensor := range c.sensorList() {
+	for _, sensor := range c.SensorList() {
 		metrics = append(metrics, sensor.GetLatestMetrics()...)
 	}
 	return metrics
@@ -222,17 +212,19 @@ func (c *VCenterScraper) ScraperMetrics() []metricshelper.SensorMetric {
 	return result
 }
 
-func (c *VCenterScraper) sensorList() []Sensor {
+func (c *VCenterScraper) SensorList() []Sensor {
 	return []Sensor{
+		c.Folder,
+		c.Datacenter,
 		c.Cluster,
 		c.ComputeResources,
-		c.Datastore,
-		c.Host,
-		c.HostPerf,
-		c.ResourcePool,
 		c.SPOD,
+		c.Datastore,
+		c.ResourcePool,
 		c.Tags,
+		c.Host,
 		c.VM,
+		c.HostPerf,
 		c.VMPerf,
 	}
 }
@@ -244,25 +236,50 @@ func (c *VCenterScraper) Start(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	// Start all sensors
-	for _, sensor := range c.sensorList() {
-		if sensor.Enabled() {
-			logger.Info("Starting sensor...", "sensor_kind", sensor.Kind())
-			sensor.StartRefresher(ctx, c)
+	sensors := c.SensorList()
+	for i, sensor := range sensors {
+		if err := ctx.Err(); err != nil {
+			break
+		} else if sensor.Enabled() {
+			logger.Info(fmt.Sprintf("Initialize sensor... [%d/%d]", i+1, len(sensors)), "sensor_kind", sensor.Kind())
+			err := sensor.Init(ctx, c)
+			if err != nil {
+				logger.Error("Failed init sensor", "sensor_kind", sensor.Kind(), "err", err)
+			} else {
+				logger.Debug("Init Sensor successful", "sensor_kind", sensor.Kind())
+			}
 		} else {
-			logger.Info("Skip sensor, sensor disabled", "sensor_kind", sensor.Kind())
+			logger.Info(fmt.Sprintf("skip sensor [%d/%d]", i+1, len(sensors)), "sensor_kind", sensor.Kind())
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	logger.Info("All sensors initialized")
+
+	wg := sync.WaitGroup{}
+	for _, sensor := range sensors {
+		if sensor.Enabled() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sensor.StartRefresher(ctx, c)
+			}()
 		}
 	}
 
-	logger.Info("finish triggering startup of all sensors")
+	wg.Wait()
+	logger.Info("All sensors refreshers started")
 
 	return nil
 }
 
 func (c *VCenterScraper) Stop(ctx context.Context, logger *slog.Logger) {
-	for _, sensor := range c.sensorList() {
+	for _, sensor := range c.SensorList() {
 		if sensor.Enabled() {
-			logger.Info("Starting sensor...", "sensor_kind", sensor.Kind())
-			sensor.StartRefresher(ctx, c)
+			logger.Info("Stop sensor...", "sensor_kind", sensor.Kind())
+			sensor.StopRefresher(ctx)
 		} else {
 			logger.Info("Skip sensor, sensor disabled", "sensor_kind", sensor.Kind())
 		}
@@ -270,14 +287,14 @@ func (c *VCenterScraper) Stop(ctx context.Context, logger *slog.Logger) {
 
 	logger.Info("finish triggering termination of all sensors")
 
-	c.clientPool.Destroy()
+	c.clientPool.Destroy(ctx)
 	if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
 		logger.Info("Close client pool")
 	}
 }
 
 func (c *VCenterScraper) TriggerSensorRefreshByName(ctx context.Context, sensorName string) error {
-	for _, sensor := range c.sensorList() {
+	for _, sensor := range c.SensorList() {
 		if sensor.Match(sensorName) {
 			sensor.TriggerManualRefresh(ctx)
 			return nil
@@ -292,8 +309,4 @@ type ParentChain struct {
 	ResourcePool string
 	SPOD         string
 	Chain        []string
-}
-
-func (c *VCenterScraper) GetParentChain(oRef objects.ManagedObjectReference) ParentChain {
-	return
 }

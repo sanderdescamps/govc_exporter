@@ -19,7 +19,7 @@ const TAGS_SENSOR_NAME = "TagsSensor"
 type TagsSensor struct {
 	logger.SensorLogger
 	metricshelper.MetricHelperDefault
-	started       helper.StartedCheck
+	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
 	manualRefresh chan struct{}
 	stopChan      chan struct{}
@@ -28,7 +28,9 @@ type TagsSensor struct {
 
 func NewTagsSensor(scraper *VCenterScraper, config TagsSensorConfig, l *slog.Logger) *TagsSensor {
 	return &TagsSensor{
+		started:             helper.NewStartedCheck(),
 		stopChan:            make(chan struct{}),
+		manualRefresh:       make(chan struct{}),
 		config:              config,
 		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(TAGS_SENSOR_NAME)),
 		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(TAGS_SENSOR_NAME),
@@ -36,6 +38,11 @@ func NewTagsSensor(scraper *VCenterScraper, config TagsSensorConfig, l *slog.Log
 }
 
 func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
+	if ok := s.sensorLock.TryLock(); !ok {
+		return ErrSensorAlreadyRunning
+	}
+	defer s.sensorLock.Unlock()
+
 	s.MetricHelperDefault.Start()
 
 	restclient, release, err := scraper.clientPool.AcquireRest()
@@ -50,8 +57,7 @@ func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 
 	allCats, err := m.GetCategories(ctx)
 	if err != nil {
-		s.SensorLogger.Error("failed to get tag categories", "err", err)
-		scraper.HandleError(err)
+		return NewSensorError("failed to get tag categories", "err", err)
 	}
 
 	catList := []tags.Category{}
@@ -61,7 +67,7 @@ func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 		}
 	}
 
-	objectTags := map[string]objects.ObjectTag{}
+	objectTags := map[string]objects.TagSet{}
 	for _, cat := range catList {
 		tags, err := m.GetTagsForCategory(ctx, cat.ID)
 		if err != nil {
@@ -78,9 +84,9 @@ func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 
 			for _, attachObj := range attachObjs {
 				for _, elem := range attachObj.ObjectIDs {
-					ref := objects.NewManagedObjectReference(elem.Reference().Type, elem.Reference().Value)
+					ref := objects.NewManagedObjectReferenceFromVMwareRef(elem.Reference())
 					if _, ok := objectTags[ref.Hash()]; !ok {
-						objectTags[ref.Hash()] = objects.ObjectTag{
+						objectTags[ref.Hash()] = objects.TagSet{
 							ObjectRef: ref,
 							Tags:      map[string]string{cat.Name: tag.Name},
 						}
@@ -95,7 +101,7 @@ func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 	s.MetricHelperDefault.Finish(true)
 
 	for _, tag := range objectTags {
-		err := scraper.DB.SetObjectTag(ctx, tag, s.config.MaxAge)
+		err := scraper.DB.SetTags(ctx, tag, s.config.MaxAge)
 		if err != nil {
 			return err
 		}
@@ -104,35 +110,53 @@ func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 	return nil
 }
 
-func (s *TagsSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) {
+func (s *TagsSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
+	if !s.started.IsStarted() {
+		err := s.refresh(ctx, scraper)
+		if err != nil {
+			return err
+		}
+		s.started.Started()
+	} else {
+		return ErrSensorAlreadyStarted
+	}
+	return nil
+}
+
+func (s *TagsSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
-	defer ticker.Stop()
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				s.refresh(ctx, scraper)
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("refresh successful")
-				} else {
-					s.SensorLogger.Error("refresh failed", "err", err)
-				}
-				s.started.Started()
+				go func() {
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("refresh successful")
+					} else {
+						s.SensorLogger.Error("refresh failed", "err", err)
+					}
+				}()
 			case <-s.manualRefresh:
-				s.SensorLogger.Info("trigger manual refresh")
-				err := s.refresh(ctx, scraper)
-				if err == nil {
-					s.SensorLogger.Info("manual refresh successful")
-				} else {
-					s.SensorLogger.Error("manual refresh failed", "err", err)
-				}
+				go func() {
+					s.SensorLogger.Info("trigger manual refresh")
+					err := s.refresh(ctx, scraper)
+					if err == nil {
+						s.SensorLogger.Info("manual refresh successful")
+					} else {
+						s.SensorLogger.Error("manual refresh failed", "err", err)
+					}
+				}()
 			case <-s.stopChan:
 				s.started.Stopped()
-				return
+				ticker.Stop()
+			case <-ctx.Done():
+				s.started.Stopped()
+				ticker.Stop()
 			}
 		}
 	}()
+	return nil
 }
 
 func (s *TagsSensor) StopRefresher(ctx context.Context) {
@@ -152,7 +176,7 @@ func (s *TagsSensor) WaitTillStartup() {
 }
 
 func (s *TagsSensor) Match(name string) bool {
-	return helper.NewMatcher("keyword").Match(name)
+	return helper.NewMatcher("tags", "tag").Match(name)
 }
 
 func (s *TagsSensor) Enabled() bool {
