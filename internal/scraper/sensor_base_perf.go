@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/performance"
@@ -135,14 +136,14 @@ type BasePerfSensor struct {
 	lastQueryTime time.Time
 	// sensorKind    string
 	sensorLock sync.Mutex
-	config     PerfSensorConfig
+	config     config.PerfSensorConfig
 	metrics    []string
 
 	metricsCollector *sensormetrics.SensorMetricsCollector
 	statusMonitor    *sensormetrics.StatusMonitor
 }
 
-func NewBasePerfSensor(config PerfSensorConfig, metrics []string, mc *sensormetrics.SensorMetricsCollector, sm *sensormetrics.StatusMonitor) *BasePerfSensor {
+func NewBasePerfSensor(config config.PerfSensorConfig, metrics []string, mc *sensormetrics.SensorMetricsCollector, sm *sensormetrics.StatusMonitor) *BasePerfSensor {
 	return &BasePerfSensor{
 		config:           config,
 		metrics:          metrics,

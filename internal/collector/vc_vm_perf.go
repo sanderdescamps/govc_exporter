@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -15,7 +16,7 @@ type VMPerfCollector struct {
 	perfMetric *prometheus.Desc
 }
 
-func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf Config) *VMPerfCollector {
+func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *VMPerfCollector {
 	labels := []string{"uuid", "name", "template", "vm_id"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {

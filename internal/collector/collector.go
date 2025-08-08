@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
@@ -23,29 +24,33 @@ const namespace = "govc"
 type VCCollector struct {
 	scraper *scraper.VCenterScraper
 	// logger     *slog.Logger
-	conf       Config
+	conf       config.Config
 	collectors map[*helper.Matcher]prometheus.Collector
 }
 
-func NewVCCollector(ctx context.Context, conf *Config, scraper *scraper.VCenterScraper) *VCCollector {
-	if conf == nil {
-		conf = DefaultCollectorConf()
-	}
+func NewVCCollector(ctx context.Context, conf config.Config, scraper *scraper.VCenterScraper) *VCCollector {
 
 	collectors := map[*helper.Matcher]prometheus.Collector{}
-	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper, *conf)
-	collectors[helper.NewMatcher("perfhost", "perfesx", "perf-host", "perf-esx")] = NewEsxPerfCollector(scraper, *conf)
-	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper, *conf)
-	collectors[helper.NewMatcher("resourcepool", "rp")] = NewResourcePoolCollector(scraper, *conf)
-	collectors[helper.NewMatcher("cluster", "host")] = NewClusterCollector(scraper, *conf)
-	collectors[helper.NewMatcher("vm", "virtualmachine")] = NewVirtualMachineCollector(scraper, *conf)
-	collectors[helper.NewMatcher("perfvm", "perf-vm")] = NewVMPerfCollector(scraper, *conf)
-	collectors[helper.NewMatcher("spod", "storagepod")] = NewStoragePodCollector(scraper, *conf)
+	collectors[helper.NewMatcher("esx", "host")] = NewEsxCollector(scraper, conf.CollectorConfig)
+	collectors[helper.NewMatcher("ds", "datastore")] = NewDatastoreCollector(scraper, conf.CollectorConfig)
+	collectors[helper.NewMatcher("resourcepool", "rp", "rpool")] = NewResourcePoolCollector(scraper, conf.CollectorConfig)
+	collectors[helper.NewMatcher("cluster", "clu")] = NewClusterCollector(scraper, conf.CollectorConfig)
+	collectors[helper.NewMatcher("vm", "virtualmachine")] = NewVirtualMachineCollector(scraper, conf.CollectorConfig)
+
+	if conf.ScraperConfig.VirtualMachinePerf.Enabled {
+		collectors[helper.NewMatcher("perfvm", "perf-vm")] = NewVMPerfCollector(scraper, conf.CollectorConfig)
+	}
+
+	if conf.ScraperConfig.HostPerf.Enabled {
+		collectors[helper.NewMatcher("perfhost", "perfesx", "perf-host", "perf-esx")] = NewEsxPerfCollector(scraper, conf.CollectorConfig)
+	}
+
+	collectors[helper.NewMatcher("spod", "storagepod")] = NewStoragePodCollector(scraper, conf.CollectorConfig)
 	collectors[helper.NewMatcher("scraper")] = NewScraperCollector(scraper)
 
 	return &VCCollector{
 		scraper:    scraper,
-		conf:       *conf,
+		conf:       conf,
 		collectors: collectors,
 	}
 }
@@ -73,7 +78,7 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) http.Handler {
 		logger.Debug(fmt.Sprintf("%s %s", r.Method, r.URL.Path), "filters", filters, "exclude", exclude)
 
 		registry := prometheus.NewRegistry()
-		if !c.conf.DisableExporterMetrics && !excludeMatcher.MatchAny("exporter_metrics", "exporter") {
+		if !c.conf.CollectorConfig.DisableExporterMetrics && !excludeMatcher.MatchAny("exporter_metrics", "exporter") {
 			registry.MustRegister(
 				collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 				collectors.NewGoCollector(),
@@ -106,7 +111,7 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) http.Handler {
 
 		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{
 			ErrorHandling:       promhttp.ContinueOnError,
-			MaxRequestsInFlight: c.conf.MaxRequests,
+			MaxRequestsInFlight: c.conf.CollectorConfig.MaxRequests,
 		})
 		h.ServeHTTP(w, r)
 	})

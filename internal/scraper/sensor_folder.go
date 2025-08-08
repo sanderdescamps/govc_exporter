@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
@@ -25,10 +26,10 @@ type FolderSensor struct {
 	sensorLock       sync.Mutex
 	manualRefresh    chan struct{}
 	stopChan         chan struct{}
-	config           SensorConfig
+	config           config.SensorConfig
 }
 
-func NewFolderSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *FolderSensor {
+func NewFolderSensor(scraper *VCenterScraper, config config.SensorConfig, l *slog.Logger) *FolderSensor {
 	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
 	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	return &FolderSensor{

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -49,7 +50,7 @@ type esxCollector struct {
 	vmNumTotal *prometheus.Desc
 }
 
-func NewEsxCollector(scraper *scraper.VCenterScraper, cConf Config) *esxCollector {
+func NewEsxCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *esxCollector {
 	labels := []string{"id", "name", "datacenter", "cluster"}
 	extraLabels := cConf.HostTagLabels
 	if len(extraLabels) != 0 {

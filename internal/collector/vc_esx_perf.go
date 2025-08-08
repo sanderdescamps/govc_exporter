@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -14,7 +15,7 @@ type esxPerfCollector struct {
 	perfMetric *prometheus.Desc
 }
 
-func NewEsxPerfCollector(scraper *scraper.VCenterScraper, cConf Config) *esxPerfCollector {
+func NewEsxPerfCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *esxPerfCollector {
 	labels := []string{"id", "name", "datacenter", "cluster"}
 	extraLabels := cConf.HostTagLabels
 	if len(extraLabels) != 0 {

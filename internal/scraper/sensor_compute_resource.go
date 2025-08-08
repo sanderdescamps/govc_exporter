@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
@@ -25,10 +26,10 @@ type ComputeResourceSensor struct {
 	sensorLock       sync.Mutex
 	manualRefresh    chan struct{}
 	stopChan         chan struct{}
-	config           SensorConfig
+	config           config.SensorConfig
 }
 
-func NewComputeResourceSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *ComputeResourceSensor {
+func NewComputeResourceSensor(scraper *VCenterScraper, config config.SensorConfig, l *slog.Logger) *ComputeResourceSensor {
 	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
 	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	return &ComputeResourceSensor{

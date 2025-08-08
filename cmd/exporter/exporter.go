@@ -62,7 +62,7 @@ func run(ctx context.Context) {
 		os.Exit(1)
 	}
 
-	logger := promslog.New(config.PromlogConfig)
+	logger := promslog.New(&config.PromlogConfig)
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
 	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "date", version.BuildDate, "tags", version.GetTags())
 
@@ -70,10 +70,12 @@ func run(ctx context.Context) {
 		logger.Debug(fmt.Sprintf("Set memory limit to %dMiB", config.MemoryLimitMB))
 		debug.SetMemoryLimit(config.MemoryLimitMB * 1 << 20)
 	}
-	logger.Debug(fmt.Sprintf("Memory limit set to %dMiB", debug.SetMemoryLimit(-1)*1>>20))
+	if os.Getenv("GOMEMLIMIT") != "" || config.MemoryLimitMB > 0 {
+		logger.Debug(fmt.Sprintf("Memory limit set to %dMiB", debug.SetMemoryLimit(-1)*1>>20))
+	}
 
 	//Scraper
-	scrap, err := scraper.NewVCenterScraper(ctx, *config.ScraperConfig, logger)
+	scrap, err := scraper.NewVCenterScraper(ctx, config.ScraperConfig, logger)
 	if err != nil {
 		logger.Error("Failed to create VCenterScraper", "err", err)
 		return
@@ -85,7 +87,7 @@ func run(ctx context.Context) {
 	}
 
 	//Collector
-	coll := collector.NewVCCollector(ctx, config.CollectorConfig, scrap)
+	coll := collector.NewVCCollector(ctx, config, scrap)
 
 	//Server
 	server := &http.Server{

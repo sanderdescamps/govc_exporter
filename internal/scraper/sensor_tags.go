@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
@@ -25,10 +26,10 @@ type TagsSensor struct {
 	sensorLock       sync.Mutex
 	manualRefresh    chan struct{}
 	stopChan         chan struct{}
-	config           TagsSensorConfig
+	config           config.TagsSensorConfig
 }
 
-func NewTagsSensor(scraper *VCenterScraper, config TagsSensorConfig, l *slog.Logger) *TagsSensor {
+func NewTagsSensor(scraper *VCenterScraper, config config.TagsSensorConfig, l *slog.Logger) *TagsSensor {
 	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
 	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	return &TagsSensor{

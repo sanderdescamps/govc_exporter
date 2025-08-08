@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/database"
 	memory_db "github.com/sanderdescamps/govc_exporter/internal/database/memory"
 	redis_db "github.com/sanderdescamps/govc_exporter/internal/database/redis"
@@ -15,19 +16,9 @@ import (
 	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 )
 
-// type Error struct {
-// 	err  error
-// 	args []any
-// }
-
-// func (e *Error) AddArg(key string, value any) *Error {
-// 	e.args = append(e.args, key, value)
-// 	return e
-// }
-
 type VCenterScraper struct {
 	clientPool pool.VCenterPool
-	config     Config
+	config     config.ScraperConfig
 	DB         database.Database
 	MetricsDB  database.MetricDB
 
@@ -46,7 +37,7 @@ type VCenterScraper struct {
 	// Remain           *OnDemandSensor
 }
 
-func NewVCenterScraper(ctx context.Context, conf Config, logger *slog.Logger) (*VCenterScraper, error) {
+func NewVCenterScraper(ctx context.Context, conf config.ScraperConfig, logger *slog.Logger) (*VCenterScraper, error) {
 	pool := pool.NewVCenterThrottlePool(
 		conf.Endpoint(),
 		conf.Username,
@@ -84,8 +75,9 @@ func NewVCenterScraper(ctx context.Context, conf Config, logger *slog.Logger) (*
 		return nil, fmt.Errorf("invalid backend type [%s]", dbType)
 	}
 
-	db.Connect(ctx)
-	metricsDb.Connect(ctx)
+	dbCtx := context.WithValue(ctx, database.ContextKeyDatabaseLogger{}, logger)
+	db.Connect(dbCtx)
+	metricsDb.Connect(dbCtx)
 
 	// var db database.Database = memory_db.NewDB()
 	// db.Connect(ctx)

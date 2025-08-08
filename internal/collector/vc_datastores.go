@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -27,7 +28,7 @@ type datastoreCollector struct {
 	vmfsInfo         *prometheus.Desc
 }
 
-func NewDatastoreCollector(scraper *scraper.VCenterScraper, cConf Config) *datastoreCollector {
+func NewDatastoreCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *datastoreCollector {
 	labels := []string{"id", "name", "cluster", "kind"}
 
 	extraLabels := cConf.DatastoreTagLabels

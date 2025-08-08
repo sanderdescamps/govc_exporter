@@ -2,21 +2,23 @@ package memory_db
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/database"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 )
 
 type MetricsDB struct {
-	queues          map[objects.PerfMetricTypes]map[objects.ManagedObjectReference]*TimeQueueTable
+	queues          map[objects.PerfMetricTypes]map[string]*TimeQueueTable
 	lock            sync.Mutex
 	cleanerStopChan chan bool
 }
 
 func NewMetricsDB() *MetricsDB {
 	return &MetricsDB{
-		queues: make(map[objects.PerfMetricTypes]map[objects.ManagedObjectReference]*TimeQueueTable),
+		queues: make(map[objects.PerfMetricTypes]map[string]*TimeQueueTable),
 	}
 }
 
@@ -39,10 +41,14 @@ func (db *MetricsDB) startCleaner(ctx context.Context) {
 			case <-ticker.C:
 				go func() {
 					for pmType := range db.queues {
+						count := 0
 						for ref := range db.queues[pmType] {
-							if q := db.Table(pmType, ref); q != nil {
-								q.CleanupExpired()
+							if q := db.tableByRefID(pmType, ref); q != nil {
+								count += q.CleanupExpired()
 							}
+						}
+						if l := database.GetLoggerFromContext(ctx); l != nil && count > 0 {
+							l.Info(fmt.Sprintf("removed %d metrics from %s table", count, pmType.String()))
 						}
 					}
 				}()
@@ -67,15 +73,19 @@ func (db *MetricsDB) Add(ctx context.Context, pmType objects.PerfMetricTypes, re
 }
 
 func (db *MetricsDB) Table(pmType objects.PerfMetricTypes, ref objects.ManagedObjectReference) *TimeQueueTable {
+	return db.tableByRefID(pmType, ref.ID())
+}
+
+func (db *MetricsDB) tableByRefID(pmType objects.PerfMetricTypes, refID string) *TimeQueueTable {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 	if _, ok := db.queues[pmType]; !ok {
-		db.queues[pmType] = make(map[objects.ManagedObjectReference]*TimeQueueTable)
+		db.queues[pmType] = make(map[string]*TimeQueueTable)
 	}
-	if _, ok := db.queues[pmType][ref]; !ok {
-		db.queues[pmType][ref] = NewTimeQueueTable()
+	if _, ok := db.queues[pmType][refID]; !ok {
+		db.queues[pmType][refID] = NewTimeQueueTable()
 	}
-	return db.queues[pmType][ref]
+	return db.queues[pmType][refID]
 }
 
 func (db *MetricsDB) AddVmMetrics(ctx context.Context, ref objects.ManagedObjectReference, ttl time.Duration, data ...objects.Metric) error {
@@ -88,6 +98,8 @@ func (db *MetricsDB) AddHostMetrics(ctx context.Context, ref objects.ManagedObje
 
 func (db *MetricsDB) PopAll(ctx context.Context, pmType objects.PerfMetricTypes, ref objects.ManagedObjectReference) []*objects.Metric {
 	return db.Table(pmType, ref).PopAll()
+
+	// return db.Table(pmType, ref).PopAll()
 }
 
 func (db *MetricsDB) PopAllHostMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric {

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
@@ -42,10 +43,10 @@ type VMPerfSensor struct {
 	sensorLock       sync.Mutex
 	manualRefresh    chan struct{}
 	stopChan         chan struct{}
-	config           PerfSensorConfig
+	config           config.PerfSensorConfig
 }
 
-func NewVMPerfSensor(scraper *VCenterScraper, config PerfSensorConfig, l *slog.Logger) *VMPerfSensor {
+func NewVMPerfSensor(scraper *VCenterScraper, config config.PerfSensorConfig, l *slog.Logger) *VMPerfSensor {
 	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
 	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	metrics := []string{}

@@ -2,7 +2,6 @@ package redis_db
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -15,7 +14,6 @@ type MetricsDB struct {
 	password string
 	addr     string
 	dbIndex  int
-	max_age  time.Duration
 }
 
 func NewMetricsDB(addr string, password string, index int) *MetricsDB {
@@ -46,14 +44,22 @@ func (db *MetricsDB) Disconnect(ctx context.Context) error {
 	return nil
 }
 
+func RedisKey(ref objects.ManagedObjectReference, metric objects.Metric) string {
+	return fmt.Sprintf("%s:%s:%s:%s", ref.Type.String(), ref.Value, metric.Name, metric.Instance)
+}
+
 func (db *MetricsDB) Add(ctx context.Context, pmType objects.PerfMetricTypes, ref objects.ManagedObjectReference, ttl time.Duration, data ...objects.Metric) error {
 	db.Connect(ctx)
 
 	for _, metric := range data {
 		redisKey := fmt.Sprintf("%s:%s:%s:%s", pmType.String(), ref.Type.String(), ref.Value, metric.Hash())
-		status := db.client.JSONSet(ctx, redisKey, "$", metric)
-		if status.Err() != nil {
-			return status.Err()
+
+		if _, err := db.client.Pipelined(ctx, func(rdb redis.Pipeliner) error {
+			rdb.HSet(ctx, redisKey, metric)
+			rdb.HSet(ctx, redisKey, "ref", metric.Ref)
+			return nil
+		}); err != nil {
+			return err
 		}
 
 		if ttl != 0 {
@@ -77,24 +83,25 @@ func (db *MetricsDB) AddHostMetrics(ctx context.Context, ref objects.ManagedObje
 
 func (db *MetricsDB) PopAll(ctx context.Context, pmType objects.PerfMetricTypes, ref objects.ManagedObjectReference) []*objects.Metric {
 	db.Connect(ctx)
+
 	result := []*objects.Metric{}
 	match := fmt.Sprintf("%s:%s:%s:*", pmType.String(), ref.Type.String(), ref.Value)
 	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
 	for redisIter.Next(ctx) {
 		redisKey := redisIter.Val()
-		redisCmd := db.client.JSONGet(ctx, redisKey, ".")
-		if redisCmd.Err() != nil {
-			return nil
-		}
-
-		status := db.client.Del(ctx, redisKey)
-		if status.Err() != nil {
-			return nil
-		}
 
 		var metric objects.Metric
-		if err := json.Unmarshal([]byte(redisCmd.Val()), &metric); err != nil {
-			panic("failed to parse metric")
+		redisCmd1 := db.client.HGetAll(ctx, redisKey)
+		if err := redisCmd1.Scan(&metric); err != nil {
+			continue
+		}
+
+		redisCmd2 := db.client.HGet(ctx, redisKey, "ref")
+		if err := redisCmd2.Scan(&metric.Ref); err != nil {
+			continue
+		}
+		if status := db.client.Del(ctx, redisKey); status.Err() != nil {
+			continue
 		}
 		result = append(result, &metric)
 	}

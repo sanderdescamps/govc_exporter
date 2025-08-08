@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/common/promslog"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/property"
@@ -40,7 +41,7 @@ func GetClient(ctx context.Context, t *testing.T) *govmomi.Client {
 
 func TestVCenterScraper(t *testing.T) {
 
-	conf := scraper.DefaultConfig()
+	conf := config.DefaultScraperConfig()
 	conf.VCenter = "https://localhost:8989"
 	conf.Username = "testuser"
 	conf.Password = "testpass"
@@ -66,13 +67,17 @@ func TestVCenterScraper(t *testing.T) {
 	}
 	scraper.Start(ctx, logger)
 
-	count := 0
+	if len(scraper.DB.GetAllHostRefs(ctx)) == 0 {
+		logger.Warn("No hosts found")
+	}
 	for _, ref := range scraper.DB.GetAllHostRefs(ctx) {
 		metrics := scraper.MetricsDB.PopAllHostMetrics(ctx, ref)
-		for range metrics {
-			count++
-		}
-		logger.Info("host metrics", "host", ref.Value, "count", count)
+		logger.Info("host metrics", "host", ref.Value, "count", len(metrics))
+	}
+
+	for _, ref := range scraper.DB.GetAllVMRefs(ctx)[:5] {
+		metrics := scraper.MetricsDB.PopAllVmMetrics(ctx, ref)
+		logger.Info("vm metrics", "vm", ref.Value, "count", len(metrics))
 	}
 	logger.Info("test finished")
 }

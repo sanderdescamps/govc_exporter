@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -33,7 +34,7 @@ type resourcePoolCollector struct {
 	overallStatus                *prometheus.Desc
 }
 
-func NewResourcePoolCollector(scraper *scraper.VCenterScraper, cConf Config) *resourcePoolCollector {
+func NewResourcePoolCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *resourcePoolCollector {
 	labels := []string{"id", "name", "datacenter"}
 
 	extraLabels := cConf.ResourcePoolTagLabels

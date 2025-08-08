@@ -43,7 +43,7 @@ func (q *TimeQueueTable) insert(ttl time.Duration, objs ...objects.Metric) {
 	}
 	for _, obj := range objs {
 		expireTime := obj.Timestamp.Add(ttl)
-		if expireTime.After(time.Now()) {
+		if time.Now().After(expireTime) {
 			continue
 		}
 		q.queue = append(q.queue, nil)
@@ -109,26 +109,16 @@ func (q *TimeQueueTable) PopAllIter() iter.Seq[objects.Metric] {
 	return q.popAllIter()
 }
 
-func (q *TimeQueueTable) CleanupExpired() {
+func (q *TimeQueueTable) CleanupExpired() int {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	if len(q.queue) == 0 {
-		return
+		return 0
 	}
 
 	i := sort.Search(len(q.queue), func(i int) bool { return time.Now().Before((q.queue[i]).Expire) })
 
-	_, younger := q.queue[0:i], q.queue[i:]
+	older, younger := q.queue[0:i], q.queue[i:]
 	q.queue = younger
+	return len(older)
 }
-
-// func (q *TimeQueueTable) PopAllIter() iter.Seq[database.TimeItem] {
-// 	return func(yield func(database.TimeItem) bool) {
-// 		items := q.PopAll()
-// 		for _, v := range items {
-// 			if !yield(v) {
-// 				return
-// 			}
-// 		}
-// 	}
-// }

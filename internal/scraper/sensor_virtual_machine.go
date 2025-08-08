@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
@@ -32,13 +33,13 @@ type VirtualMachineSensor struct {
 	sensorLock       sync.Mutex
 	manualRefresh    chan struct{}
 	stopChan         chan struct{}
-	config           SensorConfig
+	config           config.SensorConfig
 
 	// moType       string
 	// moProperties []string
 }
 
-func NewVirtualMachineSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *VirtualMachineSensor {
+func NewVirtualMachineSensor(scraper *VCenterScraper, config config.SensorConfig, l *slog.Logger) *VirtualMachineSensor {
 	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewAvgSensorMetricsCollector(100)
 	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	var sensor VirtualMachineSensor = VirtualMachineSensor{

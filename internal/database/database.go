@@ -3,10 +3,13 @@ package database
 import (
 	"context"
 	"iter"
+	"log/slog"
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 )
+
+type ContextKeyDatabaseLogger struct{}
 
 type Database interface {
 	Connect(ctx context.Context) error
@@ -51,4 +54,11 @@ type Database interface {
 
 	GetParentChain(ctx context.Context, ref objects.ManagedObjectReference) objects.ParentChain
 	JsonDump(ctx context.Context, refType objects.ManagedObjectTypes) ([]byte, error)
+}
+
+func GetLoggerFromContext(ctx context.Context) *slog.Logger {
+	if logger, ok := ctx.Value(ContextKeyDatabaseLogger{}).(*slog.Logger); ok {
+		return logger
+	}
+	return nil
 }

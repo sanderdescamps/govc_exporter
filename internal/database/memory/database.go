@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/database"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/vmware/govmomi/vim25/json"
 )
@@ -80,7 +81,10 @@ func (db *DB) startCleaner(ctx context.Context) {
 				go func() {
 					for oType := range db.tabels {
 						if t := db.Table(oType); t != nil {
-							t.CleanupExpired()
+							count := t.CleanupExpired()
+							if l := database.GetLoggerFromContext(ctx); l != nil && count > 0 {
+								l.Info(fmt.Sprintf("removed %d objects from %s table", count, oType.String()))
+							}
 						}
 					}
 				}()

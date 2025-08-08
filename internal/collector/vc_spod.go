@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -18,7 +19,7 @@ type storagePodCollector struct {
 	freeSpace   *prometheus.Desc
 }
 
-func NewStoragePodCollector(scraper *scraper.VCenterScraper, cConf Config) *storagePodCollector {
+func NewStoragePodCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *storagePodCollector {
 	labels := []string{"id", "name", "datacenter"}
 
 	extraLabels := cConf.StoragePodTagLabels

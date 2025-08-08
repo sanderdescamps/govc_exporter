@@ -139,14 +139,17 @@ func (t *Table) GetAllIter() iter.Seq[any] {
 	}
 }
 
-func (t *Table) CleanupExpired() {
+func (t *Table) CleanupExpired() int {
 	t.lock.Lock()
 	defer t.lock.Unlock()
+	count := 0
 	for k, v := range t.data {
 		if v.Expired() {
 			delete(t.data, k)
+			count++
 		}
 	}
+	return count
 }
 
 // func (s *Table) StartCleaner() {

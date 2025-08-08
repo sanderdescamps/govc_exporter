@@ -10,7 +10,7 @@ import (
 // Metric
 
 type Metric struct {
-	Ref       ManagedObjectReference `json:"ref" redis:"ref"`
+	Ref       ManagedObjectReference `json:"ref" redis:"-"`
 	Name      string                 `json:"name" redis:"name"`
 	Unit      string                 `json:"unit" redis:"unit"`
 	Instance  string                 `json:"instance" redis:"instance"`
@@ -33,6 +33,17 @@ func (m *Metric) Hash() string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func (m Metric) MarshalBinary() ([]byte, error) {
-	return json.Marshal(m)
+// func (m Metric) MarshalBinary() ([]byte, error) {
+// 	return json.Marshal(m)
+// }
+
+func (m *Metric) UnmarshalBinary(data []byte) error {
+
+	s := &Metric{}
+	err := json.Unmarshal(data, s)
+	if err != nil {
+		return err
+	}
+	*m = *s
+	return nil
 }

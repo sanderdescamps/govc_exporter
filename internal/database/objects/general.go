@@ -3,6 +3,7 @@ package objects
 import (
 	"crypto/sha256"
 	"fmt"
+	"strings"
 
 	"github.com/vmware/govmomi/vim25/types"
 )
@@ -10,6 +11,21 @@ import (
 type ManagedObjectReference struct {
 	Type  ManagedObjectTypes `json:"type" redis:"type"`
 	Value string             `json:"value" redis:"value"`
+}
+
+func (m ManagedObjectReference) MarshalBinary() ([]byte, error) {
+	return []byte(fmt.Sprintf("%s:%s", m.Type.String(), m.Value)), nil
+}
+
+func (m *ManagedObjectReference) UnmarshalBinary(data []byte) error {
+	s := string(data)
+	splt := strings.SplitAfterN(s, ":", 2)
+	if len(splt) != 2 {
+		return fmt.Errorf("failed to parse reference [%s]", s)
+	}
+	m.Type = ManagedObjectTypes(splt[0])
+	m.Value = splt[1]
+	return nil
 }
 
 func NewManagedObjectReference(t ManagedObjectTypes, v string) ManagedObjectReference {
@@ -71,6 +87,10 @@ func (r *ManagedObjectReference) ToVMwareRef() types.ManagedObjectReference {
 		t = string(types.ManagedObjectTypesStoragePod)
 	case ManagedObjectTypesVirtualMachine:
 		t = string(types.ManagedObjectTypesVirtualMachine)
+	case ManagedObjectTypesTagSet:
+		panic(fmt.Sprintf("Can not convert TagSet to a types.ManagedObjectReference", typ))
+	case ManagedObjectTypesTag:
+		panic(fmt.Sprintf("Can not convert Tag to a types.ManagedObjectReference", typ))
 	default:
 		panic(fmt.Sprintf("unknown internal object type [%s]", typ))
 	}

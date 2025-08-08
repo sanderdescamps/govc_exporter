@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -26,7 +27,7 @@ type clusterCollector struct {
 	overallStatus     *prometheus.Desc
 }
 
-func NewClusterCollector(scraper *scraper.VCenterScraper, cConf Config) *clusterCollector {
+func NewClusterCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *clusterCollector {
 	labels := []string{"id", "name", "datacenter"}
 
 	extraLabels := cConf.ClusterTagLabels
