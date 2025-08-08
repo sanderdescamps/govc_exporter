@@ -1,4 +1,4 @@
-package metricshelper
+package sensormetrics
 
 type Status struct {
 	failed       bool

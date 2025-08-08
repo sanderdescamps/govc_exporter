@@ -3,13 +3,14 @@ package scraper
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"sync"
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
@@ -48,15 +49,19 @@ func DefaultHostPerfMetrics() []string {
 type HostPerfSensor struct {
 	BasePerfSensor
 	logger.SensorLogger
-	metricshelper.MetricHelperDefault
-	started       *helper.StartedCheck
-	sensorLock    sync.Mutex
-	manualRefresh chan struct{}
-	stopChan      chan struct{}
-	config        PerfSensorConfig
+	metricsCollector *sensormetrics.SensorMetricsCollector
+	statusMonitor    *sensormetrics.StatusMonitor
+	started          *helper.StartedCheck
+	sensorLock       sync.Mutex
+	manualRefresh    chan struct{}
+	stopChan         chan struct{}
+	config           PerfSensorConfig
 }
 
 func NewHostPerfSensor(scraper *VCenterScraper, config PerfSensorConfig, l *slog.Logger) *HostPerfSensor {
+	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
+	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
+
 	metrics := []string{}
 	if config.DefaultMetrics {
 		metrics = append(metrics, DefaultHostPerfMetrics()...)
@@ -65,13 +70,14 @@ func NewHostPerfSensor(scraper *VCenterScraper, config PerfSensorConfig, l *slog
 	metrics = helper.Dedup(metrics)
 
 	var sensor HostPerfSensor = HostPerfSensor{
-		BasePerfSensor:      *NewBasePerfSensor(config, metrics),
-		config:              config,
-		started:             helper.NewStartedCheck(),
-		stopChan:            make(chan struct{}),
-		manualRefresh:       make(chan struct{}),
-		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(HOST_PERF_SENSOR_NAME)),
-		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(HOST_PERF_SENSOR_NAME),
+		BasePerfSensor:   *NewBasePerfSensor(config, metrics, mc, sm),
+		config:           config,
+		started:          helper.NewStartedCheck(),
+		stopChan:         make(chan struct{}),
+		manualRefresh:    make(chan struct{}),
+		SensorLogger:     logger.NewSLogLogger(l, logger.WithKind(HOST_PERF_SENSOR_NAME)),
+		metricsCollector: mc,
+		statusMonitor:    sm,
 	}
 	return &sensor
 }
@@ -95,15 +101,14 @@ func (s *HostPerfSensor) refresh(ctx context.Context, scraper *VCenterScraper) e
 		hostRefs = append(hostRefs, ref.ToVMwareRef())
 	}
 
-	metricSeries, refreshStats, err := s.BasePerfSensor.QueryEntiryMetrics(ctx, scraper, hostRefs)
-	s.MetricHelperDefault.LoadStats(refreshStats)
+	metricSeries, err := s.BasePerfSensor.QueryEntiryMetrics(ctx, scraper, hostRefs)
 	if err != nil {
 		return err
 	}
 	for _, metricSerie := range metricSeries {
 		entityRef := objects.NewManagedObjectReferenceFromVMwareRef(metricSerie.Entity)
 		metrics := EntityMetricToMetric(metricSerie)
-		err := scraper.MetricsDB.AddHostMetrics(ctx, entityRef, metrics...)
+		err := scraper.MetricsDB.AddHostMetrics(ctx, entityRef, s.config.MaxAge, metrics...)
 		if err != nil {
 			return err
 		}
@@ -115,8 +120,10 @@ func (s *HostPerfSensor) Init(ctx context.Context, scraper *VCenterScraper) erro
 	if !s.started.IsStarted() {
 		err := s.refresh(ctx, scraper)
 		if err != nil {
+			s.statusMonitor.Fail()
 			return err
 		}
+		s.statusMonitor.Success()
 		s.started.Started()
 	} else {
 		return ErrSensorAlreadyStarted
@@ -127,6 +134,7 @@ func (s *HostPerfSensor) Init(ctx context.Context, scraper *VCenterScraper) erro
 func (s *HostPerfSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
 	go func() {
+		time.Sleep(time.Duration(rand.Intn(20000)) * time.Millisecond)
 		for {
 			select {
 			case <-ticker.C:
@@ -134,8 +142,10 @@ func (s *HostPerfSensor) StartRefresher(ctx context.Context, scraper *VCenterScr
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.manualRefresh:
@@ -144,8 +154,10 @@ func (s *HostPerfSensor) StartRefresher(ctx context.Context, scraper *VCenterScr
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("manual refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("manual refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.stopChan:
@@ -190,4 +202,26 @@ func (s *HostPerfSensor) Match(name string) bool {
 
 func (s *HostPerfSensor) Enabled() bool {
 	return true
+}
+
+func (s *HostPerfSensor) GetLatestMetrics() []sensormetrics.SensorMetric {
+	return append(
+		s.metricsCollector.ComposeMetrics(s.Kind()),
+		sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "failed",
+			Value:      s.statusMonitor.StatusFailedFloat64(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "fail_rate",
+			Value:      s.statusMonitor.FailRate(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "enabled",
+			Value:      1.0,
+			Unit:       "boolean",
+		},
+	)
 }

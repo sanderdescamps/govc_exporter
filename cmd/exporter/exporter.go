@@ -73,33 +73,31 @@ func run(ctx context.Context) {
 	logger.Debug(fmt.Sprintf("Memory limit set to %dMiB", debug.SetMemoryLimit(-1)*1>>20))
 
 	//Scraper
-	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
-	scrap, err := scraper.NewVCenterScraper(ctxScraper, *config.ScraperConfig, logger)
+	scrap, err := scraper.NewVCenterScraper(ctx, *config.ScraperConfig, logger)
 	if err != nil {
 		logger.Error("Failed to create VCenterScraper", "err", err)
 		return
 	}
-	err = scrap.Start(ctxScraper, logger)
+	err = scrap.Start(ctx, logger)
 	if err != nil {
 		logger.Error("Failed to start VCenterScraper", "err", err)
 		return
 	}
 
 	//Collector
-	ctxCollector := context.WithValue(ctx, collector.ContextKeyCollectorLogger{}, logger)
-	coll := collector.NewVCCollector(ctxCollector, config.CollectorConfig, scrap)
+	coll := collector.NewVCCollector(ctx, config.CollectorConfig, scrap)
 
 	//Server
 	server := &http.Server{
 		Addr: config.ListenAddress,
 		BaseContext: func(l net.Listener) context.Context {
-			return ctxCollector
+			return ctx
 		},
 	}
 
-	http.Handle(config.MetricPath, coll.GetMetricHandler())
+	http.Handle(config.MetricPath, coll.GetMetricHandler(logger))
 	if config.AllowManualRefresh {
-		http.Handle("/refresh/{sensor}", coll.GetRefreshHandler())
+		http.Handle("/refresh/{sensor}", coll.GetRefreshHandler(logger))
 	}
 	if config.AllowDumps {
 		http.Handle("/dump", scraper.GetDumpHandler(*scrap, logger))

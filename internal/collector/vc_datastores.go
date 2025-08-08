@@ -117,7 +117,7 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 		for _, mountInfo := range datastore.HostMountInfo {
 			hostLabelValues := append(labelValues, mountInfo.Host, mountInfo.HostID)
 			ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
-				c.hostAccessible, prometheus.GaugeValue, b2f(mountInfo.Accessable), hostLabelValues...,
+				c.hostAccessible, prometheus.GaugeValue, b2f(mountInfo.Accessible), hostLabelValues...,
 			))
 			ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
 				c.hostMounted, prometheus.GaugeValue, b2f(mountInfo.Mounted), hostLabelValues...,

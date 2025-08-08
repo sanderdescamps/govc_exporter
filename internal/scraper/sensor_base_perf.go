@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/performance"
 	"github.com/vmware/govmomi/vim25/types"
 	"golang.org/x/exp/constraints"
@@ -137,22 +137,28 @@ type BasePerfSensor struct {
 	sensorLock sync.Mutex
 	config     PerfSensorConfig
 	metrics    []string
+
+	metricsCollector *sensormetrics.SensorMetricsCollector
+	statusMonitor    *sensormetrics.StatusMonitor
 }
 
-func NewBasePerfSensor(config PerfSensorConfig, metrics []string) *BasePerfSensor {
+func NewBasePerfSensor(config PerfSensorConfig, metrics []string, mc *sensormetrics.SensorMetricsCollector, sm *sensormetrics.StatusMonitor) *BasePerfSensor {
 	return &BasePerfSensor{
-		config:  config,
-		metrics: metrics,
+		config:           config,
+		metrics:          metrics,
+		metricsCollector: mc,
+		statusMonitor:    sm,
 	}
 }
 
-func (s *BasePerfSensor) QueryEntiryMetrics(ctx context.Context, scraper *VCenterScraper, refs []types.ManagedObjectReference) ([]performance.EntityMetric, metricshelper.RefreshStats, error) {
+func (s *BasePerfSensor) QueryEntiryMetrics(ctx context.Context, scraper *VCenterScraper, refs []types.ManagedObjectReference) ([]performance.EntityMetric, error) {
 	if ok := s.sensorLock.TryLock(); !ok {
-		return nil, metricshelper.RefreshStats{
-			Failed: true,
-		}, fmt.Errorf("Sensor already running")
+		return nil, fmt.Errorf("Sensor already running")
 	}
 	defer s.sensorLock.Unlock()
+
+	sensorStopwatch := sensormetrics.NewSensorStopwatch()
+
 	windowEnd := time.Now()
 	windowBegin := windowEnd.Add(-s.config.MaxSampleWindow)
 	if s.lastQueryTime.After(windowBegin) {
@@ -167,36 +173,28 @@ func (s *BasePerfSensor) QueryEntiryMetrics(ctx context.Context, scraper *VCente
 	)
 
 	pq := NewPerfQuery(options...)
-	t1 := time.Now()
+	sensorStopwatch.Start()
 	client, release, err := scraper.clientPool.Acquire()
 	defer release()
 	if err != nil {
-		return nil, metricshelper.RefreshStats{
-			Failed: true,
-		}, err
+		return nil, err
 	}
-	t2 := time.Now()
+	sensorStopwatch.Mark1()
 	perfManager := performance.NewManager(client.Client)
 
 	sample, err := perfManager.SampleByName(ctx, pq.ToSpec(), pq.metrics, refs)
-	t3 := time.Now()
-	refreshStats := metricshelper.RefreshStats{
-		ClientWaitTime: t2.Sub(t1),
-		QueryTime:      t3.Sub(t2),
-		Failed:         false,
-	}
+	sensorStopwatch.Finish()
+	s.metricsCollector.UploadStats(sensorStopwatch.GetStats())
 
 	if err != nil {
-		refreshStats.Failed = true
-		return nil, refreshStats, err
+		return nil, err
 	}
 
 	metricSeries, err := perfManager.ToMetricSeries(ctx, sample)
 	if err != nil {
-		refreshStats.Failed = true
-		return nil, refreshStats, err
+		return nil, err
 	}
 	s.lastQueryTime = windowEnd
 
-	return metricSeries, refreshStats, nil
+	return metricSeries, nil
 }

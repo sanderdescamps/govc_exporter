@@ -1,4 +1,4 @@
-package metricshelper
+package sensormetrics
 
 type SensorMetric struct {
 	Sensor     string

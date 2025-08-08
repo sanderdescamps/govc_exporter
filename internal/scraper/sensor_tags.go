@@ -3,6 +3,7 @@ package scraper
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"slices"
 	"sync"
 	"time"
@@ -10,7 +11,7 @@ import (
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/vapi/tags"
 )
 
@@ -18,22 +19,26 @@ const TAGS_SENSOR_NAME = "TagsSensor"
 
 type TagsSensor struct {
 	logger.SensorLogger
-	metricshelper.MetricHelperDefault
-	started       *helper.StartedCheck
-	sensorLock    sync.Mutex
-	manualRefresh chan struct{}
-	stopChan      chan struct{}
-	config        TagsSensorConfig
+	metricsCollector *sensormetrics.SensorMetricsCollector
+	statusMonitor    *sensormetrics.StatusMonitor
+	started          *helper.StartedCheck
+	sensorLock       sync.Mutex
+	manualRefresh    chan struct{}
+	stopChan         chan struct{}
+	config           TagsSensorConfig
 }
 
 func NewTagsSensor(scraper *VCenterScraper, config TagsSensorConfig, l *slog.Logger) *TagsSensor {
+	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
+	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	return &TagsSensor{
-		started:             helper.NewStartedCheck(),
-		stopChan:            make(chan struct{}),
-		manualRefresh:       make(chan struct{}),
-		config:              config,
-		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(TAGS_SENSOR_NAME)),
-		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(TAGS_SENSOR_NAME),
+		started:          helper.NewStartedCheck(),
+		stopChan:         make(chan struct{}),
+		manualRefresh:    make(chan struct{}),
+		config:           config,
+		SensorLogger:     logger.NewSLogLogger(l, logger.WithKind(TAGS_SENSOR_NAME)),
+		metricsCollector: mc,
+		statusMonitor:    sm,
 	}
 }
 
@@ -43,15 +48,15 @@ func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 	}
 	defer s.sensorLock.Unlock()
 
-	s.MetricHelperDefault.Start()
+	sensorStopwatch := sensormetrics.NewSensorStopwatch()
+	sensorStopwatch.Start()
 
 	restclient, release, err := scraper.clientPool.AcquireRest()
 	defer release()
 	if err != nil {
-		s.MetricHelperDefault.Fail()
 		return ErrSensorCientFailed
 	}
-	s.MetricHelperDefault.Mark1()
+	sensorStopwatch.Mark1()
 
 	m := tags.NewManager(restclient)
 
@@ -71,14 +76,12 @@ func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 	for _, cat := range catList {
 		tags, err := m.GetTagsForCategory(ctx, cat.ID)
 		if err != nil {
-			s.MetricHelperDefault.Fail()
 			return NewSensorError("failed to get tags for category", "category", cat, "err", err)
 		}
 
 		for _, tag := range tags {
 			attachObjs, err := m.GetAttachedObjectsOnTags(ctx, []string{tag.ID})
 			if err != nil {
-				s.MetricHelperDefault.Fail()
 				return NewSensorError("failed to get attached objects for tag", "tag", tag, "err", err)
 			}
 
@@ -98,7 +101,8 @@ func (s *TagsSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 		}
 	}
 
-	s.MetricHelperDefault.Finish(true)
+	sensorStopwatch.Finish()
+	s.metricsCollector.UploadStats(sensorStopwatch.GetStats())
 
 	for _, tag := range objectTags {
 		err := scraper.DB.SetTags(ctx, tag, s.config.MaxAge)
@@ -114,8 +118,10 @@ func (s *TagsSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
 	if !s.started.IsStarted() {
 		err := s.refresh(ctx, scraper)
 		if err != nil {
+			s.statusMonitor.Fail()
 			return err
 		}
+		s.statusMonitor.Success()
 		s.started.Started()
 	} else {
 		return ErrSensorAlreadyStarted
@@ -126,6 +132,7 @@ func (s *TagsSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
 func (s *TagsSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
 	go func() {
+		time.Sleep(time.Duration(rand.Intn(20000)) * time.Millisecond)
 		for {
 			select {
 			case <-ticker.C:
@@ -133,8 +140,10 @@ func (s *TagsSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.manualRefresh:
@@ -143,8 +152,10 @@ func (s *TagsSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("manual refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("manual refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.stopChan:
@@ -181,4 +192,26 @@ func (s *TagsSensor) Match(name string) bool {
 
 func (s *TagsSensor) Enabled() bool {
 	return true
+}
+
+func (s *TagsSensor) GetLatestMetrics() []sensormetrics.SensorMetric {
+	return append(
+		s.metricsCollector.ComposeMetrics(s.Kind()),
+		sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "failed",
+			Value:      s.statusMonitor.StatusFailedFloat64(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "fail_rate",
+			Value:      s.statusMonitor.FailRate(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "enabled",
+			Value:      1.0,
+			Unit:       "boolean",
+		},
+	)
 }

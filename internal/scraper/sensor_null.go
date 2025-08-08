@@ -3,7 +3,7 @@ package scraper
 import (
 	"context"
 
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 )
 
 type NullSensor struct {
@@ -35,8 +35,8 @@ func (s *NullSensor) Kind() string {
 	return s.kind
 }
 
-func (s *NullSensor) GetLatestMetrics() []metricshelper.SensorMetric {
-	return []metricshelper.SensorMetric{
+func (s *NullSensor) GetLatestMetrics() []sensormetrics.SensorMetric {
+	return []sensormetrics.SensorMetric{
 		{
 			Sensor:     s.kind,
 			MetricName: "enabled",

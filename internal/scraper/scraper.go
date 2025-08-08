@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/sanderdescamps/govc_exporter/internal/database"
 	memory_db "github.com/sanderdescamps/govc_exporter/internal/database/memory"
+	redis_db "github.com/sanderdescamps/govc_exporter/internal/database/redis"
 	"github.com/sanderdescamps/govc_exporter/internal/pool"
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 )
 
 // type Error struct {
@@ -56,13 +58,40 @@ func NewVCenterScraper(ctx context.Context, conf Config, logger *slog.Logger) (*
 	if err != nil {
 		return nil, err
 	}
-	// pool.StartAuthRefresher(ctx, 5*time.Minute)
 
-	var db database.Database = memory_db.NewDB()
+	var db database.Database
+	var metricsDb database.MetricDB
+	switch dbType := strings.ToLower(conf.Backend.Type); dbType {
+	case "redis":
+		logger.Info("init Redis backend")
+		db = redis_db.NewDB(
+			conf.Backend.Redis.Address,
+			conf.Backend.Redis.Password,
+			conf.Backend.Redis.Index,
+		)
+		metricsDb = redis_db.NewMetricsDB(
+			conf.Backend.Redis.Address,
+			conf.Backend.Redis.Password,
+			conf.Backend.Redis.Index,
+		)
+		// metricsDb = memory_db.NewMetricsDB()
+	case "memory":
+		logger.Info("init Memory backend")
+		db = memory_db.NewDB()
+		metricsDb = memory_db.NewMetricsDB()
+	default:
+		logger.Error("invalid backend type", "type", dbType)
+		return nil, fmt.Errorf("invalid backend type [%s]", dbType)
+	}
+
 	db.Connect(ctx)
-
-	var metricsDb database.MetricDB = memory_db.NewMetricsDB()
 	metricsDb.Connect(ctx)
+
+	// var db database.Database = memory_db.NewDB()
+	// db.Connect(ctx)
+
+	// var metricsDb database.MetricDB = memory_db.NewMetricsDB()
+	// metricsDb.Connect(ctx)
 
 	scraper := VCenterScraper{
 		clientPool: pool,
@@ -167,8 +196,8 @@ func (c *VCenterScraper) tcpConnectStatus() error {
 	return nil
 }
 
-func (c *VCenterScraper) CollectMetrics() []metricshelper.SensorMetric {
-	metrics := []metricshelper.SensorMetric{}
+func (c *VCenterScraper) CollectMetrics() []sensormetrics.SensorMetric {
+	metrics := []sensormetrics.SensorMetric{}
 	metrics = append(metrics, c.ScraperMetrics()...)
 	for _, sensor := range c.SensorList() {
 		metrics = append(metrics, sensor.GetLatestMetrics()...)
@@ -176,33 +205,33 @@ func (c *VCenterScraper) CollectMetrics() []metricshelper.SensorMetric {
 	return metrics
 }
 
-func (c *VCenterScraper) ScraperMetrics() []metricshelper.SensorMetric {
-	result := []metricshelper.SensorMetric{}
+func (c *VCenterScraper) ScraperMetrics() []sensormetrics.SensorMetric {
+	result := []sensormetrics.SensorMetric{}
 
 	err := c.tcpConnectStatus()
 	if err == nil {
-		result = append(result, metricshelper.SensorMetric{
+		result = append(result, sensormetrics.SensorMetric{
 			Sensor:     "scraper",
 			MetricName: "tcp_connect_status",
 			Unit:       "boolean",
 			Value:      1,
 		})
 	} else if errors.Is(err, ErrVCenterURLInvalid) {
-		result = append(result, metricshelper.SensorMetric{
+		result = append(result, sensormetrics.SensorMetric{
 			Sensor:     "scraper",
 			MetricName: "tcp_connect_status",
 			Unit:       "boolean",
 			Value:      0,
 		})
 	} else if errors.Is(err, ErrVCenterConnectFail) {
-		result = append(result, metricshelper.SensorMetric{
+		result = append(result, sensormetrics.SensorMetric{
 			Sensor:     "scraper",
 			MetricName: "tcp_connect_status",
 			Unit:       "boolean",
 			Value:      0,
 		})
 	} else {
-		result = append(result, metricshelper.SensorMetric{
+		result = append(result, sensormetrics.SensorMetric{
 			Sensor:     "scraper",
 			MetricName: "tcp_connect_status",
 			Unit:       "boolean",
@@ -288,9 +317,7 @@ func (c *VCenterScraper) Stop(ctx context.Context, logger *slog.Logger) {
 	logger.Info("finish triggering termination of all sensors")
 
 	c.clientPool.Destroy(ctx)
-	if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-		logger.Info("Close client pool")
-	}
+	logger.Info("Close client pool")
 }
 
 func (c *VCenterScraper) TriggerSensorRefreshByName(ctx context.Context, sensorName string) error {

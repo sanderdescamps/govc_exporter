@@ -8,8 +8,8 @@ import (
 )
 
 type ManagedObjectReference struct {
-	Type  ManagedObjectTypes `json:"type"`
-	Value string             `json:"value"`
+	Type  ManagedObjectTypes `json:"type" redis:"type"`
+	Value string             `json:"value" redis:"value"`
 }
 
 func NewManagedObjectReference(t ManagedObjectTypes, v string) ManagedObjectReference {
@@ -54,7 +54,7 @@ func (r *ManagedObjectReference) Hash() string {
 
 func (r *ManagedObjectReference) ToVMwareRef() types.ManagedObjectReference {
 	var t string
-	switch r.Type {
+	switch typ := r.Type; typ {
 	case ManagedObjectTypesCluster:
 		t = string(types.ManagedObjectTypesClusterComputeResource)
 	case ManagedObjectTypesComputeResource:
@@ -72,7 +72,7 @@ func (r *ManagedObjectReference) ToVMwareRef() types.ManagedObjectReference {
 	case ManagedObjectTypesVirtualMachine:
 		t = string(types.ManagedObjectTypesVirtualMachine)
 	default:
-		panic("unknown internal object type")
+		panic(fmt.Sprintf("unknown internal object type [%s]", typ))
 	}
 
 	return types.ManagedObjectReference{

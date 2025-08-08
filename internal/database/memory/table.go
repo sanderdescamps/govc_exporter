@@ -139,29 +139,39 @@ func (t *Table) GetAllIter() iter.Seq[any] {
 	}
 }
 
-func (s *Table) StartCleaner() {
-	ticker := time.NewTicker(CLEANUP_INTERVAL)
-	defer ticker.Stop()
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				func() {
-					s.lock.Lock()
-					defer s.lock.Unlock()
-					for k, v := range s.data {
-						if v.Expired() {
-							delete(s.data, k)
-						}
-					}
-				}()
-			case <-s.stopChan:
-				return
-			}
+func (t *Table) CleanupExpired() {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	for k, v := range t.data {
+		if v.Expired() {
+			delete(t.data, k)
 		}
-	}()
+	}
 }
 
-func (s *Table) StopCleaner() {
-	close(s.stopChan)
-}
+// func (s *Table) StartCleaner() {
+// 	ticker := time.NewTicker(CLEANUP_INTERVAL)
+// 	defer ticker.Stop()
+// 	go func() {
+// 		for {
+// 			select {
+// 			case <-ticker.C:
+// 				func() {
+// 					s.lock.Lock()
+// 					defer s.lock.Unlock()
+// 					for k, v := range s.data {
+// 						if v.Expired() {
+// 							delete(s.data, k)
+// 						}
+// 					}
+// 				}()
+// 			case <-s.stopChan:
+// 				return
+// 			}
+// 		}
+// 	}()
+// }
+
+// func (s *Table) StopCleaner() {
+// 	close(s.stopChan)
+// }

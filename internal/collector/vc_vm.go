@@ -17,6 +17,7 @@ type virtualMachineCollector struct {
 	legacyMetrics          bool
 	advancedStorageMetrics bool
 	advancedNetworkMetrics bool
+	useIsecSpecifics       bool
 	extraLabels            []string
 
 	numCPU                      *prometheus.Desc
@@ -259,6 +260,16 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 
 		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.Value}
 		labelValues = append(labelValues, extraLabelValues...)
+
+		if c.useIsecSpecifics && vm.IsecAnnotation != nil {
+			annotation := vm.IsecAnnotation
+			labelValues = append(
+				labelValues,
+				annotation.Criticality,
+				annotation.Responsable,
+				annotation.Service,
+			)
+		}
 
 		hostLabelValues := append(labelValues, vm.ResourcePool, vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host)
 

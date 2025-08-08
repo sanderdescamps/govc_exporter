@@ -158,7 +158,7 @@ func LoadConfig() Config {
 	//scraper.tags
 	a.Flag("scraper.tags", "Collect tags").Default("True").BoolVar(&cfg.ScraperConfig.Tags.Enabled)
 	a.Flag("scraper.tags.max_age", "time in seconds tags are cached").Default("10m").DurationVar(&cfg.ScraperConfig.Tags.MaxAge)
-	a.Flag("scraper.tags.refresh_interval", "interval tags are refreshed").Default("290s").DurationVar(&cfg.ScraperConfig.Tags.RefreshInterval)
+	a.Flag("scraper.tags.refresh_interval", "interval tags are refreshed").Default("55s").DurationVar(&cfg.ScraperConfig.Tags.RefreshInterval)
 	a.Flag("scraper.tags.clean_interval", "interval to clean up old metrics").Default("5s").DurationVar(&cfg.ScraperConfig.Tags.CleanInterval)
 
 	//scraper.vm
@@ -182,9 +182,11 @@ func LoadConfig() Config {
 	a.Flag("scraper.vm.perf.default_metrics", "Collect default vm perf metrics").Default("True").BoolVar(&cfg.ScraperConfig.VirtualMachinePerf.DefaultMetrics)
 	a.Flag("scraper.vm.perf.extra_metric", "Collect additional vm perf metrics").StringsVar(&cfg.ScraperConfig.VirtualMachinePerf.ExtraMetrics)
 
-	//scraper.on_demand
-	a.Flag("scraper.on_demand.max_age", "Time in seconds the scraper keeps all non-cache data. Used when no other sensor is available").Default("5m").DurationVar(&cfg.ScraperConfig.OnDemand.MaxAge)
-	a.Flag("scraper.on_demand.clean_interval", "interval to clean up old metrics").Default("5s").DurationVar(&cfg.ScraperConfig.OnDemand.CleanInterval)
+	// DB Backend
+	a.Flag("scraper.backend.type", "type of backend").Default("memory").EnumVar(&cfg.ScraperConfig.Backend.Type, "memory", "redis")
+	a.Flag("scraper.backend.redis.address", "Redis address").Default("localhost:6379").StringVar(&cfg.ScraperConfig.Backend.Redis.Address)
+	a.Flag("scraper.backend.redis.password", "Redis password").Default("").StringVar(&cfg.ScraperConfig.Backend.Redis.Password)
+	a.Flag("scraper.backend.redis.index", "Redis index").Default("0").IntVar(&cfg.ScraperConfig.Backend.Redis.Index)
 
 	if _, err := a.Parse(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing commandline arguments: %v\n", err)

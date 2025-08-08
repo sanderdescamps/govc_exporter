@@ -87,7 +87,7 @@ func (p *VCenterThrottlePool) AcquireWithContext(ctx context.Context) (*govmomi.
 			return client, release, sessionErr
 		}
 	}
-	return nil, func() {}, fmt.Errorf("failed to reauthenticate: %w", authErr)
+	return nil, func() {}, fmt.Errorf("failed to reauthenticate: %s", authErr)
 }
 
 func (p *VCenterThrottlePool) AcquireRest() (*rest.Client, func(), error) {

@@ -13,18 +13,15 @@ import (
 	"github.com/vmware/govmomi/vim25/json"
 )
 
+const CLEANER_INTERVAL_SEC = 5
+
 type DB struct {
-	tabels map[objects.ManagedObjectTypes]*Table
-	lock   sync.Mutex
+	tabels          map[objects.ManagedObjectTypes]*Table
+	lock            sync.Mutex
+	cleanerStopChan chan bool
 }
 
 func NewDB() *DB {
-	return &DB{
-		tabels: make(map[objects.ManagedObjectTypes]*Table),
-	}
-}
-
-func NewDBWithCleaner() *DB {
 	return &DB{
 		tabels: make(map[objects.ManagedObjectTypes]*Table),
 	}
@@ -59,21 +56,47 @@ func (db *DB) Table(name objects.ManagedObjectTypes) *Table {
 	defer db.lock.Unlock()
 	if _, ok := db.tabels[name]; !ok {
 		db.tabels[name] = NewTable()
-		db.tabels[name].StartCleaner()
 	}
 	return db.tabels[name]
 }
 
 func (db *DB) Connect(ctx context.Context) error {
-	for _, t := range db.tabels {
-		t.StartCleaner()
-	}
+	db.startCleaner(ctx)
 	return nil
 }
 
 func (db *DB) Disconnect(ctx context.Context) error {
+	db.stopCleaner(ctx)
 	db.tabels = nil
 	return nil
+}
+
+func (db *DB) startCleaner(ctx context.Context) {
+	ticker := time.NewTicker(CLEANUP_INTERVAL)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				go func() {
+					for oType := range db.tabels {
+						if t := db.Table(oType); t != nil {
+							t.CleanupExpired()
+						}
+					}
+				}()
+			case <-db.cleanerStopChan:
+				ticker.Stop()
+				return
+			case <-ctx.Done():
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+}
+
+func (db *DB) stopCleaner(ctx context.Context) {
+	db.cleanerStopChan <- true
 }
 
 func (db *DB) SetObj(ctx context.Context, key string, table objects.ManagedObjectTypes, obj interface{}, ttl time.Duration) error {
@@ -345,8 +368,8 @@ func (db *DB) GetAllTagSetsIter(ctx context.Context) iter.Seq[objects.TagSet] {
 	tagIter := db.Table(objects.ManagedObjectTypesTagSet).GetAllIter()
 	return func(yield func(objects.TagSet) bool) {
 		for item := range tagIter {
-			if rpool, ok := item.(objects.TagSet); ok {
-				if !yield(rpool) {
+			if tagSet, ok := item.(objects.TagSet); ok {
+				if !yield(tagSet) {
 					return
 				}
 			}

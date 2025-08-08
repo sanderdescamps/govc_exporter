@@ -3,13 +3,14 @@ package scraper
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"sync"
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/vim25/mo"
 )
 
@@ -18,28 +19,32 @@ const RESOURCE_POOL_SENSOR_NAME = "ResourcePoolSensor"
 type ResourcePoolSensor struct {
 	BaseSensor
 	logger.SensorLogger
-	metricshelper.MetricHelperDefault
-	started       *helper.StartedCheck
-	sensorLock    sync.Mutex
-	manualRefresh chan struct{}
-	stopChan      chan struct{}
-	config        SensorConfig
+	metricsCollector *sensormetrics.SensorMetricsCollector
+	statusMonitor    *sensormetrics.StatusMonitor
+	started          *helper.StartedCheck
+	sensorLock       sync.Mutex
+	manualRefresh    chan struct{}
+	stopChan         chan struct{}
+	config           SensorConfig
 }
 
 func NewResourcePoolSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *ResourcePoolSensor {
+	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
+	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	return &ResourcePoolSensor{
 		BaseSensor: *NewBaseSensor(
 			"ResourcePool", []string{
 				"parent",
 				"name",
 				"summary",
-			}),
-		started:             helper.NewStartedCheck(),
-		stopChan:            make(chan struct{}),
-		manualRefresh:       make(chan struct{}),
-		config:              config,
-		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(RESOURCE_POOL_SENSOR_NAME)),
-		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(RESOURCE_POOL_SENSOR_NAME),
+			}, mc, sm),
+		started:          helper.NewStartedCheck(),
+		stopChan:         make(chan struct{}),
+		manualRefresh:    make(chan struct{}),
+		config:           config,
+		SensorLogger:     logger.NewSLogLogger(l, logger.WithKind(RESOURCE_POOL_SENSOR_NAME)),
+		metricsCollector: mc,
+		statusMonitor:    sm,
 	}
 }
 
@@ -50,8 +55,7 @@ func (s *ResourcePoolSensor) refresh(ctx context.Context, scraper *VCenterScrape
 	defer s.sensorLock.Unlock()
 
 	var resourcePools []mo.ResourcePool
-	stats, err := s.baseRefresh(ctx, scraper, &resourcePools)
-	s.MetricHelperDefault.LoadStats(stats)
+	err := s.baseRefresh(ctx, scraper, &resourcePools)
 	if err != nil {
 		return err
 	}
@@ -71,8 +75,10 @@ func (s *ResourcePoolSensor) Init(ctx context.Context, scraper *VCenterScraper) 
 	if !s.started.IsStarted() {
 		err := s.refresh(ctx, scraper)
 		if err != nil {
+			s.statusMonitor.Fail()
 			return err
 		}
+		s.statusMonitor.Success()
 		s.started.Started()
 	} else {
 		return ErrSensorAlreadyStarted
@@ -83,6 +89,7 @@ func (s *ResourcePoolSensor) Init(ctx context.Context, scraper *VCenterScraper) 
 func (s *ResourcePoolSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
 	go func() {
+		time.Sleep(time.Duration(rand.Intn(20000)) * time.Millisecond)
 		for {
 			select {
 			case <-ticker.C:
@@ -90,8 +97,10 @@ func (s *ResourcePoolSensor) StartRefresher(ctx context.Context, scraper *VCente
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.manualRefresh:
@@ -100,8 +109,10 @@ func (s *ResourcePoolSensor) StartRefresher(ctx context.Context, scraper *VCente
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("manual refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("manual refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.stopChan:
@@ -138,6 +149,28 @@ func (s *ResourcePoolSensor) Match(name string) bool {
 
 func (s *ResourcePoolSensor) Enabled() bool {
 	return true
+}
+
+func (s *ResourcePoolSensor) GetLatestMetrics() []sensormetrics.SensorMetric {
+	return append(
+		s.metricsCollector.ComposeMetrics(s.Kind()),
+		sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "failed",
+			Value:      s.statusMonitor.StatusFailedFloat64(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "fail_rate",
+			Value:      s.statusMonitor.FailRate(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "enabled",
+			Value:      1.0,
+			Unit:       "boolean",
+		},
+	)
 }
 
 func ConvertToResourcePool(ctx context.Context, scraper *VCenterScraper, p mo.ResourcePool, t time.Time) objects.ResourcePool {

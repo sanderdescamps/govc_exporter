@@ -16,9 +16,12 @@ const (
 )
 
 type Config struct {
-	VCenter            string
-	Username           string
-	Password           string
+	VCenter  string
+	Username string
+	Password string
+
+	Backend BackendConfig
+
 	Cluster            SensorConfig
 	ComputeResource    SensorConfig
 	Datastore          SensorConfig
@@ -31,10 +34,6 @@ type Config struct {
 	Tags               TagsSensorConfig
 	VirtualMachine     SensorConfig
 	VirtualMachinePerf PerfSensorConfig
-	OnDemand           struct {
-		MaxAge        time.Duration
-		CleanInterval time.Duration
-	}
 	// CleanInterval  time.Duration
 	ClientPoolSize int
 }
@@ -57,6 +56,17 @@ type PerfSensorConfig struct {
 	SampleInterval  time.Duration
 	DefaultMetrics  bool
 	ExtraMetrics    []string
+}
+
+type BackendConfig struct {
+	Type  string
+	Redis RedisConfig
+}
+
+type RedisConfig struct {
+	Address  string
+	Password string
+	Index    int
 }
 
 func (c *PerfSensorConfig) SensorConfig() SensorConfig {
@@ -139,14 +149,33 @@ func DefaultConfig() Config {
 			RefreshInterval: 60 * time.Second,
 			CleanInterval:   5 * time.Second,
 		},
-
-		OnDemand: struct {
-			MaxAge        time.Duration
-			CleanInterval time.Duration
-		}{
-			MaxAge:        300,
-			CleanInterval: 5 * time.Second,
+		HostPerf: PerfSensorConfig{
+			Enabled:         true,
+			MaxAge:          120 * time.Second,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
+			MaxSampleWindow: 5 * time.Minute,
+			SampleInterval:  20 * time.Second,
+			DefaultMetrics:  true,
 		},
+		VirtualMachinePerf: PerfSensorConfig{
+			Enabled:         true,
+			MaxAge:          10 * time.Minute,
+			RefreshInterval: 60 * time.Second,
+			CleanInterval:   5 * time.Second,
+			MaxSampleWindow: 5 * time.Minute,
+			SampleInterval:  20 * time.Second,
+			DefaultMetrics:  true,
+		},
+		Backend: BackendConfig{
+			Type: "memory",
+			Redis: RedisConfig{
+				Address:  "localhost:6379",
+				Password: "",
+				Index:    0,
+			},
+		},
+
 		ClientPoolSize: 5,
 	}
 }
@@ -158,6 +187,10 @@ func (c Config) Validate() error {
 
 	if c.ClientPoolSize <= 0 {
 		return fmt.Errorf("ClientPoolSize cannot be smaller than 1")
+	}
+
+	if !(c.Backend.Type == "memory" || c.Backend.Type == "redis") {
+		return fmt.Errorf("backend.type must be one of [memory|redis]")
 	}
 
 	if !c.Host.Enabled && c.VirtualMachine.Enabled {

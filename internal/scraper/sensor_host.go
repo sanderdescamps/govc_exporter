@@ -3,6 +3,7 @@ package scraper
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"reflect"
 	"sync"
 	"time"
@@ -10,7 +11,7 @@ import (
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -19,7 +20,8 @@ import (
 const HOST_SENSOR_NAME = "HostSensor"
 
 type HostSensor struct {
-	metricshelper.MetricHelperDefault
+	metricsCollector *sensormetrics.SensorMetricsCollector
+	statusMonitor    *sensormetrics.StatusMonitor
 	logger.SensorLogger
 	started       *helper.StartedCheck
 	sensorLock    sync.Mutex
@@ -29,13 +31,16 @@ type HostSensor struct {
 }
 
 func NewHostSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *HostSensor {
+	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
+	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	return &HostSensor{
-		config:              config,
-		started:             helper.NewStartedCheck(),
-		stopChan:            make(chan struct{}),
-		manualRefresh:       make(chan struct{}),
-		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(HOST_SENSOR_NAME)),
-		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(HOST_SENSOR_NAME),
+		config:           config,
+		started:          helper.NewStartedCheck(),
+		stopChan:         make(chan struct{}),
+		manualRefresh:    make(chan struct{}),
+		SensorLogger:     logger.NewSLogLogger(l, logger.WithKind(HOST_SENSOR_NAME)),
+		metricsCollector: mc,
+		statusMonitor:    sm,
 	}
 }
 
@@ -45,14 +50,15 @@ func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 	}
 	defer s.sensorLock.Unlock()
 
-	s.MetricHelperDefault.Start()
+	sensorStopwatch := sensormetrics.NewSensorStopwatch()
+	sensorStopwatch.Start()
 	client, release, err := scraper.clientPool.Acquire()
 	if err != nil {
 		return ErrSensorCientFailed
 	}
 	defer release()
 
-	s.MetricHelperDefault.Mark1()
+	sensorStopwatch.Mark1()
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -81,7 +87,8 @@ func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 		},
 		&entities,
 	)
-	s.MetricHelperDefault.Finish(err == nil)
+	sensorStopwatch.Finish()
+	s.metricsCollector.UploadStats(sensorStopwatch.GetStats())
 	if err != nil {
 		return NewSensorError("failed to retrieve data", "err", err)
 	}
@@ -97,8 +104,10 @@ func (s *HostSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
 	if !s.started.IsStarted() {
 		err := s.refresh(ctx, scraper)
 		if err != nil {
+			s.statusMonitor.Fail()
 			return err
 		}
+		s.statusMonitor.Success()
 		s.started.Started()
 	} else {
 		return ErrSensorAlreadyStarted
@@ -109,6 +118,7 @@ func (s *HostSensor) Init(ctx context.Context, scraper *VCenterScraper) error {
 func (s *HostSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
 	go func() {
+		time.Sleep(time.Duration(rand.Intn(20000)) * time.Millisecond)
 		for {
 			select {
 			case <-ticker.C:
@@ -116,8 +126,10 @@ func (s *HostSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.manualRefresh:
@@ -126,8 +138,10 @@ func (s *HostSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("manual refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("manual refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.stopChan:
@@ -164,6 +178,28 @@ func (s *HostSensor) Match(name string) bool {
 
 func (s *HostSensor) Enabled() bool {
 	return true
+}
+
+func (s *HostSensor) GetLatestMetrics() []sensormetrics.SensorMetric {
+	return append(
+		s.metricsCollector.ComposeMetrics(s.Kind()),
+		sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "failed",
+			Value:      s.statusMonitor.StatusFailedFloat64(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "fail_rate",
+			Value:      s.statusMonitor.FailRate(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "enabled",
+			Value:      1.0,
+			Unit:       "boolean",
+		},
+	)
 }
 
 func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem, t time.Time) objects.Host {
@@ -353,29 +389,30 @@ func getHostMultiPathPaths(host mo.HostSystem) []objects.IscsiPath {
 			scsiLun := scsiLunLookupFunc(naa)
 			for _, path := range logicalUnit.Path {
 				device := hbaDeviceNameFunc(path.Adapter)
-
-				transportInterface := reflect.ValueOf(path.Transport).Elem().Interface()
-				switch transport := transportInterface.(type) {
-				case types.HostInternetScsiTargetTransport:
-					for _, address := range transport.Address {
-						iscsiPaths = append(iscsiPaths, objects.IscsiPath{
-							Device:        device,
-							NAA:           naa,
-							TargetIQN:     transport.IScsiName,
-							TargetAddress: address,
-							DatastoreName: scsiLun.Datastore,
-							State:         path.State,
-						})
+				if path.Transport != nil {
+					transportInterface := reflect.ValueOf(path.Transport).Elem().Interface()
+					switch transport := transportInterface.(type) {
+					case types.HostInternetScsiTargetTransport:
+						for _, address := range transport.Address {
+							iscsiPaths = append(iscsiPaths, objects.IscsiPath{
+								Device:        device,
+								NAA:           naa,
+								TargetIQN:     transport.IScsiName,
+								TargetAddress: address,
+								DatastoreName: scsiLun.Datastore,
+								State:         path.State,
+							})
+						}
+						// default:
+						// 	iscsiPaths = append(iscsiPaths, iscsiPath{
+						// 		Device:        device,
+						// 		NAA:           naa,
+						// 		TargetIQN:     "",
+						// 		TargetAddress: "",
+						// 		DatastoreName: scsiLun.Datastore,
+						// 		State:         path.State,
+						// 	})
 					}
-					// default:
-					// 	iscsiPaths = append(iscsiPaths, iscsiPath{
-					// 		Device:        device,
-					// 		NAA:           naa,
-					// 		TargetIQN:     "",
-					// 		TargetAddress: "",
-					// 		DatastoreName: scsiLun.Datastore,
-					// 		State:         path.State,
-					// 	})
 				}
 			}
 		}

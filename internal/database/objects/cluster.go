@@ -5,21 +5,21 @@ import (
 )
 
 type Cluster struct {
-	Timestamp  time.Time               `json:"timestamp"`
-	Self       ManagedObjectReference  `json:"self"`
-	Parent     *ManagedObjectReference `json:"parent"`
-	Name       string                  `json:"name"`
-	Datacenter string                  `json:"datacenter"`
+	Timestamp  time.Time               `json:"timestamp" redis:"timestamp"`
+	Self       ManagedObjectReference  `json:"self" redis:"self"`
+	Parent     *ManagedObjectReference `json:"parent" redis:"parent"`
+	Name       string                  `json:"name" redis:"name"`
+	Datacenter string                  `json:"datacenter" redis:"datacenter"`
 
-	TotalCPU          float64 `json:"total_cpu"`
-	EffectiveCPU      float64 `json:"effective_cpu"`
-	TotalMemory       float64 `json:"total_memory"`
-	EffectiveMemory   float64 `json:"effective_memory"`
-	NumCPUCores       float64 `json:"num_cpu_cores"`
-	NumCPUThreads     float64 `json:"num_cpu_threads"`
-	NumEffectiveHosts float64 `json:"num_effective_hosts"`
-	NumHosts          float64 `json:"num_hosts"`
-	OverallStatus     string  `json:"overall_status"`
+	TotalCPU          float64 `json:"total_cpu" redis:"total_cpu"`
+	EffectiveCPU      float64 `json:"effective_cpu" redis:"effective_cpu"`
+	TotalMemory       float64 `json:"total_memory" redis:"total_memory"`
+	EffectiveMemory   float64 `json:"effective_memory" redis:"effective_memory"`
+	NumCPUCores       float64 `json:"num_cpu_cores" redis:"num_cpu_cores"`
+	NumCPUThreads     float64 `json:"num_cpu_threads" redis:"num_cpu_threads"`
+	NumEffectiveHosts float64 `json:"num_effective_hosts" redis:"num_effective_hosts"`
+	NumHosts          float64 `json:"num_hosts" redis:"num_hosts"`
+	OverallStatus     string  `json:"overall_status" redis:"overall_status"`
 }
 
 // Return OverallStatus as float64

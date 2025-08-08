@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/prometheus/common/promslog"
-	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/property"
@@ -46,6 +45,7 @@ func TestVCenterScraper(t *testing.T) {
 	conf.Username = "testuser"
 	conf.Password = "testpass"
 	conf.Tags.CategoryToCollect = []string{"tenants"}
+	// conf.Backend.Type = "redis"
 
 	err := conf.Validate()
 	if err != nil {
@@ -57,21 +57,24 @@ func TestVCenterScraper(t *testing.T) {
 	}
 	logger := promslog.New(promlogConfig)
 	ctx := context.Background()
-	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
 
-	scraper, _ := scraper.NewVCenterScraper(ctxScraper, conf, logger)
+	scraper, _ := scraper.NewVCenterScraper(ctx, conf, logger)
 
 	sensors := scraper.SensorList()
 	for _, sensor := range sensors {
 		logger.Info("Sensor", "kind", sensor.Kind())
 	}
-	scraper.Start(ctxScraper, logger)
+	scraper.Start(ctx, logger)
+
+	count := 0
+	for _, ref := range scraper.DB.GetAllHostRefs(ctx) {
+		metrics := scraper.MetricsDB.PopAllHostMetrics(ctx, ref)
+		for range metrics {
+			count++
+		}
+		logger.Info("host metrics", "host", ref.Value, "count", count)
+	}
 	logger.Info("test finished")
-
-	chain := scraper.DB.GetParentChain(ctx, objects.NewManagedObjectReference(objects.ManagedObjectTypesHost, "host-16064"))
-	logger.Info("parent chain", "chain", chain)
-	fmt.Print("end")
-
 }
 
 func TestVMwareHost(t *testing.T) {

@@ -3,7 +3,7 @@ package scraper
 import (
 	"context"
 
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 )
 
 type Sensor interface {
@@ -14,5 +14,5 @@ type Sensor interface {
 	Kind() string
 	Match(string) bool
 	TriggerManualRefresh(ctx context.Context)
-	GetLatestMetrics() []metricshelper.SensorMetric
+	GetLatestMetrics() []sensormetrics.SensorMetric
 }

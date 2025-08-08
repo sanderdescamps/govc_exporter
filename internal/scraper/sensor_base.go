@@ -2,34 +2,37 @@ package scraper
 
 import (
 	"context"
-	"time"
 
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/view"
 )
 
 type BaseSensor struct {
 	moType       string
 	moProperties []string
+
+	metricsCollector *sensormetrics.SensorMetricsCollector
+	statusMonitor    *sensormetrics.StatusMonitor
 }
 
-func NewBaseSensor(moType string, moProperties []string) *BaseSensor {
+func NewBaseSensor(moType string, moProperties []string, mc *sensormetrics.SensorMetricsCollector, sm *sensormetrics.StatusMonitor) *BaseSensor {
 	return &BaseSensor{
-		moType:       moType,
-		moProperties: moProperties,
+		moType:           moType,
+		moProperties:     moProperties,
+		metricsCollector: mc,
+		statusMonitor:    sm,
 	}
 }
 
-func (s *BaseSensor) baseRefresh(ctx context.Context, scraper *VCenterScraper, res interface{}) (metricshelper.RefreshStats, error) {
-	t1 := time.Now()
+func (s *BaseSensor) baseRefresh(ctx context.Context, scraper *VCenterScraper, res interface{}) error {
+	sensorStopwatch := sensormetrics.NewSensorStopwatch()
+	sensorStopwatch.Start()
 	client, release, err := scraper.clientPool.AcquireWithContext(ctx)
 	if err != nil {
-		return metricshelper.RefreshStats{
-			Failed: true,
-		}, err
+		return err
 	}
 	defer release()
-	t2 := time.Now()
+	sensorStopwatch.Mark1()
 
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
@@ -39,9 +42,7 @@ func (s *BaseSensor) baseRefresh(ctx context.Context, scraper *VCenterScraper, r
 		true,
 	)
 	if err != nil {
-		return metricshelper.RefreshStats{
-			Failed: true,
-		}, err
+		return err
 	}
 	defer v.Destroy(ctx)
 
@@ -51,12 +52,7 @@ func (s *BaseSensor) baseRefresh(ctx context.Context, scraper *VCenterScraper, r
 		s.moProperties,
 		res,
 	)
-	t3 := time.Now()
-	return metricshelper.RefreshStats{
-		ClientWaitTime: t2.Sub(t1),
-		QueryTime:      t3.Sub(t2),
-		Failed: func() bool {
-			return err != nil
-		}(),
-	}, err
+	sensorStopwatch.Finish()
+	s.metricsCollector.UploadStats(sensorStopwatch.GetStats())
+	return err
 }

@@ -2,9 +2,11 @@ package scraper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
+	"math/rand"
 	"slices"
 	"strconv"
 	"sync"
@@ -13,7 +15,7 @@ import (
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
-	metricshelper "github.com/sanderdescamps/govc_exporter/internal/scraper/metrics_helper"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
@@ -24,25 +26,29 @@ const VM_SENSOR_NAME = "VirtualMachineSensor"
 
 type VirtualMachineSensor struct {
 	logger.SensorLogger
-	metricshelper.MetricHelperDefault
-	started       *helper.StartedCheck
-	sensorLock    sync.Mutex
-	manualRefresh chan struct{}
-	stopChan      chan struct{}
-	config        SensorConfig
+	metricsCollector *sensormetrics.SensorMetricsCollector
+	statusMonitor    *sensormetrics.StatusMonitor
+	started          *helper.StartedCheck
+	sensorLock       sync.Mutex
+	manualRefresh    chan struct{}
+	stopChan         chan struct{}
+	config           SensorConfig
 
 	// moType       string
 	// moProperties []string
 }
 
 func NewVirtualMachineSensor(scraper *VCenterScraper, config SensorConfig, l *slog.Logger) *VirtualMachineSensor {
+	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewAvgSensorMetricsCollector(100)
+	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	var sensor VirtualMachineSensor = VirtualMachineSensor{
-		started:             helper.NewStartedCheck(),
-		stopChan:            make(chan struct{}),
-		manualRefresh:       make(chan struct{}),
-		config:              config,
-		SensorLogger:        logger.NewSLogLogger(l, logger.WithKind(VM_SENSOR_NAME)),
-		MetricHelperDefault: *metricshelper.NewMetricHelperDefault(VM_SENSOR_NAME),
+		started:          helper.NewStartedCheck(),
+		stopChan:         make(chan struct{}),
+		manualRefresh:    make(chan struct{}),
+		config:           config,
+		SensorLogger:     logger.NewSLogLogger(l, logger.WithKind(VM_SENSOR_NAME)),
+		metricsCollector: mc,
+		statusMonitor:    sm,
 	}
 
 	return &sensor
@@ -72,8 +78,10 @@ func (s *VirtualMachineSensor) Init(ctx context.Context, scraper *VCenterScraper
 	if !s.started.IsStarted() {
 		err := s.refresh(ctx, scraper)
 		if err != nil {
+			s.statusMonitor.Fail()
 			return err
 		}
+		s.statusMonitor.Success()
 		s.started.Started()
 	} else {
 		return ErrSensorAlreadyStarted
@@ -84,6 +92,7 @@ func (s *VirtualMachineSensor) Init(ctx context.Context, scraper *VCenterScraper
 func (s *VirtualMachineSensor) StartRefresher(ctx context.Context, scraper *VCenterScraper) error {
 	ticker := time.NewTicker(s.config.RefreshInterval)
 	go func() {
+		time.Sleep(time.Duration(rand.Intn(20000)) * time.Millisecond)
 		for {
 			select {
 			case <-ticker.C:
@@ -91,8 +100,10 @@ func (s *VirtualMachineSensor) StartRefresher(ctx context.Context, scraper *VCen
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.manualRefresh:
@@ -101,8 +112,10 @@ func (s *VirtualMachineSensor) StartRefresher(ctx context.Context, scraper *VCen
 					err := s.refresh(ctx, scraper)
 					if err == nil {
 						s.SensorLogger.Info("manual refresh successful")
+						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("manual refresh failed", "err", err)
+						s.statusMonitor.Fail()
 					}
 				}()
 			case <-s.stopChan:
@@ -130,19 +143,18 @@ func (s *VirtualMachineSensor) querryAllVMs(ctx context.Context, scraper *VCente
 	var wg sync.WaitGroup
 	wg.Add(len(hostRefs))
 	resultChan := make(chan *[]objects.VirtualMachine, len(hostRefs))
-	statsChan := make(chan metricshelper.RefreshStats, len(hostRefs))
-	allStats := []metricshelper.RefreshStats{}
 	for _, hostRef := range hostRefs {
 		go func() {
 			defer wg.Done()
 
-			vms, stats, err := s.queryVmsForHost(ctx, scraper, hostRef.ToVMwareRef())
+			vms, err := s.queryVmsForHost(ctx, scraper, hostRef.ToVMwareRef())
 			if err != nil {
 				s.SensorLogger.Error("Failed to get vm's for host", "host", hostRef.Value, "err", err)
+				s.statusMonitor.Fail()
 				return
 			}
+			s.statusMonitor.Success()
 			resultChan <- &vms
-			statsChan <- stats
 		}()
 	}
 
@@ -162,8 +174,6 @@ func (s *VirtualMachineSensor) querryAllVMs(ctx context.Context, scraper *VCente
 						allVMs[vm.Self] = vm
 					}
 				}
-			case stat := <-statsChan:
-				allStats = append(allStats, stat)
 			case <-readyChan:
 				close(readyChan)
 				close(resultChan)
@@ -181,15 +191,17 @@ func (s *VirtualMachineSensor) querryAllVMs(ctx context.Context, scraper *VCente
 	return slices.Collect(maps.Values(allVMs)), nil
 }
 
-func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCenterScraper, hostRef types.ManagedObjectReference) ([]objects.VirtualMachine, metricshelper.RefreshStats, error) {
-	t1 := time.Now()
+func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCenterScraper, hostRef types.ManagedObjectReference) ([]objects.VirtualMachine, error) {
+	sensorStopwatch := sensormetrics.NewSensorStopwatch()
+
+	sensorStopwatch.Start()
 	client, release, err := scraper.clientPool.AcquireWithContext(ctx)
 	if err != nil {
-		return nil, metricshelper.RefreshStats{Failed: true}, err
+		return nil, err
 	}
 	defer release()
 
-	t2 := time.Now()
+	sensorStopwatch.Mark1()
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
@@ -198,7 +210,7 @@ func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCe
 		true,
 	)
 	if err != nil {
-		return nil, metricshelper.RefreshStats{Failed: true}, err
+		return nil, err
 	}
 	defer v.Destroy(ctx)
 
@@ -222,9 +234,9 @@ func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCe
 		},
 		&items,
 	)
-	t3 := time.Now()
+	sensorStopwatch.Finish()
 	if err != nil {
-		return nil, metricshelper.RefreshStats{Failed: true}, err
+		return nil, err
 	}
 
 	oVMs := []objects.VirtualMachine{}
@@ -232,13 +244,9 @@ func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCe
 		oVMs = append(oVMs, ConvertToVirtualMachine(ctx, scraper, item, time.Now()))
 	}
 
-	refreshStats := metricshelper.RefreshStats{
-		ClientWaitTime: t2.Sub(t1),
-		QueryTime:      t3.Sub(t2),
-		Failed:         false,
-	}
+	s.metricsCollector.UploadStats(sensorStopwatch.GetStats())
 
-	return oVMs, refreshStats, nil
+	return oVMs, nil
 }
 
 func (s *VirtualMachineSensor) StopRefresher(ctx context.Context) {
@@ -263,6 +271,28 @@ func (s *VirtualMachineSensor) Match(name string) bool {
 
 func (s *VirtualMachineSensor) Enabled() bool {
 	return true
+}
+
+func (s *VirtualMachineSensor) GetLatestMetrics() []sensormetrics.SensorMetric {
+	return append(
+		s.metricsCollector.ComposeMetrics(s.Kind()),
+		sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "failed",
+			Value:      s.statusMonitor.StatusFailedFloat64(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "fail_rate",
+			Value:      s.statusMonitor.FailRate(),
+			Unit:       "boolean",
+		}, sensormetrics.SensorMetric{
+			Sensor:     s.Kind(),
+			MetricName: "enabled",
+			Value:      1.0,
+			Unit:       "boolean",
+		},
+	)
 }
 
 func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo.VirtualMachine, t time.Time) objects.VirtualMachine {
@@ -396,6 +426,8 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 		}
 	}
 
+	virtualMachine.IsecAnnotation = GetIsecAnnotation(vm)
+
 	return virtualMachine
 }
 
@@ -427,4 +459,16 @@ func ExtractDisksFromVM(vm mo.VirtualMachine) []objects.VirtualMachineDisk {
 		}
 	}
 	return result
+}
+
+func GetIsecAnnotation(vm mo.VirtualMachine) *objects.IsecAnnotation {
+	tmp := objects.IsecAnnotation{
+		Service:     "not defined",
+		Responsable: "not defined",
+		Criticality: "not defined",
+	}
+	if config := vm.Config; config != nil {
+		_ = json.Unmarshal([]byte(config.Annotation), &tmp)
+	}
+	return &tmp
 }

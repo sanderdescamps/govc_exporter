@@ -6,22 +6,22 @@ import (
 )
 
 type Datastore struct {
-	Timestamp        time.Time                `json:"timestamp"`
-	Self             ManagedObjectReference   `json:"self"`
-	Parent           *ManagedObjectReference  `json:"parent"`
-	Name             string                   `json:"name"`
-	DatastoreCluster string                   `json:"datastore_cluster"`
-	Kind             string                   `json:"kind"`
-	Capacity         float64                  `json:"capacity"`
-	FreeSpace        float64                  `json:"free_space"`
-	Accessible       bool                     `json:"accessible"`
-	Maintenance      string                   `json:"maintenance"`
-	OverallStatus    string                   `json:"overall_status"`
-	HostAccessible   float64                  `json:"host_accessible"`
-	HostMounted      float64                  `json:"host_mounted"`
-	HostVmknicActive float64                  `json:"host_vmknic_active"`
-	HostMountInfo    []DatastoreHostMountInfo `json:"host_mount_info"`
-	VmfsInfo         *DatastoreVmfsInfo       `json:"vmfs_info"`
+	Timestamp        time.Time                `json:"timestamp" redis:"timestamp"`
+	Self             ManagedObjectReference   `json:"self" redis:"self"`
+	Parent           *ManagedObjectReference  `json:"parent" redis:"parent"`
+	Name             string                   `json:"name" redis:"name"`
+	DatastoreCluster string                   `json:"datastore_cluster" redis:"datastore_cluster"`
+	Kind             string                   `json:"kind" redis:"kind"`
+	Capacity         float64                  `json:"capacity" redis:"capacity"`
+	FreeSpace        float64                  `json:"free_space" redis:"free_space"`
+	Accessible       bool                     `json:"accessible" redis:"accessible"`
+	Maintenance      string                   `json:"maintenance" redis:"maintenance"`
+	OverallStatus    string                   `json:"overall_status" redis:"overall_status"`
+	HostAccessible   float64                  `json:"host_accessible" redis:"host_accessible"`
+	HostMounted      float64                  `json:"host_mounted" redis:"host_mounted"`
+	HostVmknicActive float64                  `json:"host_vmknic_active" redis:"host_vmknic_active"`
+	HostMountInfo    []DatastoreHostMountInfo `json:"host_mount_info" redis:"host_mount_info"`
+	VmfsInfo         *DatastoreVmfsInfo       `json:"vmfs_info" redis:"vmfs_info"`
 }
 
 // Return the maintenance status as a float64 number.
@@ -48,18 +48,18 @@ func (d *Datastore) OverallStatusFloat64() float64 {
 }
 
 type DatastoreVmfsInfo struct {
-	Name  string `json:"name"`
-	UUID  string `json:"uuid"`
-	SSD   bool   `json:"ssd"`
-	Local bool   `json:"local"`
-	NAA   string `json:"naa"`
+	Name  string `json:"name" redis:"name"`
+	UUID  string `json:"uuid" redis:"uuid"`
+	SSD   bool   `json:"ssd" redis:"ssd"`
+	Local bool   `json:"local" redis:"local"`
+	NAA   string `json:"naa" redis:"naa"`
 }
 
 type DatastoreHostMountInfo struct {
-	Host            string `json:"host"`
-	HostID          string `json:"host_id"`
-	SSD             bool   `json:"ssd"`
-	Accessable      bool   `json:"accessable"`
-	Mounted         bool   `json:"mounted"`
-	VmknicActiveNic bool   `json:"vmknic_active_nic"`
+	Host            string `json:"host" redis:"host"`
+	HostID          string `json:"host_id" redis:"host_id"`
+	SSD             bool   `json:"ssd" redis:"ssd"`
+	Accessible      bool   `json:"accessible" redis:"accessible"`
+	Mounted         bool   `json:"mounted" redis:"mounted"`
+	VmknicActiveNic bool   `json:"vmknic_active_nic" redis:"vmknic_active_nic"`
 }
