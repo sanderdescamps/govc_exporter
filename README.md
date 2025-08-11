@@ -2,20 +2,24 @@
 
 ## About 
 
-govc_exporter is a Prometheus exporter that extracts and exposes all available metrics from a VMware vCenter. It is specifically designed to be able to function in a large-scale environments and handle the performance limitations of the vCenter API.
+govc_exporter is a Prometheus exporter that extracts and exposes all available metrics from a VMware vCenter. It is specifically designed to be able to operate in a large-scale environments and deal with the performance limitations of the vCenter API.
 
-Originally started as a fork, govc_exporter has evolved with numerous breaking changes and improvements. Due to these changes, the project now continues as an independent repository.
+Originally started as a fork from [govc_exporter](https://github.com/Intrinsec/govc_exporter), govc_exporter has evolved with numerous breaking changes and improvements. Due to these changes, the project now continues as an independent repository.
 
 ## How it works internally
 
 ### Scraper
 
-The exporter had an internal scraper which pulls all the data from vCenter. The scraper has multiple sensors. Each sensor pulls the data for a certain object (Hosts, Clusters, VMs,...). The sensor is periodically refreshed always keeping the latest version of the data. A sensor also has a periodic cleanup job which removes old data. 
+The exporter had an internal scraper which pulls all the data from vCenter. The scraper has multiple sensors. Each sensor pulls the data for a certain object (Hosts, Clusters, VMs,...). Each sensor is periodically refreshed. The latest version of the data is stored in the backend.  
 Every sensor can be configured by the cli. Check the `--help` and look for `--scraper.[sensor].[option]` for more information. 
+
+#### Backend
+
+It is generally advices to use the memory backend. This backend stores all the letest versions in memory. It can also use Redis as backend. But this is still considered as experimental. 
 
 ### Performance Metrics
 
-The exporter also allows to query performance metrics for certain objects (Host, VM,...). Performance metrics are pulled from the vCenter performance endpoint and are usually more acurate. 
+The exporter allows to query performance metrics for certain objects (Host, VM,...). Performance metrics are pulled from the vCenter performance endpoint and are usually more acurate. 
 
 The perfmetrics are collected by a perf sensor, which is simular to the normal sensor except that it stores all metrics in a timed queue. When the collector is triggered, all the latest metrics will be popped from the queue and returned by the exporter.
 
@@ -47,7 +51,7 @@ export VC_PASSWORD=FIXME
 
 ```
 govc_exporter --help
-usage: govc_exporter --scraper.vc.url=SCRAPER.VC.URL --scraper.vc.username=SCRAPER.VC.USERNAME --scraper.vc.password=SCRAPER.VC.PASSWORD [<flags>]
+usage: exporter --scraper.vc.url=SCRAPER.VC.URL --scraper.vc.username=SCRAPER.VC.USERNAME --scraper.vc.password=SCRAPER.VC.PASSWORD [<flags>]
 
 Prometheus vCenter exporter
 
@@ -57,6 +61,7 @@ Flags:
       --log.level=info           Only log messages with the given severity or above. One of: [debug, info, warn, error]
       --log.format=logfmt        Output format of log messages. One of: [logfmt, json]
       --[no-]version             Show application version.
+      --memlimit=0               Memory (soft) limit in MB. Same as GOMEMLIMIT
       --web.listen-address=":9752"  
                                  Address on which to expose metrics and web interface.
       --web.telemetry-path="/metrics"  
@@ -95,36 +100,26 @@ Flags:
                                  time in seconds clusters are cached
       --scraper.cluster.refresh_interval=25s  
                                  interval clusters are refreshed
-      --scraper.cluster.clean_interval=5s  
-                                 interval to clean up old metrics
       --[no-]scraper.compute_resource  
                                  Enable compute_resource sensor
       --scraper.compute_resource.max_age=5m  
                                  time in seconds clusters are cached
       --scraper.compute_resource.refresh_interval=25s  
                                  interval clusters are refreshed
-      --scraper.compute_resource.clean_interval=5s  
-                                 interval to clean up old metrics
       --[no-]scraper.datastore   Enable datastore sensor
       --scraper.datastore.max_age=2m  
                                  time in seconds datastores are cached
       --scraper.datastore.refresh_interval=55s  
                                  interval datastores are refreshed
-      --scraper.datastore.clean_interval=5s  
-                                 interval to clean up old metrics
       --[no-]scraper.host        Enable host sensor
       --scraper.host.max_age=1m  time in seconds hosts are cached
       --scraper.host.refresh_interval=25s  
                                  interval hosts are refreshed
-      --scraper.host.clean_interval=5s  
-                                 interval to clean up old metrics
       --[no-]scraper.host.perf   Enable host performance metrics
       --scraper.host.perf.max_age=10m  
                                  time in seconds performance metrics are cached
       --scraper.host.perf.refresh_interval=55s  
                                  perf metrics refresh interval
-      --scraper.host.perf.clean_interval=5s  
-                                 interval to clean up old metrics
       --scraper.host.perf.max_sample_window=5m  
                                  max window metrics are collected
       --scraper.host.perf.sample_interval=20s  
@@ -138,29 +133,23 @@ Flags:
                                  time in seconds resource pools are cached
       --scraper.repool.refresh_interval=55s  
                                  interval resource pools are refreshed
-      --scraper.repool.clean_interval=5s  
-                                 interval to clean up old metrics
       --[no-]scraper.spod        Enable datastore cluster sensor
       --scraper.spod.max_age=2m  time in seconds spods are cached
       --scraper.spod.refresh_interval=55s  
                                  interval spods are refreshed
-      --scraper.spod.clean_interval=5s  
-                                 interval to clean up old metrics
       --[no-]scraper.tags        Collect tags
       --scraper.tags.max_age=10m  
                                  time in seconds tags are cached
-      --scraper.tags.refresh_interval=290s  
+      --scraper.tags.refresh_interval=55s  
                                  interval tags are refreshed
-      --scraper.tags.clean_interval=5s  
-                                 interval to clean up old metrics
       --[no-]scraper.vm          Enable virtualmachine sensor
       --scraper.vm.max_age=2m    time in seconds vm's are cached
       --scraper.vm.refresh_interval=55s  
                                  interval vm's are refreshed
-      --scraper.vm.clean_interval=5s  
-                                 interval to clean up old metrics
+      --scraper.vm.refresh_timeout=SCRAPER.VM.REFRESH_TIMEOUT  
+                                 the maximum amount of time a sensor refresh can take. Default is 3 times the refresh_interval
       --[no-]collector.vm.legacy  
-                                 Collect lagacy metrics. Should all be available via scraper.vm.perf
+                                 Collect legacy metrics. Should all be available via scraper.vm.perf
       --[no-]collector.vm.disk   Collect extra vm disk metrics
       --[no-]collector.vm.network  
                                  Collect extra vm network metrics
@@ -169,8 +158,8 @@ Flags:
                                  time in seconds perf metrics are cached
       --scraper.vm.perf.refresh_interval=55s  
                                  perf metrics refresh interval
-      --scraper.vm.perf.clean_interval=5s  
-                                 interval to clean up old metrics
+      --scraper.vm.perf.refresh_timeout=SCRAPER.VM.PERF.REFRESH_TIMEOUT  
+                                 the maximum amount of time a sensor refresh can take. Default is 3 times the refresh_interval
       --scraper.vm.perf.max_sample_window=5m  
                                  max window metrics are collected
       --scraper.vm.perf.sample_interval=20s  
@@ -179,18 +168,15 @@ Flags:
                                  Collect default vm perf metrics
       --scraper.vm.perf.extra_metric=SCRAPER.VM.PERF.EXTRA_METRIC ...  
                                  Collect additional vm perf metrics
-      --scraper.on_demand.max_age=5m  
-                                 Time in seconds the scraper keeps all non-cache data. Used when no other sensor is available
-      --scraper.on_demand.clean_interval=5s  
-                                 interval to clean up old metrics
+      --scraper.backend.type=memory  
+                                 type of backend
+      --scraper.backend.redis.address="localhost:6379"  
+                                 Redis address
+      --scraper.backend.redis.password=""  
+                                 Redis password
+      --scraper.backend.redis.index=0  
+                                 Redis index
 ```
-#### GOMEMLIMIT (--memlimit)
-
-This exporter is somewhat atypical, as it stores a significant amount of data in memory. With the default Go garbage collection settings, it is likely to consume a large amount of memory or even run out of memory. To mitigate this, it's important to set the memory limit either via the environment variable `GOMEMLIMIT` or via the `--memlimit` flag. The default is set to 2048MiB, which should be sufficient for environments with up to 3000 VMs.
-
-For more info:
-* https://weaviate.io/blog/gomemlimit-a-game-changer-for-high-memory-applications
-* https://tip.golang.org/doc/gc-guide#Memory_limit
 
 # Get metrics
 

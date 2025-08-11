@@ -5,19 +5,11 @@ import (
 	"sync"
 )
 
-// type PoolObject interface {
-// 	Init() error
-// 	ReInit() error
-// 	Destroy() error
-// 	Healthy() error
-// }
-
 type ThrottlerPool[T any] struct {
 	poolObject   *T
 	available    chan int
 	size         int
 	hijackActive sync.Mutex
-	wg           sync.WaitGroup
 }
 
 func NewThrottlerPool[T any](item *T, size int) *ThrottlerPool[T] {
