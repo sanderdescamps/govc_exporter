@@ -5,37 +5,39 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
-	"reflect"
-	"time"
+	"strings"
+	"sync"
 
-	"github.com/sanderdescamps/govc_exporter/internal/helper"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
+	"github.com/sanderdescamps/govc_exporter/internal/database"
+	memory_db "github.com/sanderdescamps/govc_exporter/internal/database/memory"
+	redis_db "github.com/sanderdescamps/govc_exporter/internal/database/redis"
 	"github.com/sanderdescamps/govc_exporter/internal/pool"
-	"github.com/vmware/govmomi/vim25/mo"
-	"github.com/vmware/govmomi/vim25/types"
+	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 )
 
 type VCenterScraper struct {
 	clientPool pool.VCenterPool
-	config     Config
-	metrics    []*SensorMetric
-	runnables  []Runnable
-	// logger     *slog.Logger
+	config     config.ScraperConfig
+	DB         database.Database
+	MetricsDB  database.MetricDB
 
-	Host             *HostSensor
-	HostPerf         *HostPerfSensor
-	Cluster          *ClusterSensor
-	ComputeResources *ComputeResourceSensor
-	VM               *VirtualMachineSensor
-	VMPerf           *VMPerfSensor
-	Datastore        *DatastoreSensor
-	SPOD             *StoragePodSensor
-	ResourcePool     *ResourcePoolSensor
-	Tags             *TagsSensor
-	Remain           *OnDemandSensor
+	Host             Sensor
+	HostPerf         Sensor
+	Cluster          Sensor
+	ComputeResources Sensor
+	VM               Sensor
+	VMPerf           Sensor
+	Datastore        Sensor
+	SPOD             Sensor
+	ResourcePool     Sensor
+	Tags             Sensor
+	Datacenter       Sensor
+	Folder           Sensor
+	// Remain           *OnDemandSensor
 }
 
-func NewVCenterScraper(ctx context.Context, conf Config) (*VCenterScraper, error) {
+func NewVCenterScraper(ctx context.Context, conf config.ScraperConfig, logger *slog.Logger) (*VCenterScraper, error) {
 	pool := pool.NewVCenterThrottlePool(
 		conf.Endpoint(),
 		conf.Username,
@@ -47,73 +49,124 @@ func NewVCenterScraper(ctx context.Context, conf Config) (*VCenterScraper, error
 	if err != nil {
 		return nil, err
 	}
-	// pool.StartAuthRefresher(ctx, 5*time.Minute)
+
+	var db database.Database
+	var metricsDb database.MetricDB
+	switch dbType := strings.ToLower(conf.Backend.Type); dbType {
+	case "redis":
+		logger.Info("init Redis backend")
+		db = redis_db.NewDB(
+			conf.Backend.Redis.Address,
+			conf.Backend.Redis.Password,
+			conf.Backend.Redis.Index,
+		)
+		metricsDb = redis_db.NewMetricsDB(
+			conf.Backend.Redis.Address,
+			conf.Backend.Redis.Password,
+			conf.Backend.Redis.Index,
+		)
+		// metricsDb = memory_db.NewMetricsDB()
+	case "memory":
+		logger.Info("init Memory backend")
+		db = memory_db.NewDB()
+		metricsDb = memory_db.NewMetricsDB()
+	default:
+		logger.Error("invalid backend type", "type", dbType)
+		return nil, fmt.Errorf("invalid backend type [%s]", dbType)
+	}
+
+	dbCtx := context.WithValue(ctx, database.ContextKeyDatabaseLogger{}, logger)
+	db.Connect(dbCtx)
+	metricsDb.Connect(dbCtx)
+
+	// var db database.Database = memory_db.NewDB()
+	// db.Connect(ctx)
+
+	// var metricsDb database.MetricDB = memory_db.NewMetricsDB()
+	// metricsDb.Connect(ctx)
 
 	scraper := VCenterScraper{
 		clientPool: pool,
 		config:     conf,
-		metrics:    []*SensorMetric{},
+		DB:         db,
+		MetricsDB:  metricsDb,
 	}
 
 	if conf.Cluster.Enabled {
-		scraper.Cluster = NewClusterSensor(&scraper, conf.Cluster)
-		scraper.runnables = append(scraper.runnables, scraper.Cluster)
+		scraper.Cluster = NewClusterSensor(&scraper, conf.Cluster, logger)
+	} else {
+		scraper.Cluster = NewNullSensor(CLUSTER_SENSOR_NAME)
 	}
 
 	if conf.ComputeResource.Enabled {
-		scraper.ComputeResources = NewComputeResourceSensor(&scraper, conf.ComputeResource)
-		scraper.runnables = append(scraper.runnables, scraper.ComputeResources)
+		scraper.ComputeResources = NewComputeResourceSensor(&scraper, conf.ComputeResource, logger)
+	} else {
+		scraper.ComputeResources = NewNullSensor(COMPUTE_RESOURCE_SENSOR_NAME)
 	}
 
 	if conf.Datastore.Enabled {
-		scraper.Datastore = NewDatastoreSensor(&scraper, conf.Datastore)
-		scraper.runnables = append(scraper.runnables, scraper.Datastore)
+		scraper.Datastore = NewDatastoreSensor(&scraper, conf.Datastore, logger)
+	} else {
+		scraper.Datastore = NewNullSensor(DATASTORE_SENSOR_NAME)
 	}
 
 	if conf.Host.Enabled {
-		scraper.Host = NewHostSensor(&scraper, conf.Host)
-		scraper.runnables = append(scraper.runnables, scraper.Host)
+		scraper.Host = NewHostSensor(&scraper, conf.Host, logger)
 		if conf.HostPerf.Enabled {
-			scraper.HostPerf = NewHostPerfSensor(&scraper, conf.HostPerf)
-			scraper.runnables = append(scraper.runnables, scraper.HostPerf)
+			scraper.HostPerf = NewHostPerfSensor(&scraper, conf.HostPerf, logger)
+		} else {
+			scraper.HostPerf = NewNullSensor(HOST_PERF_SENSOR_NAME)
 		}
+	} else {
+		scraper.Host = NewNullSensor(HOST_SENSOR_NAME)
+		scraper.HostPerf = NewNullSensor(HOST_PERF_SENSOR_NAME)
 	}
 
 	if conf.ResourcePool.Enabled {
-		scraper.ResourcePool = NewResourcePoolSensor(&scraper, conf.ResourcePool)
-		scraper.runnables = append(scraper.runnables, scraper.ResourcePool)
+		scraper.ResourcePool = NewResourcePoolSensor(&scraper, conf.ResourcePool, logger)
+	} else {
+		scraper.ResourcePool = NewNullSensor(RESOURCE_POOL_SENSOR_NAME)
 	}
 
 	if conf.Spod.Enabled {
-		scraper.SPOD = NewStoragePodSensor(&scraper, conf.Spod)
-		scraper.runnables = append(scraper.runnables, scraper.SPOD)
+		scraper.SPOD = NewStoragePodSensor(&scraper, conf.Spod, logger)
+	} else {
+		scraper.SPOD = NewNullSensor(STORAGE_POD_SENSOR_NAME)
 	}
 
 	if conf.VirtualMachine.Enabled {
-		scraper.VM = NewVirtualMachineSensor(&scraper, conf.VirtualMachine)
-		scraper.runnables = append(scraper.runnables, scraper.VM)
+		scraper.VM = NewVirtualMachineSensor(&scraper, conf.VirtualMachine, logger)
 		if conf.VirtualMachinePerf.Enabled {
-			scraper.VMPerf = NewVMPerfSensor(&scraper, conf.VirtualMachinePerf)
-			scraper.runnables = append(scraper.runnables, scraper.VMPerf)
+			scraper.VMPerf = NewVMPerfSensor(&scraper, conf.VirtualMachinePerf, logger)
+		} else {
+			scraper.VMPerf = NewNullSensor(VM_PERF_SENSOR_NAME)
 		}
+	} else {
+		scraper.VM = NewNullSensor(VM_SENSOR_NAME)
+		scraper.VMPerf = NewNullSensor(VM_PERF_SENSOR_NAME)
 	}
 
 	if conf.Tags.Enabled {
-		if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-			logger.Info("Create TagsSensor", "TagsCategoryToCollect", conf.Tags.CategoryToCollect)
-		}
-		scraper.Tags = NewTagsSensorWithTaglist(&scraper, conf.Tags)
-		scraper.runnables = append(scraper.runnables, scraper.Tags)
+		logger.Info("Create TagsSensor", "TagsCategoryToCollect", conf.Tags.CategoryToCollect)
+		scraper.Tags = NewTagsSensor(&scraper, conf.Tags, logger)
+	} else {
+		scraper.Tags = NewNullSensor("TagsSensor")
 	}
 
-	scraper.Remain = NewOnDemandSensor(&scraper, SensorConfig{
-		Enabled:       true,
-		CleanInterval: conf.OnDemand.CleanInterval,
-		MaxAge:        conf.OnDemand.MaxAge,
-	})
-	scraper.runnables = append(scraper.runnables, scraper.Remain)
+	if conf.Folder.Enabled {
+		scraper.Folder = NewFolderSensor(&scraper, conf.Folder, logger)
+	} else {
+		scraper.Folder = NewNullSensor(FOLDER_SENSOR_NAME)
+	}
+
+	if conf.Datacenter.Enabled {
+		scraper.Datacenter = NewDatacenterSensor(&scraper, conf.Datacenter, logger)
+	} else {
+		scraper.Datacenter = NewNullSensor(DATACENTER_SENSOR_NAME)
+	}
 
 	return &scraper, nil
+
 }
 
 var (
@@ -135,173 +188,138 @@ func (c *VCenterScraper) tcpConnectStatus() error {
 	return nil
 }
 
-func (c *VCenterScraper) ScraperMetrics() []BaseSensorMetric {
-	result := []BaseSensorMetric{}
+func (c *VCenterScraper) CollectMetrics() []sensormetrics.SensorMetric {
+	metrics := []sensormetrics.SensorMetric{}
+	metrics = append(metrics, c.ScraperMetrics()...)
+	for _, sensor := range c.SensorList() {
+		metrics = append(metrics, sensor.GetLatestMetrics()...)
+	}
+	return metrics
+}
+
+func (c *VCenterScraper) ScraperMetrics() []sensormetrics.SensorMetric {
+	result := []sensormetrics.SensorMetric{}
 
 	err := c.tcpConnectStatus()
-	tcpConnectStatus := *NewSensorMetricStatus("scraper", "tcp_connect_status", false)
 	if err == nil {
-		tcpConnectStatus.Success()
+		result = append(result, sensormetrics.SensorMetric{
+			Sensor:     "scraper",
+			MetricName: "tcp_connect_status",
+			Unit:       "boolean",
+			Value:      1,
+		})
 	} else if errors.Is(err, ErrVCenterURLInvalid) {
-		tcpConnectStatus.Fail()
+		result = append(result, sensormetrics.SensorMetric{
+			Sensor:     "scraper",
+			MetricName: "tcp_connect_status",
+			Unit:       "boolean",
+			Value:      0,
+		})
 	} else if errors.Is(err, ErrVCenterConnectFail) {
-		tcpConnectStatus.Fail()
+		result = append(result, sensormetrics.SensorMetric{
+			Sensor:     "scraper",
+			MetricName: "tcp_connect_status",
+			Unit:       "boolean",
+			Value:      0,
+		})
 	} else {
-		tcpConnectStatus.Fail()
-	}
-
-	for kind, enabled := range map[string]bool{
-		"host":             c.config.Host.Enabled,
-		"cluster":          c.config.Cluster.Enabled,
-		"compute_resource": c.config.Cluster.Enabled,
-		"datastore":        c.config.Datastore.Enabled,
-		"vm":               c.config.VirtualMachine.Enabled,
-		"spod":             c.config.Spod.Enabled,
-		"repool":           c.config.ResourcePool.Enabled,
-		"tags":             c.config.Tags.Enabled,
-	} {
-		sensor := NewSensorMetricStatus("scraper", fmt.Sprintf("sensor.%s.enabled", kind), false)
-		sensor.Update(enabled)
-		result = append(result, sensor.BaseSensorMetric)
-	}
-
-	for kind, available := range map[string]bool{
-		"host":             c.Host != nil,
-		"cluster":          c.Cluster != nil,
-		"compute_resource": c.ComputeResources != nil,
-		"datastore":        c.Datastore != nil,
-		"vm":               c.VM != nil,
-		"spod":             c.SPOD != nil,
-		"repool":           c.ResourcePool != nil,
-		"tags":             c.Tags != nil,
-	} {
-		sensor := NewSensorMetricStatus("scraper", fmt.Sprintf("sensor.%s.available", kind), false)
-		sensor.Update(available)
-		result = append(result, sensor.BaseSensorMetric)
-	}
-
-	for _, metric := range c.metrics {
-		result = append(result, metric.BaseSensorMetric)
+		result = append(result, sensormetrics.SensorMetric{
+			Sensor:     "scraper",
+			MetricName: "tcp_connect_status",
+			Unit:       "boolean",
+			Value:      0,
+		})
 	}
 	return result
 }
 
-func (c *VCenterScraper) RegisterSensorMetric(metric ...*SensorMetric) {
-	c.metrics = append(c.metrics, metric...)
-}
-
 func (c *VCenterScraper) SensorList() []Sensor {
-	sensors := []Sensor{}
-	for _, s := range []Sensor{
+	return []Sensor{
+		c.Folder,
+		c.Datacenter,
 		c.Cluster,
 		c.ComputeResources,
-		c.Datastore,
-		c.Host,
-		c.HostPerf,
-		c.ResourcePool,
 		c.SPOD,
+		c.Datastore,
+		c.ResourcePool,
 		c.Tags,
+		c.Host,
 		c.VM,
+		c.HostPerf,
 		c.VMPerf,
-		c.Remain,
-	} {
-		if !reflect.ValueOf(s).IsNil() {
-			sensors = append(sensors, s)
-		}
 	}
-
-	return sensors
 }
 
-func (c *VCenterScraper) GetSensorRefreshByName(name string) Sensor {
-	for _, s := range c.SensorList() {
-		if s.Match(name) {
-			return s
-		}
-	}
-
-	return nil
-}
-
-func (c *VCenterScraper) RefreshSensor(ctx context.Context, names ...string) error {
-	for _, s := range c.SensorList() {
-		if helper.AnyMatch(s, names...) {
-			err := s.TriggerInstantRefresh(ctx)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (c *VCenterScraper) Start(ctx context.Context) error {
+func (c *VCenterScraper) Start(ctx context.Context, logger *slog.Logger) error {
 	err := c.tcpConnectStatus()
 	if err != nil {
 		return fmt.Errorf("cannot connect to vcenter: %w", err)
 	}
 
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 120*time.Second)
-	defer cancel()
-	sensors := c.SensorList()
-	startupDone := make(chan Sensor, len(sensors))
 	// Start all sensors
-	for _, r := range sensors {
-		go func() {
-			time.Sleep(time.Duration(rand.Intn(2000)) * time.Millisecond)
-			err := r.Start(ctx)
+	sensors := c.SensorList()
+	for i, sensor := range sensors {
+		if err := ctx.Err(); err != nil {
+			break
+		} else if sensor.Enabled() {
+			logger.Info(fmt.Sprintf("Initialize sensor... [%d/%d]", i+1, len(sensors)), "sensor_kind", sensor.Kind())
+			err := sensor.Init(ctx, c)
 			if err != nil {
-				if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-					logger.Error("failed to start sensor", "err", err)
-				}
-				return
+				logger.Error("Failed init sensor", "sensor_kind", sensor.Kind(), "err", err)
+			} else {
+				logger.Debug("Init Sensor successful", "sensor_kind", sensor.Kind())
 			}
-			r.WaitTillStartup()
-			startupDone <- r
-		}()
-	}
-
-	sensorRunning := []string{}
-	for {
-		select {
-		case sensor := <-startupDone:
-			sensorRunning = append(sensorRunning, sensor.Name())
-			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-				msg := fmt.Sprintf("Sensor started [%d/%d]", len(sensorRunning), len(sensors))
-				logger.Info(msg, "sensor_name", sensor.Name(), "sensor_kind", sensor.Kind())
-			}
-			if len(sensorRunning) >= len(sensors) {
-				if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-					logger.Info("All sensors started")
-				}
-				return nil
-			}
-		case <-ctxWithTimeout.Done():
-			allSensors := []string{}
-			for _, r := range sensors {
-				allSensors = append(allSensors, r.Name())
-			}
-
-			sensorsNotStarted := helper.Subtract(allSensors, sensorRunning)
-
-			if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-				logger.Error("Timeout waiting for sensors to start", "sensors_not_started", sensorsNotStarted)
-			}
-			return fmt.Errorf("timeout waiting for sensors to start: %v", sensorsNotStarted)
+		} else {
+			logger.Info(fmt.Sprintf("skip sensor [%d/%d]", i+1, len(sensors)), "sensor_kind", sensor.Kind())
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	logger.Info("All sensors initialized")
+
+	wg := sync.WaitGroup{}
+	for _, sensor := range sensors {
+		if sensor.Enabled() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sensor.StartRefresher(ctx, c)
+			}()
+		}
+	}
+
+	wg.Wait()
+	logger.Info("All sensors refreshers started")
+
+	return nil
 }
 
-func (c *VCenterScraper) Stop(ctx context.Context) {
-
-	// for _, r := range c.runnables {
-	// 	// r.Stop(ctx)
-	// }
-
-	c.clientPool.Destroy()
-	if logger, ok := ctx.Value(ContextKeyScraperLogger{}).(*slog.Logger); ok {
-		logger.Info("Close client pool")
+func (c *VCenterScraper) Stop(ctx context.Context, logger *slog.Logger) {
+	for _, sensor := range c.SensorList() {
+		if sensor.Enabled() {
+			logger.Info("Stop sensor...", "sensor_kind", sensor.Kind())
+			sensor.StopRefresher(ctx)
+		} else {
+			logger.Info("Skip sensor, sensor disabled", "sensor_kind", sensor.Kind())
+		}
 	}
+
+	logger.Info("finish triggering termination of all sensors")
+
+	c.clientPool.Destroy(ctx)
+	logger.Info("Close client pool")
+}
+
+func (c *VCenterScraper) TriggerSensorRefreshByName(ctx context.Context, sensorName string) error {
+	for _, sensor := range c.SensorList() {
+		if sensor.Match(sensorName) {
+			sensor.TriggerManualRefresh(ctx)
+			return nil
+		}
+	}
+	return ErrSensorNotFound
 }
 
 type ParentChain struct {
@@ -310,109 +328,4 @@ type ParentChain struct {
 	ResourcePool string
 	SPOD         string
 	Chain        []string
-}
-
-func (c *VCenterScraper) GetParentChain(ref types.ManagedObjectReference) ParentChain {
-	return c.walkParentChain(&ref, nil)
-}
-
-func (c *VCenterScraper) GetManagedEntity(ref *types.ManagedObjectReference) *mo.ManagedEntity {
-	if ref == nil {
-		return nil
-	} else if c.Cluster != nil && ref.Type == string(types.ManagedObjectTypesClusterComputeResource) {
-		return &(c.Cluster.Get(*ref).ManagedEntity)
-	} else if c.ComputeResources != nil && ref.Type == string(types.ManagedObjectTypesComputeResource) {
-		return &(c.ComputeResources.Get(*ref).ManagedEntity)
-	} else if c.Datastore != nil && ref.Type == string(types.ManagedObjectTypesDatastore) {
-		return &(c.Datastore.Get(*ref).ManagedEntity)
-	} else if c.Host != nil && ref.Type == string(types.ManagedObjectTypesHostSystem) {
-		return &(c.Host.Get(*ref).ManagedEntity)
-	} else if c.SPOD != nil && ref.Type == string(types.ManagedObjectTypesStoragePod) {
-		return &(c.SPOD.Get(*ref).ManagedEntity)
-	} else if c.ResourcePool != nil && ref.Type == string(types.ManagedObjectTypesResourcePool) {
-		return &(c.ResourcePool.Get(*ref).ManagedEntity)
-	} else if c.VM != nil && ref.Type == string(types.ManagedObjectTypesVirtualMachine) {
-		return &(c.VM.Get(*ref).ManagedEntity)
-	} else {
-		return c.Remain.Get(*ref)
-	}
-}
-
-func (c *VCenterScraper) walkParentChain(ref *types.ManagedObjectReference, chain *ParentChain) ParentChain {
-
-	if chain == nil {
-		chain = &ParentChain{
-			DC:           "",
-			Cluster:      "",
-			SPOD:         "",
-			ResourcePool: "",
-			Chain:        []string{},
-		}
-	}
-
-	if ref == nil {
-		return *chain
-	}
-
-	chain.Chain = append(chain.Chain, fmt.Sprintf("%s:%s", ref.Type, ref.Value))
-
-	if c.Cluster != nil && ref.Type == string(types.ManagedObjectTypesClusterComputeResource) {
-		entity := c.Cluster.Get(*ref)
-		if entity != nil {
-			chain.Cluster = entity.Name
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else if c.ComputeResources != nil && ref.Type == string(types.ManagedObjectTypesComputeResource) {
-		entity := c.ComputeResources.Get(*ref)
-		if entity != nil {
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else if c.SPOD != nil && ref.Type == string(types.ManagedObjectTypesStoragePod) {
-		entity := c.SPOD.Get(*ref)
-		if entity != nil {
-			chain.SPOD = entity.Name
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else if c.ResourcePool != nil && ref.Type == string(types.ManagedObjectTypesResourcePool) {
-		entity := c.ResourcePool.Get(*ref)
-		if entity != nil {
-			chain.ResourcePool = entity.Name
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else if c.Host != nil && ref.Type == string(types.ManagedObjectTypesHostSystem) {
-		entity := c.Host.Get(*ref)
-		if entity != nil {
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else if c.VM != nil && ref.Type == string(types.ManagedObjectTypesVirtualMachine) {
-		entity := c.VM.Get(*ref)
-		if entity != nil {
-			if entity.ResourcePool != nil {
-				return c.walkParentChain(entity.ResourcePool, chain)
-			} else {
-				return c.walkParentChain(entity.Parent, chain)
-			}
-
-		}
-	} else if c.Datastore != nil && ref.Type == string(types.ManagedObjectTypesDatastore) {
-		entity := c.Datastore.Get(*ref)
-		if entity != nil {
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	} else {
-		entity := c.Remain.Get(*ref)
-		if entity != nil {
-			if entity.Self.Type == string(types.ManagedObjectTypesDatacenter) {
-				chain.DC = entity.Name
-			} else if entity.Self.Type == string(types.ManagedObjectTypesClusterComputeResource) {
-				chain.Cluster = entity.Name
-			} else if entity.Self.Type == string(types.ManagedObjectTypesResourcePool) {
-				chain.ResourcePool = entity.Name
-			} else if entity.Self.Type == string(types.ManagedObjectTypesStoragePod) {
-				chain.SPOD = entity.Name
-			}
-			return c.walkParentChain(entity.Parent, chain)
-		}
-	}
-	return *chain
 }

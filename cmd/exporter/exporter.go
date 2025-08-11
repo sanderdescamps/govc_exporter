@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/common/promslog"
 
@@ -18,8 +19,8 @@ import (
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
-func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+func defaultHandler(metricsPath string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
 			<head><title>govc Exporter</title></head>
 			<body>
@@ -27,16 +28,33 @@ func defaultHandler(metricsPath string) func(w http.ResponseWriter, r *http.Requ
 			<p><a href="` + metricsPath + `">Metrics</a></p>
 			</body>
 			</html>`))
-	}
+	})
 }
 
 func main() {
-	run()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	// if cpuPProf := os.Getenv("CPU_PPROF"); cpuPProf != "" {
+	// 	if pprofEnabled, err := strconv.ParseBool(cpuPProf); err == nil && pprofEnabled {
+
+	// 		pprofFile, err := createPProfFile("global-CPU")
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 		defer pprofFile.Close()
+
+	// 		if err := pprof.StartCPUProfile(pprofFile); err != nil {
+	// 			panic(err)
+	// 		}
+	// 		defer pprof.StopCPUProfile()
+	// 	}
+
+	// }
+	run(ctx)
 }
 
-func run() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
+func run(ctx context.Context) {
 
 	config := LoadConfig()
 	if err := config.Validate(); err != nil {
@@ -44,7 +62,7 @@ func run() {
 		os.Exit(1)
 	}
 
-	logger := promslog.New(config.PromlogConfig)
+	logger := promslog.New(&config.PromlogConfig)
 	logger.Info("Starting govc_exporter", "version", version.Version, "branch", version.Branch, "revision", version.GetRevision())
 	logger.Info("Build context", "go", version.GoVersion, "platform", fmt.Sprintf("%s/%s", version.GoOS, version.GoArch), "date", version.BuildDate, "tags", version.GetTags())
 
@@ -52,42 +70,42 @@ func run() {
 		logger.Debug(fmt.Sprintf("Set memory limit to %dMiB", config.MemoryLimitMB))
 		debug.SetMemoryLimit(config.MemoryLimitMB * 1 << 20)
 	}
-	logger.Debug(fmt.Sprintf("Memory limit set to %dMiB", debug.SetMemoryLimit(-1)*1>>20))
+	if os.Getenv("GOMEMLIMIT") != "" || config.MemoryLimitMB > 0 {
+		logger.Debug(fmt.Sprintf("Memory limit set to %dMiB", debug.SetMemoryLimit(-1)*1>>20))
+	}
 
 	//Scraper
-	ctxScraper := context.WithValue(ctx, scraper.ContextKeyScraperLogger{}, logger)
-	scrap, err := scraper.NewVCenterScraper(ctxScraper, *config.ScraperConfig)
+	scrap, err := scraper.NewVCenterScraper(ctx, config.ScraperConfig, logger)
 	if err != nil {
 		logger.Error("Failed to create VCenterScraper", "err", err)
 		return
 	}
-	err = scrap.Start(ctxScraper)
+	err = scrap.Start(ctx, logger)
 	if err != nil {
 		logger.Error("Failed to start VCenterScraper", "err", err)
 		return
 	}
 
 	//Collector
-	ctxCollector := context.WithValue(ctx, collector.ContextKeyCollectorLogger{}, logger)
-	coll := collector.NewVCCollector(ctxCollector, config.CollectorConfig, scrap)
+	coll := collector.NewVCCollector(ctx, config, scrap)
 
 	//Server
 	server := &http.Server{
 		Addr: config.ListenAddress,
 		BaseContext: func(l net.Listener) context.Context {
-			return ctxCollector
+			return ctx
 		},
 	}
 
-	http.HandleFunc(config.MetricPath, coll.GetMetricHandler())
+	http.Handle(config.MetricPath, coll.GetMetricHandler(logger))
 	if config.AllowManualRefresh {
-		http.HandleFunc("/refresh/{sensor}", coll.GetRefreshHandler())
+		http.Handle("/refresh/{sensor}", coll.GetRefreshHandler(logger))
 	}
 	if config.AllowDumps {
-		http.HandleFunc("/dump", coll.GetDumpHandler())
-		http.HandleFunc("/dump/{sensor}", coll.GetDumpHandler())
+		http.Handle("/dump", scraper.GetDumpHandler(*scrap, logger))
+		http.Handle("/dump/{sensor}", scraper.GetDumpHandler(*scrap, logger))
 	}
-	http.HandleFunc("/", defaultHandler(config.MetricPath))
+	http.Handle("/", defaultHandler(config.MetricPath))
 
 	// make it a goroutine
 	go server.ListenAndServe()
@@ -96,12 +114,30 @@ func run() {
 	// listen for the interrupt signal
 	<-ctx.Done()
 
+	stopCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	shutdown := make(chan error)
+
 	// stop the server
-	if err := server.Shutdown(context.Background()); err != nil {
-		log.Fatalf("could not shutdown: %v\n", err)
+	go func() {
+		err := server.Shutdown(stopCtx)
+		if err != nil {
+			shutdown <- err
+		}
+		scrap.Stop(ctx, logger)
+		shutdown <- nil
+	}()
+	select {
+	case err := <-shutdown:
+		if err != nil {
+			log.Fatalf("could not shutdown: %v\n", err)
+			os.Exit(1)
+		}
+	case err := <-stopCtx.Done():
+		log.Fatalf("shutdown timeout: %v\n", err)
+		os.Exit(1)
 	}
 
-	scrap.Stop(ctx)
 	logger.Info("Shutdown complete.")
-	// os.Exit(0)
 }

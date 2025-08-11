@@ -1,14 +1,12 @@
 package collector
 
 import (
-	"encoding/json"
+	"context"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
-	"github.com/vmware/govmomi/object"
-	"github.com/vmware/govmomi/vim25/mo"
-	"github.com/vmware/govmomi/vim25/types"
 )
 
 const (
@@ -68,7 +66,7 @@ type virtualMachineCollector struct {
 	diskCapacityBytes *prometheus.Desc
 }
 
-func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf Config) *virtualMachineCollector {
+func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *virtualMachineCollector {
 	labels := []string{"uuid", "name", "template", "vm_id"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {
@@ -89,7 +87,6 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf Config) *
 		legacyMetrics:          cConf.VMLegacyMetrics,
 		advancedNetworkMetrics: cConf.VMAdvancedNetworkMetrics,
 		advancedStorageMetrics: cConf.VMAdvancedStorageMetrics,
-		useIsecSpecifics:       cConf.UseIsecSpecifics,
 
 		numCPU: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "cpu_number"),
@@ -250,46 +247,23 @@ func (c *virtualMachineCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
-	if c.scraper.VM == nil {
+	if !c.scraper.VM.Enabled() {
 		return
 	}
+	ctx := context.Background()
+	for vm := range c.scraper.DB.GetAllVMIter(ctx) {
 
-	vmData := c.scraper.VM.GetAllSnapshots()
-	for _, snap := range vmData {
-		timestamp, vm := snap.Timestamp, snap.Item
-		summary := vm.Summary
-		qs := summary.QuickStats
-		mb := int64(1024 * 1024)
-
-		esxName := "NONE"
-		hostRef := vm.Runtime.Host
-		if hostRef != nil {
-			host := c.scraper.Host.Get(*hostRef)
-			if host != nil {
-				esxName = host.Name
-			}
+		extraLabelValues := []string{}
+		objectTags := c.scraper.DB.GetTags(ctx, vm.Self)
+		for _, tagCat := range c.extraLabels {
+			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
 
-		parentChain := c.scraper.GetParentChain(vm.Self)
-
-		extraLabelValues := func() []string {
-			result := []string{}
-
-			for _, tagCat := range c.extraLabels {
-				tag := c.scraper.Tags.GetTag(vm.Self, tagCat)
-				if tag != nil {
-					result = append(result, tag.Name)
-				} else {
-					result = append(result, "")
-				}
-			}
-			return result
-		}()
-
-		labelValues := []string{vm.Config.Uuid, vm.Name, strconv.FormatBool(vm.Config.Template), vm.Self.Value}
+		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.Value}
 		labelValues = append(labelValues, extraLabelValues...)
-		if c.useIsecSpecifics {
-			annotation := GetIsecAnnotation(vm)
+
+		if c.useIsecSpecifics && vm.IsecAnnotation != nil {
+			annotation := vm.IsecAnnotation
 			labelValues = append(
 				labelValues,
 				annotation.Criticality,
@@ -297,131 +271,131 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 				annotation.Service,
 			)
 		}
-		hostLabelValues := append(labelValues, parentChain.ResourcePool, parentChain.DC, parentChain.Cluster, esxName)
 
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.numCPU, prometheus.GaugeValue, float64(vm.Config.Hardware.NumCPU), labelValues...,
+		hostLabelValues := append(labelValues, vm.ResourcePool, vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host)
+
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.numCPU, prometheus.GaugeValue, vm.NumCPU, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.numCoresPerSocket, prometheus.GaugeValue, float64(vm.Config.Hardware.NumCoresPerSocket), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.numCoresPerSocket, prometheus.GaugeValue, vm.NumCoresPerSocket, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.maxCPUUsage, prometheus.GaugeValue, float64(vm.Runtime.MaxCpuUsage), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.maxCPUUsage, prometheus.GaugeValue, vm.MaxCPUUsage, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallCPUUsage, prometheus.GaugeValue, float64(qs.OverallCpuUsage), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.overallCPUUsage, prometheus.GaugeValue, vm.OverallCPUUsage, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallCPUDemand, prometheus.GaugeValue, float64(qs.OverallCpuDemand), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.overallCPUDemand, prometheus.GaugeValue, vm.OverallCPUDemand, labelValues...,
 		))
-		if vm.Config.CpuAllocation != nil && vm.Config.CpuAllocation.Shares != nil {
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.cpuAllocationShares, prometheus.GaugeValue, float64(vm.Config.CpuAllocation.Shares.Shares), labelValues...,
+		if vm.CPUAllocationShares != 0.0 {
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.cpuAllocationShares, prometheus.GaugeValue, vm.CPUAllocationShares, labelValues...,
 			))
 		}
-		if vm.Config.CpuAllocation != nil && vm.Config.CpuAllocation.Reservation != nil {
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.cpuAllocationReservation, prometheus.GaugeValue, float64(*vm.Config.CpuAllocation.Reservation), labelValues...,
+		if vm.CPUAllocationReservation != 0.0 {
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.cpuAllocationReservation, prometheus.GaugeValue, vm.CPUAllocationReservation, labelValues...,
 			))
 		}
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.memoryBytes, prometheus.GaugeValue, float64(int64(vm.Config.Hardware.MemoryMB)*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.memoryBytes, prometheus.GaugeValue, vm.MemoryBytes, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.guestMemoryUsage, prometheus.GaugeValue, float64(int64(qs.GuestMemoryUsage)*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.guestMemoryUsage, prometheus.GaugeValue, vm.GuestMemoryUsage, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.hostMemoryUsage, prometheus.GaugeValue, float64(int64(qs.HostMemoryUsage)*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.hostMemoryUsage, prometheus.GaugeValue, vm.HostMemoryUsage, labelValues...,
 		))
-		if vm.Config.MemoryAllocation != nil && vm.Config.MemoryAllocation.Shares != nil {
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.memoryAllocationShares, prometheus.GaugeValue, float64(int64(vm.Config.MemoryAllocation.Shares.Shares)*mb), labelValues...,
+		if vm.MemoryAllocationShares != 0.0 {
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.memoryAllocationShares, prometheus.GaugeValue, vm.MemoryAllocationShares, labelValues...,
 			))
 		}
-		if vm.Config.MemoryAllocation != nil && vm.Config.MemoryAllocation.Reservation != nil {
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.memoryAllocationReservation, prometheus.GaugeValue, float64(int64(*vm.Config.MemoryAllocation.Reservation)*mb), labelValues...,
+		if vm.MemoryAllocationReservation != 0.0 {
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.memoryAllocationReservation, prometheus.GaugeValue, vm.MemoryAllocationReservation, labelValues...,
 			))
 		}
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.uptimeSeconds, prometheus.GaugeValue, float64(qs.UptimeSeconds), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.uptimeSeconds, prometheus.GaugeValue, vm.UptimeSeconds, labelValues...,
 		))
-		if vm.Snapshot != nil {
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.numSnapshot, prometheus.GaugeValue, float64(len(vm.Snapshot.RootSnapshotList)), labelValues...,
-			))
-		}
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.powerState, prometheus.GaugeValue, ConvertVirtualMachinePowerStateToValue(vm.Runtime.PowerState), labelValues...,
-		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(vm.OverallStatus), labelValues...,
-		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.guestHeartbeatStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(vm.Summary.QuickStats.GuestHeartbeatStatus), labelValues...,
-		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.toolsStatus, prometheus.GaugeValue, ConvertVirtualMachineToolsStatusToValue(vm.Guest.ToolsStatus), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.numSnapshot, prometheus.GaugeValue, float64(len(vm.Snapshot)), labelValues...,
 		))
 
-		infoLabelValues := append(labelValues, vm.Config.GuestId, vm.Guest.ToolsVersion)
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.powerState, prometheus.GaugeValue, vm.PowerStateFloat64(), labelValues...,
+		))
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.overallStatus, prometheus.GaugeValue, vm.OverallStatusFloat64(), labelValues...,
+		))
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.guestHeartbeatStatus, prometheus.GaugeValue, vm.GuestHeartbeatStateFloat64(), labelValues...,
+		))
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+			c.toolsStatus, prometheus.GaugeValue, vm.GuestToolsStatusFloat64(), labelValues...,
+		))
+
+		infoLabelValues := append(labelValues, vm.GuestID, vm.GuestToolsVersion)
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 			c.vmInfo, prometheus.GaugeValue, 0, infoLabelValues...,
 		))
 
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 			c.hostInfo, prometheus.GaugeValue, 1, hostLabelValues...,
 		))
 
 		//Legacy metrics
 		if c.legacyMetrics {
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.distributedCPUEntitlement, prometheus.GaugeValue, float64(qs.DistributedCpuEntitlement), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.distributedCPUEntitlement, prometheus.GaugeValue, vm.DistributedCPUEntitlement, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.distributedMemoryEntitlement, prometheus.GaugeValue, float64(int64(qs.DistributedMemoryEntitlement)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.distributedMemoryEntitlement, prometheus.GaugeValue, vm.DistributedMemoryEntitlement, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.staticCPUEntitlement, prometheus.GaugeValue, float64(qs.StaticCpuEntitlement), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.staticCPUEntitlement, prometheus.GaugeValue, vm.StaticCPUEntitlement, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.staticMemoryEntitlement, prometheus.GaugeValue, float64(int64(qs.StaticMemoryEntitlement)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.staticMemoryEntitlement, prometheus.GaugeValue, vm.StaticMemoryEntitlement, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.privateMemory, prometheus.GaugeValue, float64(int64(qs.PrivateMemory)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.privateMemory, prometheus.GaugeValue, vm.PrivateMemory, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.sharedMemory, prometheus.GaugeValue, float64(int64(qs.SharedMemory)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.sharedMemory, prometheus.GaugeValue, vm.SharedMemory, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.swappedMemory, prometheus.GaugeValue, float64(int64(qs.SwappedMemory)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.swappedMemory, prometheus.GaugeValue, vm.SwappedMemory, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.balloonedMemory, prometheus.GaugeValue, float64(int64(qs.BalloonedMemory)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.balloonedMemory, prometheus.GaugeValue, vm.BalloonedMemory, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.consumedOverheadMemory, prometheus.GaugeValue, float64(int64(qs.ConsumedOverheadMemory)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.consumedOverheadMemory, prometheus.GaugeValue, vm.ConsumedOverheadMemory, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.ftLogBandwidth, prometheus.GaugeValue, float64(qs.FtLogBandwidth), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.ftLogBandwidth, prometheus.GaugeValue, vm.FtLogBandwidth, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.ftSecondaryLatency, prometheus.GaugeValue, float64(qs.FtSecondaryLatency), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.ftSecondaryLatency, prometheus.GaugeValue, vm.FtSecondaryLatency, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.compressedMemory, prometheus.GaugeValue, float64(int64(qs.CompressedMemory)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.compressedMemory, prometheus.GaugeValue, vm.CompressedMemory, labelValues...,
 			))
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.ssdSwappedMemory, prometheus.GaugeValue, float64(int64(qs.SsdSwappedMemory)*mb), labelValues...,
+			ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+				c.ssdSwappedMemory, prometheus.GaugeValue, vm.SsdSwappedMemory, labelValues...,
 			))
 		}
 
 		// Advanced network metrics
-		if vm.Guest != nil && c.advancedNetworkMetrics {
-			for _, net := range vm.Guest.Net {
+		if c.advancedNetworkMetrics {
+			for _, net := range vm.GuestNetwork {
 				for _, ip := range net.IpAddress {
 					networkLabelValues := append(labelValues, net.Network, net.MacAddress, ip)
-					ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+					ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 						c.networkConnected, prometheus.GaugeValue, b2f(net.Connected), networkLabelValues...,
 					))
 				}
@@ -430,101 +404,12 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 
 		//Advanced Storage metrics
 		if c.advancedStorageMetrics {
-			for _, disk := range GetDisks(vm) {
+			for _, disk := range vm.Disk {
 				diskLabelValues := append(labelValues, disk.UUID, strconv.FormatBool(disk.ThinProvisioned))
-				ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
+				ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 					c.diskCapacityBytes, prometheus.GaugeValue, float64(disk.Capacity), diskLabelValues...,
 				))
 			}
 		}
 	}
-}
-
-type Disk struct {
-	UUID            string
-	VmdkFile        string
-	Capacity        int64
-	ThinProvisioned bool
-}
-
-func GetDisks(vm mo.VirtualMachine) []Disk {
-	disks := object.VirtualDeviceList(vm.Config.Hardware.Device).SelectByType((*types.VirtualDisk)(nil))
-	res := make([]Disk, 0, len(disks))
-	for _, d := range disks {
-		disk := d.(*types.VirtualDisk)
-		info := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo)
-		res = append(res, Disk{
-			UUID:            info.Uuid,
-			VmdkFile:        info.FileName,
-			Capacity:        disk.CapacityInBytes,
-			ThinProvisioned: *info.ThinProvisioned,
-		})
-	}
-	return res
-}
-
-type IsecAnnotation struct {
-	Criticality string `json:"crit"`
-	Responsable string `json:"resp"`
-	Service     string `json:"svc"`
-}
-
-func GetIsecAnnotation(vm mo.VirtualMachine) IsecAnnotation {
-	tmp := IsecAnnotation{
-		Service:     "not defined",
-		Responsable: "not defined",
-		Criticality: "not defined",
-	}
-	_ = json.Unmarshal([]byte(vm.Config.Annotation), &tmp)
-	return tmp
-}
-
-func ConvertVirtualMachinePowerStateToValue(s types.VirtualMachinePowerState) float64 {
-	if s == types.VirtualMachinePowerStatePoweredOff {
-		return 1.0
-	} else if s == types.VirtualMachinePowerStateSuspended {
-		return 2.0
-	} else if s == types.VirtualMachinePowerStatePoweredOn {
-		return 3.0
-	}
-	return 0
-}
-
-func ConvertManagedEntityStatusToValue(s types.ManagedEntityStatus) float64 {
-	if s == types.ManagedEntityStatusRed {
-		return 1.0
-	} else if s == types.ManagedEntityStatusYellow {
-		return 2.0
-	} else if s == types.ManagedEntityStatusGreen {
-		return 3.0
-	}
-	return 0
-}
-
-func ConvertVirtualMachineGuestStateToValue(s types.VirtualMachineGuestState) float64 {
-	if s == types.VirtualMachineGuestStateNotRunning {
-		return 1.0
-	} else if s == types.VirtualMachineGuestStateResetting {
-		return 2.0
-	} else if s == types.VirtualMachineGuestStateShuttingDown {
-		return 3.0
-	} else if s == types.VirtualMachineGuestStateStandby {
-		return 4.0
-	} else if s == types.VirtualMachineGuestStateRunning {
-		return 5.0
-	}
-	return 0
-}
-
-func ConvertVirtualMachineToolsStatusToValue(s types.VirtualMachineToolsStatus) float64 {
-	if s == types.VirtualMachineToolsStatusToolsNotInstalled {
-		return 1.0
-	} else if s == types.VirtualMachineToolsStatusToolsOld {
-		return 2.0
-	} else if s == types.VirtualMachineToolsStatusToolsNotRunning {
-		return 3.0
-	} else if s == types.VirtualMachineToolsStatusToolsOk {
-		return 4.0
-	}
-	return 0
 }

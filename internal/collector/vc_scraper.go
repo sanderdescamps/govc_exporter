@@ -30,7 +30,7 @@ func (c *scraperCollector) Describe(ch chan<- *prometheus.Desc) {
 
 func (c *scraperCollector) Collect(ch chan<- prometheus.Metric) {
 
-	for _, metric := range c.scraper.ScraperMetrics() {
+	for _, metric := range c.scraper.CollectMetrics() {
 		labelValues := []string{metric.Sensor, metric.MetricName, metric.Unit}
 		ch <- prometheus.MustNewConstMetric(
 			c.scraperMetric, prometheus.GaugeValue, metric.Value, labelValues...,

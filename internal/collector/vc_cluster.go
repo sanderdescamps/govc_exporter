@@ -1,7 +1,10 @@
 package collector
 
 import (
+	"context"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -24,7 +27,7 @@ type clusterCollector struct {
 	overallStatus     *prometheus.Desc
 }
 
-func NewClusterCollector(scraper *scraper.VCenterScraper, cConf Config) *clusterCollector {
+func NewClusterCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *clusterCollector {
 	labels := []string{"id", "name", "datacenter"}
 
 	extraLabels := cConf.ClusterTagLabels
@@ -78,62 +81,47 @@ func (c *clusterCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *clusterCollector) Collect(ch chan<- prometheus.Metric) {
-	if c.scraper.Cluster == nil {
+	if !c.scraper.Cluster.Enabled() {
 		return
 	}
-	clusterData := c.scraper.Cluster.GetAllSnapshots()
-	for _, snap := range clusterData {
-		timestamp, p := snap.Timestamp, snap.Item
-		summary := p.Summary.GetComputeResourceSummary()
-		if summary == nil {
-			continue
+	ctx := context.Background()
+	for cluster := range c.scraper.DB.GetAllClusterIter(ctx) {
+
+		extraLabelValues := []string{}
+		objectTags := c.scraper.DB.GetTags(ctx, cluster.Self)
+		for _, tagCat := range c.extraLabels {
+			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
-		parentChain := c.scraper.GetParentChain(p.Self)
-		mb := int64(1024 * 1024)
 
-		extraLabelValues := func() []string {
-			result := []string{}
-
-			for _, tagCat := range c.extraLabels {
-				tag := c.scraper.Tags.GetTag(p.Self, tagCat)
-				if tag != nil {
-					result = append(result, tag.Name)
-				} else {
-					result = append(result, "")
-				}
-			}
-			return result
-		}()
-
-		labelValues := []string{me2id(p.ManagedEntity), p.Name, parentChain.DC}
+		labelValues := []string{cluster.Self.ID(), cluster.Name, cluster.Datacenter}
 		labelValues = append(labelValues, extraLabelValues...)
 
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.totalCPU, prometheus.GaugeValue, float64(summary.TotalCpu), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.totalCPU, prometheus.GaugeValue, float64(cluster.TotalCPU), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.effectiveCPU, prometheus.GaugeValue, float64(summary.EffectiveCpu), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.effectiveCPU, prometheus.GaugeValue, float64(cluster.EffectiveCPU), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.totalMemory, prometheus.GaugeValue, float64(summary.TotalMemory), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.totalMemory, prometheus.GaugeValue, float64(cluster.TotalMemory), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.effectiveMemory, prometheus.GaugeValue, float64(summary.EffectiveMemory*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.effectiveMemory, prometheus.GaugeValue, float64(cluster.EffectiveMemory), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.numCPUCores, prometheus.GaugeValue, float64(summary.NumCpuCores), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.numCPUCores, prometheus.GaugeValue, float64(cluster.NumCPUThreads), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.numCPUThreads, prometheus.GaugeValue, float64(summary.NumCpuThreads), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.numCPUThreads, prometheus.GaugeValue, float64(cluster.NumCPUThreads), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.numEffectiveHosts, prometheus.GaugeValue, float64(summary.NumEffectiveHosts), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.numEffectiveHosts, prometheus.GaugeValue, float64(cluster.NumEffectiveHosts), labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.numHosts, prometheus.GaugeValue, float64(summary.NumHosts), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.numHosts, prometheus.GaugeValue, cluster.NumHosts, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(summary.OverallStatus), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(cluster.Timestamp, prometheus.MustNewConstMetric(
+			c.overallStatus, prometheus.GaugeValue, cluster.OverallStatusFloat64(), labelValues...,
 		))
 	}
 

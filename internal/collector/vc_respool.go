@@ -1,7 +1,10 @@
 package collector
 
 import (
+	"context"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -26,11 +29,12 @@ type resourcePoolCollector struct {
 	overheadMemory               *prometheus.Desc
 	consumedOverheadMemory       *prometheus.Desc
 	compressedMemory             *prometheus.Desc
-	memoryLimit                  *prometheus.Desc
+	memoryAllocationLimit        *prometheus.Desc
+	cpuAllocationLimit           *prometheus.Desc
 	overallStatus                *prometheus.Desc
 }
 
-func NewResourcePoolCollector(scraper *scraper.VCenterScraper, cConf Config) *resourcePoolCollector {
+func NewResourcePoolCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *resourcePoolCollector {
 	labels := []string{"id", "name", "datacenter"}
 
 	extraLabels := cConf.ResourcePoolTagLabels
@@ -82,9 +86,12 @@ func NewResourcePoolCollector(scraper *scraper.VCenterScraper, cConf Config) *re
 		compressedMemory: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, resourcePoolCollectorSubsystem, "compressed_mem_bytes"),
 			"resource pool compressed memory in bytes", labels, nil),
-		memoryLimit: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, resourcePoolCollectorSubsystem, "mem_limit_bytes"),
+		memoryAllocationLimit: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, resourcePoolCollectorSubsystem, "mememory_allocation_limit_bytes"),
 			"resource pool memory limit in bytes", labels, nil),
+		cpuAllocationLimit: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, resourcePoolCollectorSubsystem, "cpu_allocation_limit"),
+			"resource pool cpu limit", labels, nil),
 		overallStatus: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, resourcePoolCollectorSubsystem, "overall_status"),
 			"overall health status", labels, nil),
@@ -106,95 +113,77 @@ func (c *resourcePoolCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.overheadMemory
 	ch <- c.consumedOverheadMemory
 	ch <- c.compressedMemory
-	ch <- c.memoryLimit
+	ch <- c.memoryAllocationLimit
+	ch <- c.cpuAllocationLimit
 	ch <- c.overallStatus
 }
 
 func (c *resourcePoolCollector) Collect(ch chan<- prometheus.Metric) {
-	if c.scraper.ResourcePool == nil {
+	if !c.scraper.Cluster.Enabled() {
 		return
 	}
-	resourcePoolData := c.scraper.ResourcePool.GetAllSnapshots()
-	for _, snap := range resourcePoolData {
-		timestamp, p := snap.Timestamp, snap.Item
-
-		summary := p.Summary.GetResourcePoolSummary()
-		if summary == nil || summary.QuickStats == nil {
-			continue
+	ctx := context.Background()
+	for rpool := range c.scraper.DB.GetAllResourcePoolIter(ctx) {
+		extraLabelValues := []string{}
+		objectTags := c.scraper.DB.GetTags(ctx, rpool.Self)
+		for _, tagCat := range c.extraLabels {
+			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
-		parentChain := c.scraper.GetParentChain(p.Self)
-		mb := int64(1024 * 1024)
 
-		extraLabelValues := func() []string {
-			result := []string{}
-
-			for _, tagCat := range c.extraLabels {
-				tag := c.scraper.Tags.GetTag(p.Self, tagCat)
-				if tag != nil {
-					result = append(result, tag.Name)
-				} else {
-					result = append(result, "")
-				}
-			}
-			return result
-		}()
-
-		labelValues := []string{me2id(p.ManagedEntity), p.Name, parentChain.DC}
+		labelValues := []string{rpool.Self.ID(), rpool.Name, rpool.Datacenter}
 		labelValues = append(labelValues, extraLabelValues...)
 
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallCPUUsage, prometheus.GaugeValue, float64(summary.QuickStats.OverallCpuUsage), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.overallCPUUsage, prometheus.GaugeValue, rpool.OverallCPUUsage, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallCPUDemand, prometheus.GaugeValue, float64(summary.QuickStats.OverallCpuDemand), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.overallCPUDemand, prometheus.GaugeValue, rpool.OverallCPUDemand, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.guestMemoryUsage, prometheus.GaugeValue, float64(summary.QuickStats.GuestMemoryUsage*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.guestMemoryUsage, prometheus.GaugeValue, rpool.GuestMemoryUsage, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.hostMemoryUsage, prometheus.GaugeValue, float64(summary.QuickStats.HostMemoryUsage*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.hostMemoryUsage, prometheus.GaugeValue, rpool.HostMemoryUsage, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.distributedCPUEntitlement, prometheus.GaugeValue, float64(summary.QuickStats.DistributedCpuEntitlement), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.distributedCPUEntitlement, prometheus.GaugeValue, rpool.DistributedCPUEntitlement, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.distributedMemoryEntitlement, prometheus.GaugeValue, float64(summary.QuickStats.DistributedMemoryEntitlement*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.distributedMemoryEntitlement, prometheus.GaugeValue, rpool.DistributedMemoryEntitlement, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.staticCPUEntitlement, prometheus.GaugeValue, float64(summary.QuickStats.StaticCpuEntitlement), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.staticCPUEntitlement, prometheus.GaugeValue, rpool.StaticCPUEntitlement, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.privateMemory, prometheus.GaugeValue, float64(summary.QuickStats.PrivateMemory*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.privateMemory, prometheus.GaugeValue, rpool.PrivateMemory, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.sharedMemory, prometheus.GaugeValue, float64(summary.QuickStats.SharedMemory*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.sharedMemory, prometheus.GaugeValue, rpool.SharedMemory, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.swappedMemory, prometheus.GaugeValue, float64(summary.QuickStats.SwappedMemory*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.swappedMemory, prometheus.GaugeValue, rpool.SwappedMemory, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.balloonedMemory, prometheus.GaugeValue, float64(summary.QuickStats.BalloonedMemory*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.balloonedMemory, prometheus.GaugeValue, rpool.BalloonedMemory, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overheadMemory, prometheus.GaugeValue, float64(summary.QuickStats.OverheadMemory*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.overheadMemory, prometheus.GaugeValue, rpool.OverheadMemory, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.consumedOverheadMemory, prometheus.GaugeValue, float64(summary.QuickStats.ConsumedOverheadMemory*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.consumedOverheadMemory, prometheus.GaugeValue, rpool.ConsumedOverheadMemory, labelValues...,
 		))
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.compressedMemory, prometheus.GaugeValue, float64(summary.QuickStats.CompressedMemory*mb), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.compressedMemory, prometheus.GaugeValue, rpool.CompressedMemory, labelValues...,
 		))
-		if summary.Config.MemoryAllocation.Limit != nil {
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.memoryLimit, prometheus.GaugeValue, float64(*summary.Config.MemoryAllocation.Limit*mb), labelValues...,
-			))
-		} else {
-			ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-				c.memoryLimit, prometheus.GaugeValue, float64(*summary.Config.MemoryAllocation.Limit*mb), labelValues...,
-			))
-		}
-		ch <- prometheus.NewMetricWithTimestamp(timestamp, prometheus.MustNewConstMetric(
-			c.overallStatus, prometheus.GaugeValue, ConvertManagedEntityStatusToValue(p.OverallStatus), labelValues...,
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.memoryAllocationLimit, prometheus.GaugeValue, rpool.MemoryAllocationLimit, labelValues...,
+		))
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.cpuAllocationLimit, prometheus.GaugeValue, rpool.CPUAllocationLimit, labelValues...,
+		))
+
+		ch <- prometheus.NewMetricWithTimestamp(rpool.Timestamp, prometheus.MustNewConstMetric(
+			c.overallStatus, prometheus.GaugeValue, rpool.OverallStatusFloat64(), labelValues...,
 		))
 
 	}

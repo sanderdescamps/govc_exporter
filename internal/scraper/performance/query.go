@@ -1,56 +1,11 @@
-package scraper
+package perfmetrics
 
 import (
 	"time"
 
-	"github.com/sanderdescamps/govc_exporter/internal/timequeue"
-	"github.com/vmware/govmomi/performance"
 	"github.com/vmware/govmomi/vim25/types"
 	"golang.org/x/exp/constraints"
 )
-
-type Metric struct {
-	timequeue.Event
-	Ref       types.ManagedObjectReference `json:"ref"`
-	Name      string                       `json:"name"`
-	Unit      string                       `json:"unit"`
-	Instance  string                       `json:"instance"`
-	Value     float64                      `json:"value"`
-	TimeStamp time.Time                    `json:"time_stamp"`
-}
-
-func (m Metric) GetTimestamp() time.Time {
-	return m.TimeStamp
-}
-
-func EntityMetricToMetric(entiry performance.EntityMetric) []Metric {
-	result := []Metric{}
-	for id, sample := range entiry.SampleInfo {
-		for _, entityValue := range entiry.Value {
-			result = append(result,
-				Metric{
-					Ref:      entiry.Entity,
-					Name:     entityValue.Name,
-					Unit:     entityValue.Unit,
-					Instance: entityValue.Instance,
-					Value: func() float64 {
-						if entityValue.Value != nil {
-							if len(entiry.SampleInfo) == len(entityValue.Value) {
-								return float64(entityValue.Value[id])
-							} else {
-								return Avg(entityValue.Value)
-							}
-						}
-						return 0
-					}(),
-					TimeStamp: sample.Timestamp,
-				},
-			)
-		}
-
-	}
-	return result
-}
 
 type perfQuery struct {
 	metrics        []string

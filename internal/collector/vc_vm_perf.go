@@ -1,9 +1,11 @@
 package collector
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 )
 
@@ -14,7 +16,7 @@ type VMPerfCollector struct {
 	perfMetric *prometheus.Desc
 }
 
-func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf Config) *VMPerfCollector {
+func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *VMPerfCollector {
 	labels := []string{"uuid", "name", "template", "vm_id"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {
@@ -40,34 +42,20 @@ func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 	if c.scraper.Host == nil || c.scraper.VM == nil || c.scraper.VMPerf == nil {
 		return
 	}
-
-	for _, ref := range c.scraper.VM.GetAllRefs() {
-		vm := c.scraper.VM.Get(ref)
-		if vm == nil {
-			continue
+	ctx := context.Background()
+	for vm := range c.scraper.DB.GetAllVMIter(ctx) {
+		extraLabelValues := []string{}
+		objectTags := c.scraper.DB.GetTags(ctx, vm.Self)
+		for _, tagCat := range c.extraLabels {
+			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
 
-		extraLabelValues := func() []string {
-			result := []string{}
-
-			for _, tagCat := range c.extraLabels {
-				tag := c.scraper.Tags.GetTag(vm.Self, tagCat)
-
-				if tag != nil {
-					result = append(result, tag.Name)
-				} else {
-					result = append(result, "")
-				}
-			}
-			return result
-		}()
-
-		labelValues := []string{vm.Config.Uuid, vm.Name, strconv.FormatBool(vm.Config.Template), vm.Self.Value}
+		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.ID()}
 		labelValues = append(labelValues, extraLabelValues...)
 
-		for _, metric := range c.scraper.VMPerf.PopAll(ref) {
+		for _, metric := range c.scraper.MetricsDB.PopAllVmMetrics(ctx, vm.Self) {
 			perfMetricLabelValues := append(labelValues, metric.Name, metric.Unit)
-			ch <- prometheus.NewMetricWithTimestamp(metric.TimeStamp, prometheus.MustNewConstMetric(
+			ch <- prometheus.NewMetricWithTimestamp(metric.Timestamp, prometheus.MustNewConstMetric(
 				c.perfMetric, prometheus.GaugeValue, metric.Value, perfMetricLabelValues...,
 			))
 		}
