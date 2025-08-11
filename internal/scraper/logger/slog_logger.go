@@ -54,3 +54,7 @@ func (l *SLogLogger) Warn(msg string, args ...any) {
 func (l *SLogLogger) Info(msg string, args ...any) {
 	l.logger.Info(msg, append(l.defaultArgs(), args...)...)
 }
+
+func (l *SLogLogger) Debug(msg string, args ...any) {
+	l.logger.Debug(msg, append(l.defaultArgs(), args...)...)
+}

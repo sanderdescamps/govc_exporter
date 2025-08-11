@@ -100,7 +100,7 @@ func (s *DatastoreSensor) StartRefresher(ctx context.Context, scraper *VCenterSc
 				go func() {
 					err := s.refresh(ctx, scraper)
 					if err == nil {
-						s.SensorLogger.Info("refresh successful")
+						s.SensorLogger.Debug("refresh successful")
 						s.statusMonitor.Success()
 					} else {
 						s.SensorLogger.Error("refresh failed", "err", err)
