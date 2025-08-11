@@ -26,13 +26,13 @@ func NewSensorError(msg string, args ...any) *SensorError {
 
 func (e *SensorError) Error() string {
 	extra := []string{}
-	for i := 0; i < len(e.args); i++ {
-		if i%2 == 0 {
-			extra = append(extra, fmt.Sprintf("%v=", e.args[i]))
+
+	for i := 0; i < len(e.args); i += 2 {
+		if i+1 < len(e.args) {
+			extra = append(extra, fmt.Sprintf("%v=%v", e.args[i], e.args[i+1]))
 		} else {
-			extra = append(extra, fmt.Sprintf("%v ", e.args[i]))
+			extra = append(extra, fmt.Sprintf("%v", e.args[i]))
 		}
 	}
-
-	return e.msg + strings.Join(extra, "")
+	return e.msg + strings.Join(extra, " ")
 }
