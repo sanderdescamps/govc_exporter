@@ -432,6 +432,14 @@ func (db *DB) GetAllVMRefs(ctx context.Context) []objects.ManagedObjectReference
 	return result
 }
 
+func (db *DB) GetAllClusterRefs(ctx context.Context) []objects.ManagedObjectReference {
+	result := []objects.ManagedObjectReference{}
+	for vm := range db.GetAllClusterIter(ctx) {
+		result = append(result, vm.Self)
+	}
+	return result
+}
+
 func (db *DB) SetTags(ctx context.Context, tagSet objects.TagSet, ttl time.Duration) error {
 	err := db.Set(ctx, objects.ManagedObjectTypesTagSet, tagSet.ObjectRef.ID(), tagSet, ttl)
 	if err != nil {

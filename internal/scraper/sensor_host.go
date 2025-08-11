@@ -2,9 +2,12 @@ package scraper
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,7 +35,7 @@ type HostSensor struct {
 }
 
 func NewHostSensor(scraper *VCenterScraper, config config.SensorConfig, l *slog.Logger) *HostSensor {
-	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewLastSensorMetricsCollector()
+	var mc *sensormetrics.SensorMetricsCollector = sensormetrics.NewAvgSensorMetricsCollector(50)
 	var sm *sensormetrics.StatusMonitor = sensormetrics.NewStatusMonitor()
 	return &HostSensor{
 		config:           config,
@@ -45,17 +48,70 @@ func NewHostSensor(scraper *VCenterScraper, config config.SensorConfig, l *slog.
 	}
 }
 
-func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
-	if ok := s.sensorLock.TryLock(); !ok {
-		return ErrSensorAlreadyRunning
+func (s *HostSensor) querryAllHosts(ctx context.Context, scraper *VCenterScraper) ([]objects.Host, error) {
+	if scraper.Cluster == nil {
+		s.SensorLogger.Error("Can't query for hosts if cluster sensor is not defined")
+		return nil, fmt.Errorf("no cluster sensor found")
 	}
-	defer s.sensorLock.Unlock()
+	(scraper.Cluster).(*ClusterSensor).WaitTillStartup()
 
+	clusterRefs := scraper.DB.GetAllClusterRefs(ctx)
+
+	var wg sync.WaitGroup
+	wg.Add(len(clusterRefs))
+	resultChan := make(chan *[]objects.Host, len(clusterRefs))
+	for _, clusterRef := range clusterRefs {
+		go func() {
+			defer wg.Done()
+
+			hosts, err := s.queryHostsForCluster(ctx, scraper, clusterRef.ToVMwareRef())
+			if err != nil {
+				s.SensorLogger.Error("Failed to get hosts for cluster", "cluster", clusterRef.Value, "err", err)
+				s.statusMonitor.Fail()
+				return
+			}
+			s.statusMonitor.Success()
+			resultChan <- &hosts
+		}()
+	}
+
+	readyChan := make(chan bool)
+	allHosts := map[objects.ManagedObjectReference]objects.Host{}
+
+	go func() {
+		for {
+			select {
+			case r := <-resultChan:
+				for _, host := range *r {
+					if _, exist := allHosts[host.Self]; !exist {
+						allHosts[host.Self] = host
+					} else {
+						s.SensorLogger.Error("host exist on multiple clusters", "host", host.Name, "ref", host.Self)
+					}
+				}
+			case <-readyChan:
+				close(readyChan)
+				close(resultChan)
+				return
+			case <-ctx.Done():
+				close(resultChan)
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+	readyChan <- true
+
+	return slices.Collect(maps.Values(allHosts)), nil
+}
+
+func (s *HostSensor) queryHostsForCluster(ctx context.Context, scraper *VCenterScraper, clusterRef types.ManagedObjectReference) ([]objects.Host, error) {
 	sensorStopwatch := sensormetrics.NewSensorStopwatch()
 	sensorStopwatch.Start()
-	client, release, err := scraper.clientPool.Acquire()
+	client, release, err := scraper.clientPool.AcquireWithContext(ctx)
 	if err != nil {
-		return ErrSensorCientFailed
+		return nil, err
 	}
 	defer release()
 
@@ -63,12 +119,12 @@ func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
-		client.ServiceContent.RootFolder,
+		clusterRef,
 		[]string{"HostSystem"},
 		true,
 	)
 	if err != nil {
-		return NewSensorError("failed to create container", "err", err)
+		return nil, NewSensorError("failed to create container", "err", err)
 	}
 	defer v.Destroy(ctx)
 
@@ -90,13 +146,35 @@ func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error
 	)
 	sensorStopwatch.Finish()
 	s.metricsCollector.UploadStats(sensorStopwatch.GetStats())
+
 	if err != nil {
-		return NewSensorError("failed to retrieve data", "err", err)
+		return nil, err
 	}
 
-	for _, entity := range entities {
-		oHost := ConvertToHost(ctx, scraper, entity, time.Now())
-		scraper.DB.SetHost(ctx, oHost, s.config.MaxAge)
+	oHosts := []objects.Host{}
+	for _, item := range entities {
+		oHosts = append(oHosts, ConvertToHost(ctx, scraper, item, time.Now()))
+	}
+
+	return oHosts, nil
+}
+
+func (s *HostSensor) refresh(ctx context.Context, scraper *VCenterScraper) error {
+	if ok := s.sensorLock.TryLock(); !ok {
+		return ErrSensorAlreadyRunning
+	}
+	defer s.sensorLock.Unlock()
+
+	hosts, err := s.querryAllHosts(ctx, scraper)
+	if err != nil {
+		return err
+	}
+
+	for _, host := range hosts {
+		err := scraper.DB.SetHost(ctx, host, s.config.MaxAge)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -48,6 +48,7 @@ type Database interface {
 
 	GetAllHostRefs(ctx context.Context) []objects.ManagedObjectReference
 	GetAllVMRefs(ctx context.Context) []objects.ManagedObjectReference
+	GetAllClusterRefs(ctx context.Context) []objects.ManagedObjectReference
 
 	SetTags(ctx context.Context, tagSet objects.TagSet, ttl time.Duration) error
 	GetTags(ctx context.Context, ref objects.ManagedObjectReference) objects.TagSet
