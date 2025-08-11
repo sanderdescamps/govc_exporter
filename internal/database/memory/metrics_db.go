@@ -3,6 +3,7 @@ package memory_db
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -10,15 +11,20 @@ import (
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 )
 
+type metricIndex struct {
+	pmType objects.PerfMetricTypes
+	ref    objects.ManagedObjectReference
+}
+
 type MetricsDB struct {
-	queues          map[objects.PerfMetricTypes]map[string]*TimeQueueTable
+	tables          map[metricIndex]*TimeQueueTable
 	lock            sync.Mutex
 	cleanerStopChan chan bool
 }
 
 func NewMetricsDB() *MetricsDB {
 	return &MetricsDB{
-		queues: make(map[objects.PerfMetricTypes]map[string]*TimeQueueTable),
+		tables: make(map[metricIndex]*TimeQueueTable),
 	}
 }
 
@@ -29,7 +35,7 @@ func (db *MetricsDB) Connect(ctx context.Context) error {
 
 func (db *MetricsDB) Disconnect(ctx context.Context) error {
 	db.stopCleaner(ctx)
-	db.queues = nil
+	db.tables = nil
 	return nil
 }
 
@@ -40,13 +46,12 @@ func (db *MetricsDB) startCleaner(ctx context.Context) {
 			select {
 			case <-ticker.C:
 				go func() {
-					for pmType := range db.queues {
-						count := 0
-						for ref := range db.queues[pmType] {
-							if q := db.tableByRefID(pmType, ref); q != nil {
-								count += q.CleanupExpired()
-							}
-						}
+					counts := map[objects.PerfMetricTypes]int{}
+					for index, table := range maps.All(db.tables) {
+						counts[index.pmType] += table.CleanupExpired()
+					}
+
+					for pmType, count := range counts {
 						if l := database.GetLoggerFromContext(ctx); l != nil && count > 0 {
 							l.Info(fmt.Sprintf("removed %d metrics from %s table", count, pmType.String()))
 						}
@@ -73,19 +78,14 @@ func (db *MetricsDB) Add(ctx context.Context, pmType objects.PerfMetricTypes, re
 }
 
 func (db *MetricsDB) Table(pmType objects.PerfMetricTypes, ref objects.ManagedObjectReference) *TimeQueueTable {
-	return db.tableByRefID(pmType, ref.ID())
-}
-
-func (db *MetricsDB) tableByRefID(pmType objects.PerfMetricTypes, refID string) *TimeQueueTable {
 	db.lock.Lock()
 	defer db.lock.Unlock()
-	if _, ok := db.queues[pmType]; !ok {
-		db.queues[pmType] = make(map[string]*TimeQueueTable)
+
+	index := metricIndex{pmType: pmType, ref: ref}
+	if _, ok := db.tables[index]; !ok {
+		db.tables[index] = NewTimeQueueTable()
 	}
-	if _, ok := db.queues[pmType][refID]; !ok {
-		db.queues[pmType][refID] = NewTimeQueueTable()
-	}
-	return db.queues[pmType][refID]
+	return db.tables[index]
 }
 
 func (db *MetricsDB) AddVmMetrics(ctx context.Context, ref objects.ManagedObjectReference, ttl time.Duration, data ...objects.Metric) error {
