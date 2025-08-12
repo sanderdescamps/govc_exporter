@@ -112,6 +112,7 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) http.Handler {
 		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{
 			ErrorHandling:       promhttp.ContinueOnError,
 			MaxRequestsInFlight: c.conf.CollectorConfig.MaxRequests,
+			ErrorLog:            slog.NewLogLogger(logger.Handler(), slog.LevelError),
 		})
 		h.ServeHTTP(w, r)
 	})
