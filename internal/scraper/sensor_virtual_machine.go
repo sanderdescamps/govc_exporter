@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"math/rand"
+	"regexp"
 	"slices"
 	"strconv"
 	"sync"
@@ -24,6 +25,8 @@ import (
 )
 
 const VM_SENSOR_NAME = "VirtualMachineSensor"
+
+var regexPatternIPv4 = regexp.MustCompile(`^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$`)
 
 type VirtualMachineSensor struct {
 	logger.SensorLogger
@@ -403,14 +406,23 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 	}
 
 	if guest := vm.Guest; guest != nil {
+		guestNets := []objects.VirtualMachineGuestNet{}
 		for _, net := range guest.Net {
-			virtualMachine.GuestNetwork = append(virtualMachine.GuestNetwork, objects.VirtualMachineGuestNet{
-				Network:    net.Network,
-				MacAddress: net.MacAddress,
-				IpAddress:  net.IpAddress,
-				Connected:  net.Connected,
-			})
+			if ipConfig := net.IpConfig; ipConfig != nil {
+				for _, address := range ipConfig.IpAddress {
+					if match := regexPatternIPv4.MatchString(address.IpAddress); match {
+						virtualMachine.GuestNetwork = append(virtualMachine.GuestNetwork, objects.VirtualMachineGuestNet{
+							MacAddress: net.MacAddress,
+							IpAddress:  address.IpAddress,
+							Connected:  net.Connected,
+						})
+					}
+				}
+			}
 		}
+		virtualMachine.GuestNetwork = helper.DedupFunc(guestNets, func(i1, i2 objects.VirtualMachineGuestNet) bool {
+			return i1.IpAddress != i2.IpAddress && i1.MacAddress != i2.MacAddress
+		})
 	}
 
 	virtualMachine.Disk = ExtractDisksFromVM(vm)

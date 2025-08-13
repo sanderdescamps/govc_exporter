@@ -160,10 +160,13 @@ func (s *BasePerfSensor) QueryEntiryMetrics(ctx context.Context, scraper *VCente
 
 	sensorStopwatch := sensormetrics.NewSensorStopwatch()
 
-	windowEnd := time.Now()
-	windowBegin := windowEnd.Add(-s.config.MaxSampleWindow)
-	if s.lastQueryTime.After(windowBegin) {
-		windowBegin = s.lastQueryTime
+	windowEnd := time.Now().Truncate(s.config.SampleInterval)
+	windowBegin1 := s.lastQueryTime.Add(s.config.SampleInterval)
+	windowBegin2 := windowEnd.Add(-s.config.MaxSampleWindow)
+
+	var windowBegin time.Time = windowBegin2
+	if windowBegin1.After(windowBegin2) {
+		windowBegin = windowBegin1
 	}
 	options := []PerfOption{}
 	options = append(options,

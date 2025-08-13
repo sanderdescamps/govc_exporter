@@ -1,17 +1,28 @@
 package helper
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
 func Dedup[T comparable](slice []T) []T {
 	allKeys := make(map[T]bool)
-	list := []T{}
 	for _, item := range slice {
-		if _, value := allKeys[item]; !value {
-			allKeys[item] = true
-			list = append(list, item)
+		allKeys[item] = true
+	}
+	return slices.Collect(maps.Keys(allKeys))
+}
+
+func DedupFunc[T any](slice []T, cmp func(i1 T, i2 T) bool) []T {
+	clean := []T{}
+	for _, item := range slice {
+		if slices.ContainsFunc(clean, func(other T) bool {
+			return cmp(other, item)
+		}) {
+			clean = append(clean, item)
 		}
 	}
-	return list
+	return clean
 }
 
 func Flatten[T any](l ...[]T) []T {

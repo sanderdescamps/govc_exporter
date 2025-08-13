@@ -67,11 +67,11 @@ func (q *TimeQueueTable) pop() *objects.Metric {
 
 // Empty the queue and return a popper function with all the items
 func (q *TimeQueueTable) popAll() []*objects.Metric {
-	dump := q.queue
+	var dump *[]*MetricItem = &q.queue
 	q.queue = []*MetricItem{}
 
 	result := []*objects.Metric{}
-	for _, m := range dump {
+	for _, m := range *dump {
 		result = append(result, m.Metric)
 	}
 
