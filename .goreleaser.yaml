@@ -28,8 +28,8 @@ builds:
 env:
   - CGO_ENABLED=0
 archives:
-  - id: govc_exporter
-    builds: [govc_exporter]
+  - ids:
+      - govc_exporter
     formats:
       - tar.gz
     name_template: >-
