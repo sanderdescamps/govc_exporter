@@ -6,6 +6,7 @@ import (
 	"iter"
 	"maps"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 )
@@ -129,11 +130,15 @@ func (t *Table) GetAllIter() iter.Seq[any] {
 	t.lock.RLock()
 	defer t.lock.RUnlock()
 
-	allValPnts := maps.Values(t.data)
+	allKeys := slices.Collect(maps.Keys(t.data))
 	return func(yield func(any) bool) {
-		for v := range allValPnts {
-			if !yield(v.value) {
-				return
+		for _, key := range allKeys {
+			t.lock.RLock()
+			defer t.lock.RUnlock()
+			if v, ok := t.data[key]; ok {
+				if !yield(v.value) {
+					return
+				}
 			}
 		}
 	}
