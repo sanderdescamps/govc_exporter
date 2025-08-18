@@ -87,6 +87,7 @@ func run(ctx context.Context) {
 	}
 
 	//Collector
+	collector.Logger = logger
 	coll := collector.NewVCCollector(ctx, config, scrap)
 
 	//Server

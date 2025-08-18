@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"iter"
 	"log/slog"
 	"time"
 
@@ -35,16 +34,27 @@ type Database interface {
 	GetResourcePool(ctx context.Context, ref objects.ManagedObjectReference) *objects.ResourcePool
 	GetVM(ctx context.Context, ref objects.ManagedObjectReference) *objects.VirtualMachine
 
-	GetAllClusterIter(ctx context.Context) iter.Seq[objects.Cluster]
-	GetAllComputeResourceIter(ctx context.Context) iter.Seq[objects.ComputeResource]
-	GetAllDatacenterIter(ctx context.Context) iter.Seq[objects.Datacenter]
-	GetAllDatastoreIter(ctx context.Context) iter.Seq[objects.Datastore]
-	GetAllFolderIter(ctx context.Context) iter.Seq[objects.Folder]
-	GetAllHostIter(ctx context.Context) iter.Seq[objects.Host]
-	GetAllStoragePodIter(ctx context.Context) iter.Seq[objects.StoragePod]
-	GetAllResourcePoolIter(ctx context.Context) iter.Seq[objects.ResourcePool]
-	GetAllTagSetsIter(ctx context.Context) iter.Seq[objects.TagSet]
-	GetAllVMIter(ctx context.Context) iter.Seq[objects.VirtualMachine]
+	// GetAllClusterIter(ctx context.Context) iter.Seq[objects.Cluster]
+	// GetAllComputeResourceIter(ctx context.Context) iter.Seq[objects.ComputeResource]
+	// GetAllDatacenterIter(ctx context.Context) iter.Seq[objects.Datacenter]
+	// GetAllDatastoreIter(ctx context.Context) iter.Seq[objects.Datastore]
+	// GetAllFolderIter(ctx context.Context) iter.Seq[objects.Folder]
+	// GetAllHostIter(ctx context.Context) iter.Seq[objects.Host]
+	// GetAllStoragePodIter(ctx context.Context) iter.Seq[objects.StoragePod]
+	// GetAllResourcePoolIter(ctx context.Context) iter.Seq[objects.ResourcePool]
+	// GetAllTagSetsIter(ctx context.Context) iter.Seq[objects.TagSet]
+	// GetAllVMIter(ctx context.Context) iter.Seq[objects.VirtualMachine]
+
+	GetAllCluster(ctx context.Context) ([]objects.Cluster, error)
+	GetAllComputeResource(ctx context.Context) ([]objects.ComputeResource, error)
+	GetAllDatacenter(ctx context.Context) ([]objects.Datacenter, error)
+	GetAllDatastore(ctx context.Context) ([]objects.Datastore, error)
+	GetAllFolder(ctx context.Context) ([]objects.Folder, error)
+	GetAllHost(ctx context.Context) ([]objects.Host, error)
+	GetAllStoragePod(ctx context.Context) ([]objects.StoragePod, error)
+	GetAllResourcePool(ctx context.Context) ([]objects.ResourcePool, error)
+	GetAllTagSets(ctx context.Context) ([]objects.TagSet, error)
+	GetAllVM(ctx context.Context) ([]objects.VirtualMachine, error)
 
 	GetAllHostRefs(ctx context.Context) []objects.ManagedObjectReference
 	GetAllVMRefs(ctx context.Context) []objects.ManagedObjectReference

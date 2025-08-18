@@ -11,8 +11,8 @@ import (
 )
 
 type VMPerfCollector struct {
-	extraLabels []string
 	scraper     *scraper.VCenterScraper
+	extraLabels []string
 
 	perfMetric *prometheus.Desc
 }
@@ -44,8 +44,15 @@ func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 		fmt.Printf("Can't collect metrics if Host, VM and VMPerf sensor are not defined\n")
 		return
 	}
-	ctx := context.Background()
-	for vm := range c.scraper.DB.GetAllVMIter(ctx) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	vms, err := c.scraper.DB.GetAllVM(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get vm's", "err", err)
+	}
+	for _, vm := range vms {
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, vm.Self)
 		for _, tagCat := range c.extraLabels {

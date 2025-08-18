@@ -10,7 +10,8 @@ import (
 
 type esxPerfCollector struct {
 	extraLabels []string
-	scraper     *scraper.VCenterScraper
+
+	scraper *scraper.VCenterScraper
 
 	perfMetric *prometheus.Desc
 }
@@ -41,8 +42,15 @@ func (c *esxPerfCollector) Collect(ch chan<- prometheus.Metric) {
 	if !c.scraper.Host.Enabled() || !c.scraper.HostPerf.Enabled() {
 		return
 	}
-	ctx := context.Background()
-	for host := range c.scraper.DB.GetAllHostIter(ctx) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	hosts, err := c.scraper.DB.GetAllHost(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get hosts", "err", err)
+	}
+	for _, host := range hosts {
 
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, host.Self)

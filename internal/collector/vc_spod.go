@@ -15,8 +15,9 @@ const (
 type storagePodCollector struct {
 	scraper     *scraper.VCenterScraper
 	extraLabels []string
-	capacity    *prometheus.Desc
-	freeSpace   *prometheus.Desc
+
+	capacity  *prometheus.Desc
+	freeSpace *prometheus.Desc
 }
 
 func NewStoragePodCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *storagePodCollector {
@@ -48,9 +49,15 @@ func (c *storagePodCollector) Collect(ch chan<- prometheus.Metric) {
 	if !c.scraper.SPOD.Enabled() {
 		return
 	}
-	ctx := context.Background()
-	for spod := range c.scraper.DB.GetAllStoragePodIter(ctx) {
 
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	spods, err := c.scraper.DB.GetAllStoragePod(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get spods", "err", err)
+	}
+	for _, spod := range spods {
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, spod.Self)
 		for _, tagCat := range c.extraLabels {

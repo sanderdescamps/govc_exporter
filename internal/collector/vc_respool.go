@@ -13,8 +13,9 @@ const (
 )
 
 type resourcePoolCollector struct {
-	scraper                      *scraper.VCenterScraper
-	extraLabels                  []string
+	scraper     *scraper.VCenterScraper
+	extraLabels []string
+
 	overallCPUUsage              *prometheus.Desc
 	overallCPUDemand             *prometheus.Desc
 	guestMemoryUsage             *prometheus.Desc
@@ -122,8 +123,15 @@ func (c *resourcePoolCollector) Collect(ch chan<- prometheus.Metric) {
 	if !c.scraper.Cluster.Enabled() {
 		return
 	}
-	ctx := context.Background()
-	for rpool := range c.scraper.DB.GetAllResourcePoolIter(ctx) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	rpools, err := c.scraper.DB.GetAllResourcePool(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get rpools", "err", err)
+	}
+	for _, rpool := range rpools {
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, rpool.Self)
 		for _, tagCat := range c.extraLabels {
