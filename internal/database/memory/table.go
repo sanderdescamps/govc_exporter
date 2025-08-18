@@ -3,10 +3,7 @@ package memory_db
 import (
 	"errors"
 	"fmt"
-	"iter"
-	"maps"
 	"reflect"
-	"slices"
 	"sync"
 	"time"
 )
@@ -124,24 +121,6 @@ func (t *Table) GetAll(res interface{}) error {
 	}
 
 	return nil
-}
-
-func (t *Table) GetAllIter() iter.Seq[any] {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
-	allKeys := slices.Collect(maps.Keys(t.data))
-	return func(yield func(any) bool) {
-		for _, key := range allKeys {
-			t.lock.RLock()
-			defer t.lock.RUnlock()
-			if v, ok := t.data[key]; ok {
-				if !yield(v.value) {
-					return
-				}
-			}
-		}
-	}
 }
 
 func (t *Table) CleanupExpired() int {
