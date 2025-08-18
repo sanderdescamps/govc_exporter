@@ -22,7 +22,7 @@ func NewEsxPerfCollector(scraper *scraper.VCenterScraper, cConf config.Collector
 		labels = append(labels, extraLabels...)
 	}
 
-	perfLabels := append(labels, "kind", "unit")
+	perfLabels := append(labels, "kind", "instance", "unit")
 
 	return &esxPerfCollector{
 		scraper:     scraper,
@@ -53,8 +53,8 @@ func (c *esxPerfCollector) Collect(ch chan<- prometheus.Metric) {
 		labelValues := []string{host.Self.ID(), host.Name, host.Datacenter, host.Cluster}
 		labelValues = append(labelValues, extraLabelValues...)
 
-		for _, metric := range c.scraper.MetricsDB.PopAllHostMetrics(ctx, host.Self) {
-			perfMetricLabelValues := append(labelValues, metric.Name, metric.Unit)
+		for metric := range c.scraper.MetricsDB.PopAllHostMetricsIter(ctx, host.Self) {
+			perfMetricLabelValues := append(labelValues, metric.Name, metric.Instance, metric.Unit)
 			ch <- prometheus.NewMetricWithTimestamp(metric.Timestamp, prometheus.MustNewConstMetric(
 				c.perfMetric, prometheus.GaugeValue, metric.Value, perfMetricLabelValues...,
 			))

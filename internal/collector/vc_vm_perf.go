@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -23,7 +24,7 @@ func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf config.CollectorC
 		labels = append(labels, extraLabels...)
 	}
 
-	perfLabels := append(labels, "kind", "unit")
+	perfLabels := append(labels, "kind", "instance", "unit")
 
 	return &VMPerfCollector{
 		scraper:     scraper,
@@ -40,6 +41,7 @@ func (c *VMPerfCollector) Describe(ch chan<- *prometheus.Desc) {
 
 func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 	if c.scraper.Host == nil || c.scraper.VM == nil || c.scraper.VMPerf == nil {
+		fmt.Printf("Can't collect metrics if Host, VM and VMPerf sensor are not defined\n")
 		return
 	}
 	ctx := context.Background()
@@ -53,8 +55,8 @@ func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.ID()}
 		labelValues = append(labelValues, extraLabelValues...)
 
-		for _, metric := range c.scraper.MetricsDB.PopAllVmMetrics(ctx, vm.Self) {
-			perfMetricLabelValues := append(labelValues, metric.Name, metric.Unit)
+		for metric := range c.scraper.MetricsDB.PopAllVmMetricsIter(ctx, vm.Self) {
+			perfMetricLabelValues := append(labelValues, metric.Name, metric.Instance, metric.Unit)
 			ch <- prometheus.NewMetricWithTimestamp(metric.Timestamp, prometheus.MustNewConstMetric(
 				c.perfMetric, prometheus.GaugeValue, metric.Value, perfMetricLabelValues...,
 			))
