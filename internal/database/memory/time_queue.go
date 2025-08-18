@@ -122,3 +122,10 @@ func (q *TimeQueueTable) CleanupExpired() int {
 	q.queue = younger
 	return len(older)
 }
+
+func (q *TimeQueueTable) JsonDump() ([]byte, error) {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	return json.MarshalIndent(q.queue, "", "  ")
+}

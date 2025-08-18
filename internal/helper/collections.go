@@ -35,6 +35,15 @@ func Flatten[T any](l ...[]T) []T {
 	return result
 }
 
+func Contains[T comparable](elems []T, v T) bool {
+	for _, s := range elems {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 // Subtract returns the elements in a that are not in b
 // It is not commutative, i.e. Subtract(a, b) != Subtract(b, a)
 func Subtract[T comparable](a []T, b []T) []T {

@@ -82,6 +82,34 @@ func TestVCenterScraper(t *testing.T) {
 	logger.Info("test finished")
 }
 
+func TestVCenterScraperDump(t *testing.T) {
+
+	conf := config.DefaultScraperConfig()
+	conf.VCenter = "https://localhost:8989"
+	conf.Username = "testuser"
+	conf.Password = "testpass"
+	conf.Tags.CategoryToCollect = []string{"tenants"}
+	// conf.Backend.Type = "redis"
+
+	err := conf.Validate()
+	if err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
+
+	promlogConfig := &promslog.Config{
+		// Level:
+	}
+	logger := promslog.New(promlogConfig)
+	ctx := context.Background()
+
+	scraper, _ := scraper.NewVCenterScraper(ctx, conf, logger)
+	scraper.Start(ctx, logger)
+
+	scraper.DB.JsonDump(ctx, objects.ManagedObjectTypesTagSet)
+	logger.Info("dump created")
+}
+
+
 func TestVMwareHost(t *testing.T) {
 
 	var hss []mo.HostSystem

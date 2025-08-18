@@ -109,3 +109,19 @@ func (db *MetricsDB) PopAllHostMetrics(ctx context.Context, ref objects.ManagedO
 func (db *MetricsDB) PopAllVmMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric {
 	return db.Table(objects.PerfMetricTypesVirtualMachine, ref).PopAll()
 }
+func (db *MetricsDB) JsonDump(ctx context.Context, pmType ...objects.PerfMetricTypes) (map[objects.ManagedObjectReference][]byte, error) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+	result := make(map[objects.ManagedObjectReference][]byte)
+	for index, table := range db.tables {
+		if helper.Contains(pmType, index.pmType) {
+			b, err := table.JsonDump()
+			if err != nil {
+				return nil, err
+			}
+			result[index.ref] = b
+		}
+	}
+
+	return result, nil
+}
