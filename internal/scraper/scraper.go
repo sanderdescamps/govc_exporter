@@ -79,12 +79,6 @@ func NewVCenterScraper(ctx context.Context, conf config.ScraperConfig, logger *s
 	db.Connect(dbCtx)
 	metricsDb.Connect(dbCtx)
 
-	// var db database.Database = memory_db.NewDB()
-	// db.Connect(ctx)
-
-	// var metricsDb database.MetricDB = memory_db.NewMetricsDB()
-	// metricsDb.Connect(ctx)
-
 	scraper := VCenterScraper{
 		clientPool: pool,
 		config:     conf,
