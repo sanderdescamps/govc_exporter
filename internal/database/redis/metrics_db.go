@@ -120,3 +120,7 @@ func (db *MetricsDB) PopAllHostMetrics(ctx context.Context, ref objects.ManagedO
 func (db *MetricsDB) PopAllVmMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric {
 	return db.PopAll(ctx, objects.PerfMetricTypesVirtualMachine, ref)
 }
+
+func (db *MetricsDB) JsonDump(ctx context.Context, pmType ...objects.PerfMetricTypes) (map[objects.ManagedObjectReference][]byte, error) {
+	panic("unimplemented")
+}

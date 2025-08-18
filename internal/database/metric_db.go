@@ -16,4 +16,5 @@ type MetricDB interface {
 
 	PopAllHostMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric
 	PopAllVmMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric
+	JsonDump(ctx context.Context, pmType ...objects.PerfMetricTypes) (map[objects.ManagedObjectReference][]byte, error)
 }
