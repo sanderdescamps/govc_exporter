@@ -10,7 +10,8 @@ import (
 
 type esxPerfCollector struct {
 	extraLabels []string
-	scraper     *scraper.VCenterScraper
+
+	scraper *scraper.VCenterScraper
 
 	perfMetric *prometheus.Desc
 }
@@ -22,7 +23,7 @@ func NewEsxPerfCollector(scraper *scraper.VCenterScraper, cConf config.Collector
 		labels = append(labels, extraLabels...)
 	}
 
-	perfLabels := append(labels, "kind", "unit")
+	perfLabels := append(labels, "kind", "instance", "unit")
 
 	return &esxPerfCollector{
 		scraper:     scraper,
@@ -41,8 +42,15 @@ func (c *esxPerfCollector) Collect(ch chan<- prometheus.Metric) {
 	if !c.scraper.Host.Enabled() || !c.scraper.HostPerf.Enabled() {
 		return
 	}
-	ctx := context.Background()
-	for host := range c.scraper.DB.GetAllHostIter(ctx) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	hosts, err := c.scraper.DB.GetAllHost(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get hosts", "err", err)
+	}
+	for _, host := range hosts {
 
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, host.Self)
@@ -53,8 +61,8 @@ func (c *esxPerfCollector) Collect(ch chan<- prometheus.Metric) {
 		labelValues := []string{host.Self.ID(), host.Name, host.Datacenter, host.Cluster}
 		labelValues = append(labelValues, extraLabelValues...)
 
-		for _, metric := range c.scraper.MetricsDB.PopAllHostMetrics(ctx, host.Self) {
-			perfMetricLabelValues := append(labelValues, metric.Name, metric.Unit)
+		for metric := range c.scraper.MetricsDB.PopAllHostMetricsIter(ctx, host.Self) {
+			perfMetricLabelValues := append(labelValues, metric.Name, metric.Instance, metric.Unit)
 			ch <- prometheus.NewMetricWithTimestamp(metric.Timestamp, prometheus.MustNewConstMetric(
 				c.perfMetric, prometheus.GaugeValue, metric.Value, perfMetricLabelValues...,
 			))

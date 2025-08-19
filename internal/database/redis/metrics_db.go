@@ -3,6 +3,7 @@ package redis_db
 import (
 	"context"
 	"fmt"
+	"iter"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -119,4 +120,28 @@ func (db *MetricsDB) PopAllHostMetrics(ctx context.Context, ref objects.ManagedO
 
 func (db *MetricsDB) PopAllVmMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric {
 	return db.PopAll(ctx, objects.PerfMetricTypesVirtualMachine, ref)
+}
+
+func (db *MetricsDB) PopAllHostMetricsIter(ctx context.Context, ref objects.ManagedObjectReference) iter.Seq[objects.Metric] {
+	return func(yield func(objects.Metric) bool) {
+		for _, v := range db.PopAllHostMetrics(ctx, ref) {
+			if v != nil && !yield(*v) {
+				return
+			}
+		}
+	}
+}
+
+func (db *MetricsDB) PopAllVmMetricsIter(ctx context.Context, ref objects.ManagedObjectReference) iter.Seq[objects.Metric] {
+	return func(yield func(objects.Metric) bool) {
+		for _, v := range db.PopAllVmMetrics(ctx, ref) {
+			if v != nil && !yield(*v) {
+				return
+			}
+		}
+	}
+}
+
+func (db *MetricsDB) JsonDump(ctx context.Context, pmType ...objects.PerfMetricTypes) (map[objects.ManagedObjectReference][]byte, error) {
+	panic("unimplemented")
 }

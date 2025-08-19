@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -20,6 +21,9 @@ import (
 
 // Namespace defines the common namespace to be used by all metrics.
 const namespace = "govc"
+const COLLECT_TIMEOUT = 20 * time.Second
+
+var Logger *slog.Logger
 
 type VCCollector struct {
 	scraper *scraper.VCenterScraper
@@ -112,6 +116,7 @@ func (c *VCCollector) GetMetricHandler(logger *slog.Logger) http.Handler {
 		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{
 			ErrorHandling:       promhttp.ContinueOnError,
 			MaxRequestsInFlight: c.conf.CollectorConfig.MaxRequests,
+			ErrorLog:            slog.NewLogLogger(logger.Handler(), slog.LevelError),
 		})
 		h.ServeHTTP(w, r)
 	})

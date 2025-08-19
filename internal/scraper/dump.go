@@ -2,6 +2,7 @@ package scraper
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -33,6 +34,7 @@ func GetDumpHandler(scraper VCenterScraper, logger *slog.Logger) http.Handler {
 		}
 
 		refTypes := []objects.ManagedObjectTypes{}
+		perfMetricTypes := []objects.PerfMetricTypes{}
 
 		if helper.NewMatcher("cluster").MatchAny(include...) {
 			refTypes = append(refTypes, objects.ManagedObjectTypesCluster)
@@ -65,7 +67,14 @@ func GetDumpHandler(scraper VCenterScraper, logger *slog.Logger) http.Handler {
 			refTypes = append(refTypes, objects.ManagedObjectTypesVirtualMachine)
 		}
 
-		if len(refTypes) < 1 {
+		if helper.NewMatcher("perfvm", "perf_virtual_machine").MatchAny(include...) {
+			perfMetricTypes = append(perfMetricTypes, objects.PerfMetricTypesVirtualMachine)
+		}
+		if helper.NewMatcher("perfesx", "perf_esx", "perfhost", "perf_host").MatchAny(include...) {
+			perfMetricTypes = append(perfMetricTypes, objects.PerfMetricTypesHost)
+		}
+
+		if len(refTypes) < 1 && len(perfMetricTypes) < 1 {
 			logger.Warn("Failed to create dump. Invalid sensor type", "type", include)
 
 			w.Header().Set("Content-Type", "application/json")
@@ -82,28 +91,18 @@ func GetDumpHandler(scraper VCenterScraper, logger *slog.Logger) http.Handler {
 				result = append(result, t.String())
 			}
 			return strings.Join(result, ";")
-		})
+		}())
 
-		dirPath := ""
-		for i := 0; true; i++ {
-			dirPath = fmt.Sprintf("./dumps/%s_%d", time.Now().Format("20060201"), i)
-			if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-				logger.Debug("Create dump path", "path", dirPath)
-
-				err := os.MkdirAll(dirPath, 0775)
-				if err != nil {
-					logger.Warn("Failed to create dump", "err", err)
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					json.NewEncoder(w).Encode(map[string]any{
-						"msg":    "Failed to create dump",
-						"err":    err.Error(),
-						"status": http.StatusInternalServerError,
-					})
-					return
-				}
-				break
-			}
+		dirPath, err := makeDumpDir()
+		if err != nil {
+			logger.Warn("Failed to create dump dir", "err", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":    "Failed to create dump",
+				"status": http.StatusInternalServerError,
+			})
+			return
 		}
 
 		for _, refType := range refTypes {
@@ -114,7 +113,6 @@ func GetDumpHandler(scraper VCenterScraper, logger *slog.Logger) http.Handler {
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]any{
 					"msg":    "Failed to create dump",
-					"err":    err.Error(),
 					"status": http.StatusInternalServerError,
 				})
 				return
@@ -123,6 +121,50 @@ func GetDumpHandler(scraper VCenterScraper, logger *slog.Logger) http.Handler {
 			os.WriteFile(filePath, jsonByte, os.ModePerm)
 		}
 
-		logger.Info(fmt.Sprintf("Dump successful. Check %s for results", dirPath))
+		pmDumps, err := scraper.MetricsDB.JsonDump(ctx, perfMetricTypes...)
+		if err != nil {
+			logger.Error("Failed to create perfdump", "err", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]any{
+				"msg":    "Failed to create dump",
+				"status": http.StatusInternalServerError,
+			})
+			return
+		}
+		for ref, pmDump := range pmDumps {
+			filePath := path.Join(dirPath, fmt.Sprintf("perf-%s.json", ref.Value))
+			os.WriteFile(filePath, pmDump, os.ModePerm)
+		}
+
+		logger.Info(fmt.Sprintf("Dump created successful. Check %s for results.", dirPath))
+		logger.Warn(fmt.Sprintf("Cleanup %s when not needed anymore", dirPath))
+		json.NewEncoder(w).Encode(map[string]any{
+			"msg":    "Dump has been created on server. Make sure to cleanup dir when not needed anymore",
+			"dir":    dirPath,
+			"status": http.StatusOK,
+		})
 	})
+}
+
+func makeDumpDir() (string, error) {
+	for i := 0; true; i++ {
+		dirPath := fmt.Sprintf("./dumps/%s_%d", time.Now().Format("20060102"), i)
+		if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+			err := os.MkdirAll(dirPath, 0775)
+			if errors.Is(err, os.ErrPermission) {
+				//continue bellow, create a dir in temp dir
+				break
+			} else if err != nil {
+				return "", fmt.Errorf("failed to create %s dir: %v", dirPath, err)
+			}
+			return dirPath, nil
+		}
+	}
+
+	dirPath, err := os.MkdirTemp("", fmt.Sprintf("govc-dump-%s-", time.Now().Format("20060102")))
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp dir: %v", err)
+	}
+	return dirPath, nil
 }

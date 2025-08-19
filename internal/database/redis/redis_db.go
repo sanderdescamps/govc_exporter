@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"iter"
 	"reflect"
-	"slices"
 	"strings"
 	"time"
 
@@ -254,6 +253,176 @@ func (db *DB) GetVM(ctx context.Context, ref objects.ManagedObjectReference) *ob
 		return nil
 	}
 	return &vm
+}
+
+func (db *DB) GetAllCluster(ctx context.Context) ([]objects.Cluster, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesCluster.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var clusters []objects.Cluster
+	for redisIter.Next(ctx) {
+		var cluster objects.Cluster
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesCluster, redisKey, &cluster)
+		if err != nil {
+			return nil, err
+		}
+		clusters = append(clusters, cluster)
+	}
+	return clusters, nil
+}
+
+func (db *DB) GetAllComputeResource(ctx context.Context) ([]objects.ComputeResource, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesComputeResource.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.ComputeResource
+	for redisIter.Next(ctx) {
+		var obj objects.ComputeResource
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesComputeResource, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+func (db *DB) GetAllDatacenter(ctx context.Context) ([]objects.Datacenter, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesDatacenter.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.Datacenter
+	for redisIter.Next(ctx) {
+		var obj objects.Datacenter
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesDatacenter, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+func (db *DB) GetAllDatastore(ctx context.Context) ([]objects.Datastore, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesDatastore.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.Datastore
+	for redisIter.Next(ctx) {
+		var obj objects.Datastore
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesDatastore, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+func (db *DB) GetAllFolder(ctx context.Context) ([]objects.Folder, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesFolder.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.Folder
+	for redisIter.Next(ctx) {
+		var obj objects.Folder
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesFolder, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+func (db *DB) GetAllHost(ctx context.Context) ([]objects.Host, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesHost.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.Host
+	for redisIter.Next(ctx) {
+		var obj objects.Host
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesHost, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+func (db *DB) GetAllResourcePool(ctx context.Context) ([]objects.ResourcePool, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesResourcePool.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.ResourcePool
+	for redisIter.Next(ctx) {
+		var obj objects.ResourcePool
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesResourcePool, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+func (db *DB) GetAllStoragePod(ctx context.Context) ([]objects.StoragePod, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesStoragePod.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.StoragePod
+	for redisIter.Next(ctx) {
+		var obj objects.StoragePod
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesStoragePod, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+func (db *DB) GetAllTagSets(ctx context.Context) ([]objects.TagSet, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesTagSet.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.TagSet
+	for redisIter.Next(ctx) {
+		var obj objects.TagSet
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesTagSet, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+func (db *DB) GetAllVM(ctx context.Context) ([]objects.VirtualMachine, error) {
+	db.Connect(ctx)
+	match := fmt.Sprintf("%s:*", objects.ManagedObjectTypesVirtualMachine.String())
+	redisIter := db.client.Scan(ctx, 0, match, 0).Iterator()
+	var objs []objects.VirtualMachine
+	for redisIter.Next(ctx) {
+		var obj objects.VirtualMachine
+		redisKey := redisIter.Val()
+		err := db.Get(ctx, objects.ManagedObjectTypesVirtualMachine, redisKey, &obj)
+		if err != nil {
+			return nil, err
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
 }
 
 func (db *DB) GetAllClusterIter(ctx context.Context) iter.Seq[objects.Cluster] {
@@ -550,26 +719,67 @@ func (db *DB) walkParentChain(ctx context.Context, ref objects.ManagedObjectRefe
 }
 
 func (db *DB) JsonDump(ctx context.Context, refType objects.ManagedObjectTypes) ([]byte, error) {
-	if refType == objects.ManagedObjectTypesCluster {
-		return json.MarshalIndent(slices.Collect(db.GetAllClusterIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesComputeResource {
-		return json.MarshalIndent(slices.Collect(db.GetAllComputeResourceIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesDatacenter {
-		return json.MarshalIndent(slices.Collect(db.GetAllDatacenterIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesDatastore {
-		return json.MarshalIndent(slices.Collect(db.GetAllDatastoreIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesFolder {
-		return json.MarshalIndent(slices.Collect(db.GetAllFolderIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesHost {
-		return json.MarshalIndent(slices.Collect(db.GetAllHostIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesStoragePod {
-		return json.MarshalIndent(slices.Collect(db.GetAllStoragePodIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesResourcePool {
-		return json.MarshalIndent(slices.Collect(db.GetAllResourcePoolIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesTagSet {
-		return json.MarshalIndent(slices.Collect(db.GetAllTagSetsIter(ctx)), "", "  ")
-	} else if refType == objects.ManagedObjectTypesVirtualMachine {
-		return json.MarshalIndent(slices.Collect(db.GetAllVMIter(ctx)), "", "  ")
+	switch refType {
+	case objects.ManagedObjectTypesCluster:
+		clusters, err := db.GetAllCluster(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(clusters, "", "  ")
+	case objects.ManagedObjectTypesComputeResource:
+		compResources, err := db.GetAllComputeResource(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(compResources, "", "  ")
+	case objects.ManagedObjectTypesDatacenter:
+		dcs, err := db.GetAllDatacenter(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(dcs, "", "  ")
+	case objects.ManagedObjectTypesDatastore:
+		dss, err := db.GetAllDatastore(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(dss, "", "  ")
+	case objects.ManagedObjectTypesFolder:
+		folders, err := db.GetAllFolder(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(folders, "", "  ")
+	case objects.ManagedObjectTypesHost:
+		hosts, err := db.GetAllHost(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(hosts, "", "  ")
+	case objects.ManagedObjectTypesStoragePod:
+		spods, err := db.GetAllStoragePod(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(spods, "", "  ")
+	case objects.ManagedObjectTypesResourcePool:
+		pools, err := db.GetAllResourcePool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(pools, "", "  ")
+	case objects.ManagedObjectTypesTagSet:
+		tagSets, err := db.GetAllTagSets(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(tagSets, "", "  ")
+	case objects.ManagedObjectTypesVirtualMachine:
+		vms, err := db.GetAllVM(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(vms, "", "  ")
 	}
-	return nil, fmt.Errorf("unsupported object type %s", refType.String())
+	return nil, nil
 }

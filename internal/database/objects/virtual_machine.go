@@ -67,10 +67,10 @@ type VirtualMachine struct {
 }
 
 type VirtualMachineGuestNet struct {
-	Network    string   `json:"network" redis:"network"`
-	MacAddress string   `json:"mac_address" redis:"mac_address"`
-	IpAddress  []string `json:"ip_address" redis:"ip_address"`
-	Connected  bool     `json:"connected" redis:"connected"`
+	// Network    string `json:"network" redis:"network"`
+	MacAddress string `json:"mac_address" redis:"mac_address"`
+	IpAddress  string `json:"ip_address" redis:"ip_address"`
+	Connected  bool   `json:"connected" redis:"connected"`
 }
 
 type VirtualMachineDisk struct {

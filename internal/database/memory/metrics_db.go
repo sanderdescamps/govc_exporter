@@ -3,12 +3,15 @@ package memory_db
 import (
 	"context"
 	"fmt"
+	"iter"
 	"maps"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/database"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
+	"github.com/sanderdescamps/govc_exporter/internal/helper"
 )
 
 type metricIndex struct {
@@ -47,8 +50,14 @@ func (db *MetricsDB) startCleaner(ctx context.Context) {
 			case <-ticker.C:
 				go func() {
 					counts := map[objects.PerfMetricTypes]int{}
-					for index, table := range maps.All(db.tables) {
-						counts[index.pmType] += table.CleanupExpired()
+					indexes := func() []metricIndex {
+						db.lock.Lock()
+						defer db.lock.Unlock()
+						return slices.Collect(maps.Keys(db.tables))
+					}()
+
+					for _, index := range indexes {
+						counts[index.pmType] += db.TableByIndex(index).CleanupExpired()
 					}
 
 					for pmType, count := range counts {
@@ -82,6 +91,16 @@ func (db *MetricsDB) Table(pmType objects.PerfMetricTypes, ref objects.ManagedOb
 	defer db.lock.Unlock()
 
 	index := metricIndex{pmType: pmType, ref: ref}
+	return db.tableByIndex(index)
+}
+func (db *MetricsDB) TableByIndex(index metricIndex) *TimeQueueTable {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	return db.tableByIndex(index)
+}
+
+func (db *MetricsDB) tableByIndex(index metricIndex) *TimeQueueTable {
 	if _, ok := db.tables[index]; !ok {
 		db.tables[index] = NewTimeQueueTable()
 	}
@@ -108,4 +127,29 @@ func (db *MetricsDB) PopAllHostMetrics(ctx context.Context, ref objects.ManagedO
 
 func (db *MetricsDB) PopAllVmMetrics(ctx context.Context, ref objects.ManagedObjectReference) []*objects.Metric {
 	return db.Table(objects.PerfMetricTypesVirtualMachine, ref).PopAll()
+}
+
+func (db *MetricsDB) PopAllHostMetricsIter(ctx context.Context, ref objects.ManagedObjectReference) iter.Seq[objects.Metric] {
+	return db.Table(objects.PerfMetricTypesHost, ref).PopAllIter()
+}
+
+func (db *MetricsDB) PopAllVmMetricsIter(ctx context.Context, ref objects.ManagedObjectReference) iter.Seq[objects.Metric] {
+	return db.Table(objects.PerfMetricTypesVirtualMachine, ref).PopAllIter()
+}
+
+func (db *MetricsDB) JsonDump(ctx context.Context, pmType ...objects.PerfMetricTypes) (map[objects.ManagedObjectReference][]byte, error) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+	result := make(map[objects.ManagedObjectReference][]byte)
+	for index, table := range db.tables {
+		if helper.Contains(pmType, index.pmType) {
+			b, err := table.JsonDump()
+			if err != nil {
+				return nil, err
+			}
+			result[index.ref] = b
+		}
+	}
+
+	return result, nil
 }

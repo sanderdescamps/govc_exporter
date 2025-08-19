@@ -84,8 +84,15 @@ func (c *clusterCollector) Collect(ch chan<- prometheus.Metric) {
 	if !c.scraper.Cluster.Enabled() {
 		return
 	}
-	ctx := context.Background()
-	for cluster := range c.scraper.DB.GetAllClusterIter(ctx) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	clusters, err := c.scraper.DB.GetAllCluster(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get clusters", "err", err)
+	}
+	for _, cluster := range clusters {
 
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, cluster.Self)
@@ -124,5 +131,4 @@ func (c *clusterCollector) Collect(ch chan<- prometheus.Metric) {
 			c.overallStatus, prometheus.GaugeValue, cluster.OverallStatusFloat64(), labelValues...,
 		))
 	}
-
 }

@@ -15,8 +15,9 @@ const (
 
 type datastoreCollector struct {
 	// vcCollector
-	scraper          *scraper.VCenterScraper
-	extraLabels      []string
+	scraper     *scraper.VCenterScraper
+	extraLabels []string
+
 	capacity         *prometheus.Desc
 	freeSpace        *prometheus.Desc
 	accessible       *prometheus.Desc
@@ -87,8 +88,15 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 	if !c.scraper.Datastore.Enabled() {
 		return
 	}
-	ctx := context.Background()
-	for datastore := range c.scraper.DB.GetAllDatastoreIter(ctx) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	datastores, err := c.scraper.DB.GetAllDatastore(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get datastores", "err", err)
+	}
+	for _, datastore := range datastores {
 
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, datastore.Self)

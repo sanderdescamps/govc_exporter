@@ -20,7 +20,6 @@ const VM_PERF_SENSOR_NAME = "VMPerfSensor"
 func DefaultVMPerfMetrics() []string {
 	return []string{
 		"cpu.usagemhz.average",
-		"cpu.usagemhz.average",
 		"cpu.capacity.provisioned.average",
 		"cpu.readiness.average",
 		"cpu.costop.summation",

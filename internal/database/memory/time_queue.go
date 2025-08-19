@@ -1,6 +1,7 @@
 package memory_db
 
 import (
+	"encoding/json"
 	"iter"
 	"sort"
 	"sync"
@@ -67,7 +68,7 @@ func (q *TimeQueueTable) pop() *objects.Metric {
 
 // Empty the queue and return a popper function with all the items
 func (q *TimeQueueTable) popAll() []*objects.Metric {
-	dump := q.queue
+	var dump []*MetricItem = q.queue
 	q.queue = []*MetricItem{}
 
 	result := []*objects.Metric{}
@@ -92,8 +93,8 @@ func (q *TimeQueueTable) PopAll() []*objects.Metric {
 }
 
 func (q *TimeQueueTable) popAllIter() iter.Seq[objects.Metric] {
-	dump := q.queue
-	q.queue = nil
+	var dump []*MetricItem = q.queue
+	q.queue = []*MetricItem{}
 	return func(yield func(objects.Metric) bool) {
 		for _, m := range dump {
 			if m.Metric != nil && !yield(*m.Metric) {
@@ -121,4 +122,11 @@ func (q *TimeQueueTable) CleanupExpired() int {
 	older, younger := q.queue[0:i], q.queue[i:]
 	q.queue = younger
 	return len(older)
+}
+
+func (q *TimeQueueTable) JsonDump() ([]byte, error) {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	return json.MarshalIndent(q.queue, "", "  ")
 }

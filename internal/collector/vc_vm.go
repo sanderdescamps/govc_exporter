@@ -79,7 +79,7 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.Co
 	infoLabels := append(labels, "guest_id", "tools_version")
 	hostLabels := append(labels, "pool", "datacenter", "cluster", "esx")
 	diskLabels := append(labels, "disk_uuid", "thin_provisioned")
-	networkLabels := append(labels, "network", "mac", "ip")
+	networkLabels := append(labels, "mac", "ip")
 
 	return &virtualMachineCollector{
 		scraper:                scraper,
@@ -243,16 +243,21 @@ func (c *virtualMachineCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.networkConnected
 	// Advanced storage metrics
 	ch <- c.diskCapacityBytes
-
 }
 
 func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 	if !c.scraper.VM.Enabled() {
 		return
 	}
-	ctx := context.Background()
-	for vm := range c.scraper.DB.GetAllVMIter(ctx) {
 
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	vms, err := c.scraper.DB.GetAllVM(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get vm's", "err", err)
+	}
+	for _, vm := range vms {
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, vm.Self)
 		for _, tagCat := range c.extraLabels {
@@ -393,12 +398,10 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		// Advanced network metrics
 		if c.advancedNetworkMetrics {
 			for _, net := range vm.GuestNetwork {
-				for _, ip := range net.IpAddress {
-					networkLabelValues := append(labelValues, net.Network, net.MacAddress, ip)
-					ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
-						c.networkConnected, prometheus.GaugeValue, b2f(net.Connected), networkLabelValues...,
-					))
-				}
+				networkLabelValues := append(labelValues, net.MacAddress, net.IpAddress)
+				ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
+					c.networkConnected, prometheus.GaugeValue, b2f(net.Connected), networkLabelValues...,
+				))
 			}
 		}
 

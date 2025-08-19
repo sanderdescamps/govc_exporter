@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
-	"slices"
 	"sync"
 	"time"
 
@@ -264,156 +262,119 @@ func (db *DB) GetVM(ctx context.Context, ref objects.ManagedObjectReference) *ob
 	return &vm
 }
 
-func (db *DB) GetAllClusterIter(ctx context.Context) iter.Seq[objects.Cluster] {
-	clusterIter := db.Table(objects.ManagedObjectTypesCluster).GetAllIter()
-	return func(yield func(objects.Cluster) bool) {
-		for item := range clusterIter {
-			if cluster, ok := item.(objects.Cluster); ok {
-				if !yield(cluster) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllCluster(ctx context.Context) ([]objects.Cluster, error) {
+	var allObjs []objects.Cluster
+	err := db.Table(objects.ManagedObjectTypesCluster).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllComputeResourceIter(ctx context.Context) iter.Seq[objects.ComputeResource] {
-	compResourceIter := db.Table(objects.ManagedObjectTypesComputeResource).GetAllIter()
-	return func(yield func(objects.ComputeResource) bool) {
-		for item := range compResourceIter {
-			if cp, ok := item.(objects.ComputeResource); ok {
-				if !yield(cp) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllComputeResource(ctx context.Context) ([]objects.ComputeResource, error) {
+	var allObjs []objects.ComputeResource
+	err := db.Table(objects.ManagedObjectTypesComputeResource).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllDatacenterIter(ctx context.Context) iter.Seq[objects.Datacenter] {
-	dcIter := db.Table(objects.ManagedObjectTypesDatacenter).GetAllIter()
-	return func(yield func(objects.Datacenter) bool) {
-		for item := range dcIter {
-			if dc, ok := item.(objects.Datacenter); ok {
-				if !yield(dc) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllDatacenter(ctx context.Context) ([]objects.Datacenter, error) {
+	var allObjs []objects.Datacenter
+	err := db.Table(objects.ManagedObjectTypesDatacenter).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllDatastoreIter(ctx context.Context) iter.Seq[objects.Datastore] {
-	datastoreIter := db.Table(objects.ManagedObjectTypesDatastore).GetAllIter()
-	return func(yield func(objects.Datastore) bool) {
-		for item := range datastoreIter {
-			if datastore, ok := item.(objects.Datastore); ok {
-				if !yield(datastore) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllDatastore(ctx context.Context) ([]objects.Datastore, error) {
+	var allObjs []objects.Datastore
+	err := db.Table(objects.ManagedObjectTypesDatastore).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllFolderIter(ctx context.Context) iter.Seq[objects.Folder] {
-	folderIter := db.Table(objects.ManagedObjectTypesFolder).GetAllIter()
-	return func(yield func(objects.Folder) bool) {
-		for item := range folderIter {
-			if folder, ok := item.(objects.Folder); ok {
-				if !yield(folder) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllFolder(ctx context.Context) ([]objects.Folder, error) {
+	var allObjs []objects.Folder
+	err := db.Table(objects.ManagedObjectTypesFolder).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllHostIter(ctx context.Context) iter.Seq[objects.Host] {
-	hostIter := db.Table(objects.ManagedObjectTypesHost).GetAllIter()
-	return func(yield func(objects.Host) bool) {
-		for item := range hostIter {
-			if host, ok := item.(objects.Host); ok {
-				if !yield(host) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllHost(ctx context.Context) ([]objects.Host, error) {
+	var allObjs []objects.Host
+	err := db.Table(objects.ManagedObjectTypesHost).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllStoragePodIter(ctx context.Context) iter.Seq[objects.StoragePod] {
-	spodIter := db.Table(objects.ManagedObjectTypesStoragePod).GetAllIter()
-	return func(yield func(objects.StoragePod) bool) {
-		for item := range spodIter {
-			if spod, ok := item.(objects.StoragePod); ok {
-				if !yield(spod) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllResourcePool(ctx context.Context) ([]objects.ResourcePool, error) {
+	var allObjs []objects.ResourcePool
+	err := db.Table(objects.ManagedObjectTypesResourcePool).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllResourcePoolIter(ctx context.Context) iter.Seq[objects.ResourcePool] {
-	rpoolIter := db.Table(objects.ManagedObjectTypesResourcePool).GetAllIter()
-	return func(yield func(objects.ResourcePool) bool) {
-		for item := range rpoolIter {
-			if rpool, ok := item.(objects.ResourcePool); ok {
-				if !yield(rpool) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllStoragePod(ctx context.Context) ([]objects.StoragePod, error) {
+	var allObjs []objects.StoragePod
+	err := db.Table(objects.ManagedObjectTypesStoragePod).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllTagSetsIter(ctx context.Context) iter.Seq[objects.TagSet] {
-	tagIter := db.Table(objects.ManagedObjectTypesTagSet).GetAllIter()
-	return func(yield func(objects.TagSet) bool) {
-		for item := range tagIter {
-			if tagSet, ok := item.(objects.TagSet); ok {
-				if !yield(tagSet) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllTagSets(ctx context.Context) ([]objects.TagSet, error) {
+	var allObjs []objects.TagSet
+	err := db.Table(objects.ManagedObjectTypesTagSet).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
-func (db *DB) GetAllVMIter(ctx context.Context) iter.Seq[objects.VirtualMachine] {
-	vmIter := db.Table(objects.ManagedObjectTypesVirtualMachine).GetAllIter()
-	return func(yield func(objects.VirtualMachine) bool) {
-		for item := range vmIter {
-			if vm, ok := item.(objects.VirtualMachine); ok {
-				if !yield(vm) {
-					return
-				}
-			}
-		}
+func (db *DB) GetAllVM(ctx context.Context) ([]objects.VirtualMachine, error) {
+	var allObjs []objects.VirtualMachine
+	err := db.Table(objects.ManagedObjectTypesVirtualMachine).GetAll(&allObjs)
+	if err != nil {
+		return nil, err
 	}
+	return allObjs, nil
 }
 
 func (db *DB) GetAllHostRefs(ctx context.Context) []objects.ManagedObjectReference {
+	hosts, _ := db.GetAllHost(ctx)
 	result := []objects.ManagedObjectReference{}
-	for host := range db.GetAllHostIter(ctx) {
+	for _, host := range hosts {
 		result = append(result, host.Self)
 	}
 	return result
 }
 
 func (db *DB) GetAllVMRefs(ctx context.Context) []objects.ManagedObjectReference {
+	vms, _ := db.GetAllVM(ctx)
 	result := []objects.ManagedObjectReference{}
-	for vm := range db.GetAllVMIter(ctx) {
+	for _, vm := range vms {
 		result = append(result, vm.Self)
 	}
 	return result
 }
 
 func (db *DB) GetAllClusterRefs(ctx context.Context) []objects.ManagedObjectReference {
+	clusters, _ := db.GetAllCluster(ctx)
 	result := []objects.ManagedObjectReference{}
-	for vm := range db.GetAllClusterIter(ctx) {
-		result = append(result, vm.Self)
+	for _, cluster := range clusters {
+		result = append(result, cluster.Self)
 	}
 	return result
 }
@@ -437,28 +398,6 @@ func (db *DB) GetTags(ctx context.Context, ref objects.ManagedObjectReference) o
 	}
 	return tag
 }
-
-// func (db *DB) GetCategoryID(catName string) (string, error) {
-// 	var cats []tags.Category
-// 	if err := db.Table("category").FindByProp("Name", catName, &cats); err != nil {
-// 		return "", err
-// 	} else if len(cats) < 1 {
-// 		return "", errors.New("category not found")
-// 	}
-
-// 	return cats[0].ID, nil
-// }
-
-// func (db *DB) GetTagForRef(ref types.ManagedObjectReference, catID string) *tags.Tag {
-// 	path := "tags/" + catID
-
-// 	var tag tags.Tag
-// 	err := db.Table(path).Get(ref.Value, tag)
-// 	if err != nil {
-// 		return nil
-// 	}
-// 	return &tag
-// }
 
 func (db *DB) GetParentChain(ctx context.Context, ref objects.ManagedObjectReference) objects.ParentChain {
 	return db.walkParentChain(ctx, ref, objects.ParentChain{
@@ -554,25 +493,65 @@ func (db *DB) walkParentChain(ctx context.Context, ref objects.ManagedObjectRefe
 
 func (db *DB) JsonDump(ctx context.Context, refType objects.ManagedObjectTypes) ([]byte, error) {
 	if db.HasTable(refType) && refType == objects.ManagedObjectTypesCluster {
-		return json.MarshalIndent(slices.Collect(db.GetAllClusterIter(ctx)), "", "  ")
+		clusters, err := db.GetAllCluster(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(clusters, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesComputeResource {
-		return json.MarshalIndent(slices.Collect(db.GetAllComputeResourceIter(ctx)), "", "  ")
+		compResources, err := db.GetAllComputeResource(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(compResources, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesDatacenter {
-		return json.MarshalIndent(slices.Collect(db.GetAllDatacenterIter(ctx)), "", "  ")
+		dcs, err := db.GetAllDatacenter(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(dcs, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesDatastore {
-		return json.MarshalIndent(slices.Collect(db.GetAllDatastoreIter(ctx)), "", "  ")
+		dss, err := db.GetAllDatastore(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(dss, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesFolder {
-		return json.MarshalIndent(slices.Collect(db.GetAllFolderIter(ctx)), "", "  ")
+		folders, err := db.GetAllFolder(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(folders, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesHost {
-		return json.MarshalIndent(slices.Collect(db.GetAllHostIter(ctx)), "", "  ")
+		hosts, err := db.GetAllHost(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(hosts, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesStoragePod {
-		return json.MarshalIndent(slices.Collect(db.GetAllStoragePodIter(ctx)), "", "  ")
+		spods, err := db.GetAllStoragePod(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(spods, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesResourcePool {
-		return json.MarshalIndent(slices.Collect(db.GetAllResourcePoolIter(ctx)), "", "  ")
+		pools, err := db.GetAllResourcePool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(pools, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesTagSet {
-		return json.MarshalIndent(slices.Collect(db.GetAllTagSetsIter(ctx)), "", "  ")
+		tagSets, err := db.GetAllTagSets(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(tagSets, "", "  ")
 	} else if db.HasTable(refType) && refType == objects.ManagedObjectTypesVirtualMachine {
-		return json.MarshalIndent(slices.Collect(db.GetAllVMIter(ctx)), "", "  ")
+		vms, err := db.GetAllVM(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return json.MarshalIndent(vms, "", "  ")
 	}
-	return nil, fmt.Errorf("unsupported object type %s", refType.String())
+	return nil, nil
 }

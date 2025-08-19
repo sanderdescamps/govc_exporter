@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sanderdescamps/govc_exporter/internal/config"
@@ -15,8 +16,10 @@ const (
 
 type esxCollector struct {
 	// vcCollector
-	enableStorageMetrics           bool
-	extraLabels                    []string
+	enableStorageMetrics bool
+	extraLabels          []string
+	logger               *slog.Logger
+
 	scraper                        *scraper.VCenterScraper
 	powerState                     *prometheus.Desc
 	connectionState                *prometheus.Desc
@@ -191,8 +194,15 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 	if !c.scraper.Host.Enabled() {
 		return
 	}
-	ctx := context.Background()
-	for host := range c.scraper.DB.GetAllHostIter(ctx) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), COLLECT_TIMEOUT)
+	defer cancel()
+
+	hosts, err := c.scraper.DB.GetAllHost(ctx)
+	if err != nil && Logger != nil {
+		Logger.Error("failed to get hosts", "err", err)
+	}
+	for _, host := range hosts {
 		extraLabelValues := []string{}
 		objectTags := c.scraper.DB.GetTags(ctx, host.Self)
 		for _, tagCat := range c.extraLabels {

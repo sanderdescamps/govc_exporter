@@ -11,6 +11,7 @@ import (
 
 	"github.com/prometheus/common/promslog"
 	"github.com/sanderdescamps/govc_exporter/internal/config"
+	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/property"
@@ -78,6 +79,68 @@ func TestVCenterScraper(t *testing.T) {
 	for _, ref := range scraper.DB.GetAllVMRefs(ctx)[:5] {
 		metrics := scraper.MetricsDB.PopAllVmMetrics(ctx, ref)
 		logger.Info("vm metrics", "vm", ref.Value, "count", len(metrics))
+	}
+	logger.Info("test finished")
+}
+
+func TestVCenterScraperDump(t *testing.T) {
+
+	conf := config.DefaultScraperConfig()
+	conf.VCenter = "https://localhost:8989"
+	conf.Username = "testuser"
+	conf.Password = "testpass"
+	conf.Tags.CategoryToCollect = []string{"tenants"}
+	// conf.Backend.Type = "redis"
+
+	err := conf.Validate()
+	if err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
+
+	promlogConfig := &promslog.Config{
+		// Level:
+	}
+	logger := promslog.New(promlogConfig)
+	ctx := context.Background()
+
+	scraper, _ := scraper.NewVCenterScraper(ctx, conf, logger)
+	scraper.Start(ctx, logger)
+
+	scraper.DB.JsonDump(ctx, objects.ManagedObjectTypesTagSet)
+	logger.Info("dump created")
+}
+
+func TestDB_GetAllVMs(t *testing.T) {
+
+	conf := config.DefaultScraperConfig()
+	conf.VCenter = "https://localhost:8989"
+	conf.Username = "testuser"
+	conf.Password = "testpass"
+	conf.Tags.CategoryToCollect = []string{"tenants"}
+	// conf.Backend.Type = "redis"
+
+	err := conf.Validate()
+	if err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
+
+	promlogConfig := &promslog.Config{
+		// Level:
+	}
+	logger := promslog.New(promlogConfig)
+	ctx := context.Background()
+
+	scraper, _ := scraper.NewVCenterScraper(ctx, conf, logger)
+	scraper.Start(ctx, logger)
+
+	if vms, err := scraper.DB.GetAllVM(ctx); err != nil {
+		logger.Error(err.Error())
+	} else if len(vms) < 1 {
+		logger.Warn("No hosts found")
+	} else {
+		for _, vm := range vms {
+			logger.Info(vm.Name)
+		}
 	}
 	logger.Info("test finished")
 }
