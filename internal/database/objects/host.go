@@ -208,7 +208,7 @@ func (p *IscsiPath) StateFloat64() float64 {
 	} else if strings.EqualFold(p.State, "disabled") {
 		return 3.0
 	} else if strings.EqualFold(p.State, "dead") {
-		return 3.0
+		return 4.0
 	}
 	return 0
 }
