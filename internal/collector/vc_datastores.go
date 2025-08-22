@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -37,8 +38,8 @@ func NewDatastoreCollector(scraper *scraper.VCenterScraper, cConf config.Collect
 		labels = append(labels, extraLabels...)
 	}
 
-	hostLables := append(labels, "esx", "esx_id")
-	vmfsLabels := append(labels, "uuid", "naa", "ssd", "local")
+	hostLables := append(slices.Clone(labels), "esx", "esx_id")
+	vmfsLabels := append(slices.Clone(labels), "uuid", "naa", "ssd", "local")
 	return &datastoreCollector{
 		scraper:     scraper,
 		extraLabels: extraLabels,

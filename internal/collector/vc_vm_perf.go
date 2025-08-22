@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -24,7 +25,7 @@ func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf config.CollectorC
 		labels = append(labels, extraLabels...)
 	}
 
-	perfLabels := append(labels, "kind", "instance", "unit")
+	perfLabels := append(slices.Clone(labels), "kind", "instance", "unit")
 
 	return &VMPerfCollector{
 		scraper:     scraper,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sanderdescamps/govc_exporter/internal/config"
@@ -60,16 +61,16 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConf
 		labels = append(labels, extraLabels...)
 	}
 
-	infoLabels := append(labels, "os_version", "vendor", "model", "asset_tag", "service_tag", "bios_version")
-	sysNumLabels := append(labels, "sensor_id", "sensor_name", "sensor_type", "sensor_unit")
-	sysStatusLabels := append(labels, "sensor_type", "sensor_name")
-	genericHBALabels := append(labels, "adapter_name", "driver", "model")
-	iscsiHBALabels := append(labels, "adapter_name", "iqn", "driver", "model")
-	iscsiHbaSendTargetLabels := append(labels, "adapter_name", "src_name", "driver", "model", "target_address")
-	iscsiHbaStaticTargetLabels := append(labels, "adapter_name", "src_name", "driver", "model", "target_address", "target_name", "discovery_method")
-	multipathStatusLabels := append(labels, "adapter_name", "target_address", "target_name", "disk_name", "datastore")
-	multipathCountLabels := append(labels, "adapter_name", "target_name", "disk_name", "datastore")
-	vmfsLabels := append(labels, "vendor", "model", "disk_name", "datastore")
+	infoLabels := append(slices.Clone(labels), "os_version", "vendor", "model", "asset_tag", "service_tag", "bios_version")
+	sysNumLabels := append(slices.Clone(labels), "sensor_id", "sensor_name", "sensor_type", "sensor_unit")
+	sysStatusLabels := append(slices.Clone(labels), "sensor_type", "sensor_name")
+	genericHBALabels := append(slices.Clone(labels), "adapter_name", "driver", "model")
+	iscsiHBALabels := append(slices.Clone(labels), "adapter_name", "iqn", "driver", "model")
+	iscsiHbaSendTargetLabels := append(slices.Clone(labels), "adapter_name", "src_name", "driver", "model", "target_address")
+	iscsiHbaStaticTargetLabels := append(slices.Clone(labels), "adapter_name", "src_name", "driver", "model", "target_address", "target_name", "discovery_method")
+	multipathStatusLabels := append(slices.Clone(labels), "adapter_name", "target_address", "target_name", "disk_name", "datastore")
+	multipathCountLabels := append(slices.Clone(labels), "adapter_name", "target_name", "disk_name", "datastore")
+	vmfsLabels := append(slices.Clone(labels), "vendor", "model", "disk_name", "datastore")
 
 	return &esxCollector{
 		scraper:              scraper,

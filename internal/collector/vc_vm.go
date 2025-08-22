@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -76,10 +77,10 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.Co
 	if cConf.UseIsecSpecifics {
 		labels = append(labels, "crit", "responsable", "service")
 	}
-	infoLabels := append(labels, "guest_id", "tools_version")
-	hostLabels := append(labels, "pool", "datacenter", "cluster", "esx")
-	diskLabels := append(labels, "disk_uuid", "thin_provisioned")
-	networkLabels := append(labels, "mac", "ip")
+	infoLabels := append(slices.Clone(labels), "guest_id", "tools_version")
+	hostLabels := append(slices.Clone(labels), "pool", "datacenter", "cluster", "esx")
+	diskLabels := append(slices.Clone(labels), "disk_uuid", "thin_provisioned")
+	networkLabels := append(slices.Clone(labels), "mac", "ip")
 
 	return &virtualMachineCollector{
 		scraper:                scraper,

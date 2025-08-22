@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"slices"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sanderdescamps/govc_exporter/internal/config"
@@ -23,7 +24,7 @@ func NewEsxPerfCollector(scraper *scraper.VCenterScraper, cConf config.Collector
 		labels = append(labels, extraLabels...)
 	}
 
-	perfLabels := append(labels, "kind", "instance", "unit")
+	perfLabels := append(slices.Clone(labels), "kind", "instance", "unit")
 
 	return &esxPerfCollector{
 		scraper:     scraper,
