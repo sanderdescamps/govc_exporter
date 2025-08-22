@@ -141,6 +141,7 @@ func (s *HostSensor) queryHostsForCluster(ctx context.Context, scraper *VCenterS
 			"config.fileSystemVolume",
 			// "network",
 			"hardware",
+			"vm",
 		},
 		&entities,
 	)
