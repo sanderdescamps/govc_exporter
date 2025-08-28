@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/config"
-	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
 	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
@@ -18,19 +17,14 @@ import (
 const HOST_PERF_SENSOR_NAME = "HostPerfSensor"
 
 func DefaultHostPerfMetrics() []string {
-	return []string{"cpu.usagemhz.average",
+	return []string{
+		"cpu.usagemhz.average",
 		"cpu.demand.average",
+		"cpu.usage.average",
 		"cpu.latency.average",
-		"cpu.entitlement.latest",
-		"cpu.ready.summation",
-		"cpu.readiness.average",
-		"cpu.costop.summation",
-		"cpu.maxlimited.summation",
-		"mem.entitlement.average",
 		"mem.active.average",
 		"mem.shared.average",
 		"mem.vmmemctl.average",
-		"mem.swapped.average",
 		"mem.consumed.average",
 		"net.bytesRx.average",
 		"net.bytesTx.average",
@@ -40,6 +34,8 @@ func DefaultHostPerfMetrics() []string {
 		"net.droppedTx.summation",
 		"datastore.read.average",
 		"datastore.write.average",
+		"storageAdapter.read.average",
+		"storageAdapter.write.average",
 		// "datastore.numberReadAveraged.average",
 		// "datastore.numberWriteAveraged.average",
 		// "datastore.totalReadLatency.average",
