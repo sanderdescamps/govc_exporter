@@ -44,6 +44,16 @@ func Contains[T comparable](elems []T, v T) bool {
 	return false
 }
 
+func Remove[T comparable](l []T, item T) []T {
+	c := slices.Clone(l)
+	for i, other := range c {
+		if other == item {
+			return append(c[:i], c[i+1:]...)
+		}
+	}
+	return l
+}
+
 // Subtract returns the elements in a that are not in b
 // It is not commutative, i.e. Subtract(a, b) != Subtract(b, a)
 func Subtract[T comparable](a []T, b []T) []T {

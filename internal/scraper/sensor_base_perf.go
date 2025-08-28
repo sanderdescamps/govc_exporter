@@ -3,11 +3,15 @@ package scraper
 import (
 	"context"
 	"fmt"
+	"iter"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/config"
 	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
+	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
 	"github.com/vmware/govmomi/performance"
 	"github.com/vmware/govmomi/vim25/types"
@@ -123,13 +127,11 @@ func EntityMetricToMetric(entiry performance.EntityMetric) []objects.Metric {
 				},
 			)
 		}
-
 	}
 	return result
 }
 
 // BasePerfSensor
-
 type BasePerfSensor struct {
 	// perfMetrics   map[types.ManagedObjectReference]*MetricQueue
 	// scraper       *VCenterScraper
@@ -152,7 +154,7 @@ func NewBasePerfSensor(config config.PerfSensorConfig, metrics []string, mc *sen
 	}
 }
 
-func (s *BasePerfSensor) QueryEntiryMetrics(ctx context.Context, scraper *VCenterScraper, refs []types.ManagedObjectReference) ([]performance.EntityMetric, error) {
+func (s *BasePerfSensor) QueryVMwareEntiryMetrics(ctx context.Context, scraper *VCenterScraper, refs []types.ManagedObjectReference) ([]performance.EntityMetric, error) {
 	if ok := s.sensorLock.TryLock(); !ok {
 		return nil, fmt.Errorf("Sensor already running")
 	}
@@ -201,4 +203,164 @@ func (s *BasePerfSensor) QueryEntiryMetrics(ctx context.Context, scraper *VCente
 	s.lastQueryTime = windowEnd
 
 	return metricSeries, nil
+}
+
+func (s *BasePerfSensor) ToFilteredMetrics(entityMetrics []performance.EntityMetric, filterConf []config.PerfFilter) (ret map[objects.ManagedObjectReference][]objects.Metric) {
+	filter := PerfMetricFilterFromConf(filterConf)
+	ret = make(map[objects.ManagedObjectReference][]objects.Metric)
+	for _, metricSerie := range entityMetrics {
+		entityRef := objects.NewManagedObjectReferenceFromVMwareRef(metricSerie.Entity)
+		metrics := EntityMetricToMetric(metricSerie)
+		metrics = filter(metrics)
+		ret[entityRef] = append(ret[entityRef], metrics...)
+	}
+	return
+}
+
+func (s *BasePerfSensor) ToFilteredMetricsIter(entityMetrics []performance.EntityMetric, filterConf []config.PerfFilter) iter.Seq2[objects.ManagedObjectReference, []objects.Metric] {
+	filter := PerfMetricFilterFromConf(filterConf)
+	return func(yield func(objects.ManagedObjectReference, []objects.Metric) bool) {
+		for _, metricSerie := range entityMetrics {
+			entityRef := objects.NewManagedObjectReferenceFromVMwareRef(metricSerie.Entity)
+			metrics := EntityMetricToMetric(metricSerie)
+			metrics = filter(metrics)
+			if !yield(entityRef, metrics) {
+				return
+			}
+		}
+	}
+}
+
+func PerfMetricFilterFromConf(filterConf []config.PerfFilter) func(m []objects.Metric) []objects.Metric {
+	filters := []func(m []objects.Metric) []objects.Metric{}
+	for _, fConf := range filterConf {
+		switch fConf.Action {
+		case config.PerfFilterActionDrop:
+			filters = append(filters, PerfMetricDropFilter(fConf.MatchName, fConf.MatchInstance))
+		case config.PerfFilterActionSum:
+			filters = append(filters, PerfMetricSumFilter(fConf.MatchName, fConf.MatchInstance, fConf.NewName))
+		case config.PerfFilterActionSpit:
+			filters = append(filters, PerfMetricSplitToMultiInstanceFilter(fConf.MatchName, fConf.MatchInstance, strings.Split(fConf.NewName, ",")))
+		case config.PerfFilterActionRename:
+			filters = append(filters, PerfMetricRenameFilter(fConf.MatchName, fConf.MatchInstance, fConf.NewName))
+		case config.PerfFilterActionInstanceRename:
+			filters = append(filters, PerfMetricInstanceRenameFilter(fConf.MatchName, fConf.MatchInstance, fConf.NewName))
+		}
+	}
+
+	return func(m []objects.Metric) []objects.Metric {
+		result := m
+		for _, f := range filters {
+			result = f(result)
+		}
+		return result
+	}
+}
+
+// It duplicates metrics with diffrent instance names. Filter only intended for testing
+func PerfMetricSplitToMultiInstanceFilter(matchName regexp.Regexp, matchInstance regexp.Regexp, instances []string) func([]objects.Metric) []objects.Metric {
+	return func(metrics []objects.Metric) (ret []objects.Metric) {
+		for _, metric := range metrics {
+			if matchName.MatchString(metric.Name) && matchInstance.MatchString(metric.Instance) {
+				for _, i := range instances {
+					ret = append(ret, objects.Metric{
+						Ref:       metric.Ref,
+						Name:      metric.Name,
+						Unit:      metric.Unit,
+						Instance:  i,
+						Value:     metric.Value,
+						Timestamp: metric.Timestamp,
+					})
+				}
+			} else {
+				ret = append(ret, metric)
+			}
+		}
+		return
+	}
+}
+
+// Filter only intended for testing
+func PerfMetricRenameFilter(matchName regexp.Regexp, matchInstance regexp.Regexp, new_name string) func([]objects.Metric) []objects.Metric {
+	return func(metrics []objects.Metric) (ret []objects.Metric) {
+		for _, metric := range metrics {
+			if matchName.MatchString(metric.Name) && matchInstance.MatchString(metric.Instance) {
+				metric.Name = new_name
+			}
+			ret = append(ret, metric)
+		}
+		return
+	}
+}
+
+// Filter only intended for testing
+func PerfMetricInstanceRenameFilter(matchName regexp.Regexp, matchInstance regexp.Regexp, new_name string) func([]objects.Metric) []objects.Metric {
+	return func(metrics []objects.Metric) (ret []objects.Metric) {
+		for _, metric := range metrics {
+			if matchName.MatchString(metric.Name) && matchInstance.MatchString(metric.Instance) {
+				metric.Instance = new_name
+			}
+			ret = append(ret, metric)
+		}
+		return
+	}
+}
+
+func PerfMetricDropFilter(matchName regexp.Regexp, matchInstance regexp.Regexp) func([]objects.Metric) []objects.Metric {
+	return func(metrics []objects.Metric) (ret []objects.Metric) {
+		for _, metric := range metrics {
+			if !matchName.MatchString(metric.Name) || !matchInstance.MatchString(metric.Instance) {
+				ret = append(ret, metric)
+			}
+		}
+		return
+	}
+}
+
+func PerfMetricSumFilter(matchName regexp.Regexp, matchInstance regexp.Regexp, newName string) func([]objects.Metric) []objects.Metric {
+	newName = strings.TrimSuffix(newName, ".sum")
+
+	return func(metrics []objects.Metric) (ret []objects.Metric) {
+		sumMap := make(map[time.Time]*objects.Metric)
+		for _, metric := range metrics {
+			if matchName.MatchString(metric.Name) && matchInstance.MatchString(metric.Instance) {
+				if sumMetric, ok := sumMap[metric.Timestamp]; !ok {
+					sumMap[metric.Timestamp] = &objects.Metric{
+						Name:      metric.Name,
+						Ref:       metric.Ref,
+						Unit:      metric.Unit,
+						Timestamp: metric.Timestamp,
+						Value:     metric.Value,
+						Instance:  metric.Instance,
+					}
+				} else if sumMetric.Ref != metric.Ref {
+					panic("all metrics must be from the same reference")
+				} else if sumMetric.Unit == metric.Unit {
+					sumMap[metric.Timestamp].Value += metric.Value
+					if sumMetric.Instance != metric.Instance {
+						sumMetric.Instance = ""
+					}
+					if sumMetric.Name != metric.Name {
+						if newName != "" {
+							sumMetric.Name = newName
+						} else if strings.HasPrefix(sumMetric.Name, "summation.metric.") {
+							// keep sumMetric.Name
+						} else if commonPrefix := helper.CommonPrefix(sumMetric.Name, metric.Name); commonPrefix != "" {
+							sumMetric.Name = commonPrefix
+						} else {
+							sumMetric.Name = fmt.Sprintf("summation.metric.%s", helper.HashStrings(matchName.String(), matchInstance.String()))
+						}
+					}
+				}
+			} else {
+				ret = append(ret, metric)
+			}
+		}
+
+		for _, metric := range sumMap {
+			metric.Name = metric.Name + ".sum"
+			ret = append(ret, *metric)
+		}
+		return
+	}
 }

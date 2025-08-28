@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/vmware/govmomi/vim25/soap"
 )
 
@@ -54,6 +56,118 @@ type PerfSensorConfig struct {
 	SampleInterval  time.Duration
 	DefaultMetrics  bool
 	ExtraMetrics    []string
+	Filters         []string
+}
+
+type PerfFilter struct {
+	MatchName     regexp.Regexp
+	MatchInstance regexp.Regexp
+	Action        PerfFilterAction
+	NewName       string
+}
+
+type PerfFilterAction string
+
+const (
+	PerfFilterActionDrop           = PerfFilterAction("drop")
+	PerfFilterActionSum            = PerfFilterAction("sum")
+	PerfFilterActionSpit           = PerfFilterAction("split") //Special mode that generates exrta mertics for testing
+	PerfFilterActionRename         = PerfFilterAction("rename")
+	PerfFilterActionInstanceRename = PerfFilterAction("instance-rename")
+)
+
+func (c PerfSensorConfig) ParseFilters() ([]PerfFilter, error) {
+	filterStrings := c.Filters
+	if helper.Contains(filterStrings, "vcsim-fix") {
+		filterStrings = helper.Remove(filterStrings, "vcsim-fix")
+		filterStrings = slices.Concat([]string{
+			"*;\\*;instance-rename;",
+			"cpu\\.usagemhz\\.average;;split;0,1,2,3,",
+			"net\\.bytes(Rx|Tx)\\.average;;split;vmnic0,vmnic1,vmnic2,vmnic3,",
+			"net\\.(errors|dropped)(Rx|Tx)\\.summation;;split;vmnic0,vmnic1,vmnic2,vmnic3,",
+		}, filterStrings)
+	}
+
+	pFilters := []PerfFilter{}
+	for _, f := range filterStrings {
+		var pFilter PerfFilter
+
+		s := strings.Split(f, ";")
+		if l := len(s); l < 1 {
+			return nil, fmt.Errorf("invalid filter string")
+		}
+
+		if len(s) >= 1 {
+			switch pattern := s[0]; pattern {
+			case "*":
+				pFilter.MatchName = *regexp.MustCompile(".*")
+			case "":
+				pFilter.MatchName = *regexp.MustCompile("^$")
+			default:
+				m, err := regexp.Compile(pattern)
+				if err != nil {
+					return nil, fmt.Errorf("invalid filter string")
+				}
+				pFilter.MatchName = *m
+			}
+		}
+
+		if len(s) >= 2 {
+			switch pattern := s[1]; pattern {
+			case "*":
+				pFilter.MatchInstance = *regexp.MustCompile(".*")
+			case "":
+				pFilter.MatchInstance = *regexp.MustCompile("^$")
+			default:
+				m, err := regexp.Compile(pattern)
+				if err != nil {
+					return nil, fmt.Errorf("invalid filter string")
+				}
+				pFilter.MatchInstance = *m
+			}
+		} else {
+			pFilter.MatchInstance = *regexp.MustCompile(".*")
+		}
+
+		if len(s) >= 3 {
+			switch action := strings.ToLower(s[2]); action {
+			case "sum", "add":
+				pFilter.Action = PerfFilterActionSum
+			case "drop":
+				pFilter.Action = PerfFilterActionDrop
+			case "split":
+				pFilter.Action = PerfFilterActionSpit
+			case "rename":
+				pFilter.Action = PerfFilterActionRename
+			case "instance-rename":
+				pFilter.Action = PerfFilterActionInstanceRename
+			default:
+				return nil, fmt.Errorf("invalid filter string")
+			}
+		} else {
+			pFilter.Action = PerfFilterActionDrop
+		}
+
+		if len(s) >= 4 {
+			pFilter.NewName = s[3]
+		}
+
+		pFilters = append(pFilters, pFilter)
+	}
+	return pFilters, nil
+}
+
+func (c PerfSensorConfig) MustParseFilters() []PerfFilter {
+	filters, err := c.ParseFilters()
+	if err != nil {
+		panic(err)
+	}
+	return filters
+}
+
+func (c *PerfSensorConfig) Validate() error {
+	_, err := c.ParseFilters()
+	return err
 }
 
 type BackendConfig struct {
@@ -207,6 +321,14 @@ when it queries the vm's`)
 	}
 	if c.VirtualMachine.MaxAge.Seconds()+5 <= c.VirtualMachine.RefreshInterval.Seconds() {
 		return fmt.Errorf("VirtualMachineMaxAge must be more than 5sec bigger than VirtualMachineRefreshInterval")
+	}
+
+	if err := c.HostPerf.Validate(); err != nil {
+		return fmt.Errorf("invalid hostperf config: %v", err)
+	}
+
+	if err := c.VirtualMachinePerf.Validate(); err != nil {
+		return fmt.Errorf("invalid vmperf config: %v", err)
 	}
 	return nil
 }

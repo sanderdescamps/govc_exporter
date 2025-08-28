@@ -87,18 +87,18 @@ func (s *VMPerfSensor) refresh(ctx context.Context, scraper *VCenterScraper) err
 		vmRefs = append(vmRefs, ref.ToVMwareRef())
 	}
 
-	metricSeries, err := s.BasePerfSensor.QueryEntiryMetrics(ctx, scraper, vmRefs)
+	metricSeries, err := s.BasePerfSensor.QueryVMwareEntiryMetrics(ctx, scraper, vmRefs)
 	if err != nil {
 		return err
 	}
-	for _, metricSerie := range metricSeries {
-		entityRef := objects.NewManagedObjectReferenceFromVMwareRef(metricSerie.Entity)
-		metrics := EntityMetricToMetric(metricSerie)
-		err := scraper.MetricsDB.AddVmMetrics(ctx, entityRef, s.config.MaxAge, metrics...)
+
+	for ref, metrics := range s.BasePerfSensor.ToFilteredMetricsIter(metricSeries, s.config.MustParseFilters()) {
+		err := scraper.MetricsDB.AddVmMetrics(ctx, ref, s.config.MaxAge, metrics...)
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 

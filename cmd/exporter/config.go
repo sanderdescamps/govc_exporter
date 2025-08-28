@@ -88,6 +88,7 @@ func LoadConfig() config.Config {
 	a.Flag("scraper.host.perf.sample_interval", "time between metrics").Default("20s").DurationVar(&cfg.ScraperConfig.HostPerf.SampleInterval)
 	a.Flag("scraper.host.perf.default_metrics", "Collect default host perf metrics").Default("True").BoolVar(&cfg.ScraperConfig.HostPerf.DefaultMetrics)
 	a.Flag("scraper.host.perf.extra_metric", "Collect additional host perf metrics").StringsVar(&cfg.ScraperConfig.HostPerf.ExtraMetrics)
+	a.Flag("scraper.host.perf.filter", "Filters to modify/cleanup perf metrics and reduce the amount of metrics exported.").StringsVar(&cfg.ScraperConfig.HostPerf.Filters)
 
 	//scraper.repool
 	a.Flag("scraper.repool", "Enable resource pool sensor").Default("True").BoolVar(&cfg.ScraperConfig.ResourcePool.Enabled)
@@ -122,6 +123,7 @@ func LoadConfig() config.Config {
 	a.Flag("scraper.vm.perf.sample_interval", "time between metrics").Default("20s").DurationVar(&cfg.ScraperConfig.VirtualMachinePerf.SampleInterval)
 	a.Flag("scraper.vm.perf.default_metrics", "Collect default vm perf metrics").Default("True").BoolVar(&cfg.ScraperConfig.VirtualMachinePerf.DefaultMetrics)
 	a.Flag("scraper.vm.perf.extra_metric", "Collect additional vm perf metrics").StringsVar(&cfg.ScraperConfig.VirtualMachinePerf.ExtraMetrics)
+	a.Flag("scraper.vm.perf.filter", "Filters to modify/cleanup perf metrics and reduce the amount of metrics exported.").StringsVar(&cfg.ScraperConfig.VirtualMachinePerf.Filters)
 
 	// DB Backend
 	a.Flag("scraper.backend.type", "type of backend").Default("memory").EnumVar(&cfg.ScraperConfig.Backend.Type, "memory", "redis")
