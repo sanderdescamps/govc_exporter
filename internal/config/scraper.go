@@ -82,7 +82,7 @@ func (c PerfSensorConfig) ParseFilters() ([]PerfFilter, error) {
 		filterStrings = helper.Remove(filterStrings, "vcsim-fix")
 		filterStrings = slices.Concat([]string{
 			"*;\\*;instance-rename;",
-			"cpu\\.usagemhz\\.average;;split;0,1,2,3,",
+			"cpu\\.usage\\.average;;split;0,1,2,3,",
 			"net\\.bytes(Rx|Tx)\\.average;;split;vmnic0,vmnic1,vmnic2,vmnic3,",
 			"net\\.(errors|dropped)(Rx|Tx)\\.summation;;split;vmnic0,vmnic1,vmnic2,vmnic3,",
 		}, filterStrings)
