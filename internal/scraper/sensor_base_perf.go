@@ -257,7 +257,8 @@ func PerfMetricFilterFromConf(filterConf []config.PerfFilter) func(m []objects.M
 	}
 }
 
-// It duplicates metrics with diffrent instance names. Filter only intended for testing
+// Filter only intended for testing
+// Duplicates metrics with diffrent instance names.
 func PerfMetricSplitToMultiInstanceFilter(matchName regexp.Regexp, matchInstance regexp.Regexp, instances []string) func([]objects.Metric) []objects.Metric {
 	return func(metrics []objects.Metric) (ret []objects.Metric) {
 		for _, metric := range metrics {

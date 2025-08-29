@@ -11,6 +11,7 @@ _test
 /vendor
 /external
 /tests/gi-vcenter-data
+/cmd/perf-metric-tester/
 /dumps
 gi-*
 
