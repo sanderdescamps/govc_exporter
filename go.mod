@@ -7,7 +7,7 @@ require (
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/common v0.65.0
 	github.com/prometheus/procfs v0.17.0 // indirect
-	github.com/vmware/govmomi v0.51.0
+	github.com/vmware/govmomi v0.52.0
 	golang.org/x/sys v0.35.0 // indirect
 )
 
@@ -28,5 +28,5 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/redis/go-redis/v9 v9.12.1
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
-	google.golang.org/protobuf v1.36.7 // indirect
+	google.golang.org/protobuf v1.36.8 // indirect
 )
