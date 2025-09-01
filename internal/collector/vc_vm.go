@@ -68,7 +68,7 @@ type virtualMachineCollector struct {
 }
 
 func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *virtualMachineCollector {
-	labels := []string{"uuid", "name", "template", "vm_id"}
+	labels := []string{"uuid", "name", "template", "vm_id", "pool"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {
 		labels = append(labels, extraLabels...)
@@ -78,7 +78,7 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.Co
 		labels = append(labels, "crit", "responsable", "service")
 	}
 	infoLabels := append(slices.Clone(labels), "guest_id", "tools_version")
-	hostLabels := append(slices.Clone(labels), "pool", "datacenter", "cluster", "esx")
+	hostLabels := append(slices.Clone(labels), "datacenter", "cluster", "esx")
 	diskLabels := append(slices.Clone(labels), "disk_uuid", "thin_provisioned")
 	networkLabels := append(slices.Clone(labels), "mac", "ip")
 
@@ -265,20 +265,20 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
 
-		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.Value}
-		labelValues = append(labelValues, extraLabelValues...)
+		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.Value, vm.ResourcePool}
+		labelValues = append(slices.Clone(labelValues), extraLabelValues...)
 
 		if c.useIsecSpecifics && vm.IsecAnnotation != nil {
 			annotation := vm.IsecAnnotation
 			labelValues = append(
-				labelValues,
+				slices.Clone(labelValues),
 				annotation.Criticality,
 				annotation.Responsable,
 				annotation.Service,
 			)
 		}
 
-		hostLabelValues := append(labelValues, vm.ResourcePool, vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host)
+		hostLabelValues := append(slices.Clone(labelValues), vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host)
 
 		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 			c.numCPU, prometheus.GaugeValue, vm.NumCPU, labelValues...,
