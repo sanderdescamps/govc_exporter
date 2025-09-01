@@ -51,6 +51,8 @@ func NewManagedObjectReferenceFromVMwareRef(moRef types.ManagedObjectReference) 
 		return NewManagedObjectReference(ManagedObjectTypesHost, moRef.Value)
 	case string(types.ManagedObjectTypesResourcePool):
 		return NewManagedObjectReference(ManagedObjectTypesResourcePool, moRef.Value)
+	case string(types.ManagedObjectTypesVirtualApp):
+		return NewManagedObjectReference(ManagedObjectTypesVirtualApp, moRef.Value)
 	case string(types.ManagedObjectTypesStoragePod):
 		return NewManagedObjectReference(ManagedObjectTypesStoragePod, moRef.Value)
 	case string(types.ManagedObjectTypesVirtualMachine):
@@ -83,6 +85,8 @@ func (r *ManagedObjectReference) ToVMwareRef() types.ManagedObjectReference {
 		t = string(types.ManagedObjectTypesHostSystem)
 	case ManagedObjectTypesResourcePool:
 		t = string(types.ManagedObjectTypesResourcePool)
+	case ManagedObjectTypesVirtualApp:
+		t = string(types.ManagedObjectTypesVirtualApp)
 	case ManagedObjectTypesStoragePod:
 		t = string(types.ManagedObjectTypesStoragePod)
 	case ManagedObjectTypesVirtualMachine:

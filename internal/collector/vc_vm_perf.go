@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -24,7 +25,7 @@ func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf config.CollectorC
 		labels = append(labels, extraLabels...)
 	}
 
-	perfLabels := append(labels, "kind", "instance", "unit")
+	perfLabels := append(slices.Clone(labels), "kind", "instance", "unit")
 
 	return &VMPerfCollector{
 		scraper:     scraper,
@@ -63,7 +64,7 @@ func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 		labelValues = append(labelValues, extraLabelValues...)
 
 		for metric := range c.scraper.MetricsDB.PopAllVmMetricsIter(ctx, vm.Self) {
-			perfMetricLabelValues := append(labelValues, metric.Name, metric.Instance, metric.Unit)
+			perfMetricLabelValues := append(slices.Clone(labelValues), metric.Name, metric.Instance, metric.Unit)
 			ch <- prometheus.NewMetricWithTimestamp(metric.Timestamp, prometheus.MustNewConstMetric(
 				c.perfMetric, prometheus.GaugeValue, metric.Value, perfMetricLabelValues...,
 			))

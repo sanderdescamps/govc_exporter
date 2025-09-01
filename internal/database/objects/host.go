@@ -6,14 +6,12 @@ import (
 )
 
 type Host struct {
-	Timestamp     time.Time               `json:"timestamp" redis:"timestamp"`
-	Self          ManagedObjectReference  `json:"self" redis:"self"`
-	Parent        *ManagedObjectReference `json:"parent" redis:"parent"`
-	Name          string                  `json:"name" redis:"name"`
-	GuestHostname string                  `json:"guest_hostname" redis:"guest_hostname"`
-	Cluster       string                  `json:"cluster" redis:"cluster"`
-	Datacenter    string                  `json:"datacenter" redis:"datacenter"`
-	Pool          string                  `json:"pool" redis:"pool"`
+	Timestamp  time.Time               `json:"timestamp" redis:"timestamp"`
+	Self       ManagedObjectReference  `json:"self" redis:"self"`
+	Parent     *ManagedObjectReference `json:"parent" redis:"parent"`
+	Name       string                  `json:"name" redis:"name"`
+	Cluster    string                  `json:"cluster" redis:"cluster"`
+	Datacenter string                  `json:"datacenter" redis:"datacenter"`
 
 	OSVersion   string `json:"os_version" redis:"os_version"`
 	AssetTag    string `json:"asset_tag" redis:"asset_tag"`
@@ -34,18 +32,16 @@ type Host struct {
 	AvailMemBytes              float64                   `json:"avail_mem_bytes" redis:"avail_mem_bytes"`
 	UsedMemBytes               float64                   `json:"used_mem_bytes" redis:"used_mem_bytes"`
 	OverallStatus              string                    `json:"overall_status" redis:"overall_status"`
-	Info                       float64                   `json:"info" redis:"info"`
 	SystemHealthNumericSensors []HostNumericSensorHealth `json:"system_health_numeric_sensor" redis:"system_health_numeric_sensor"`
 	HardwareStatus             []HardwareStatus          `json:"hardware_status" redis:"hardware_status"`
 
-	GenericHBA []HostBusAdapter      `json:"generic_hba" redis:"generic_hba"`
-	IscsiHBA   []IscsiHostBusAdapter `json:"iscsi_hba" redis:"iscsi_hba"`
+	Volumes           []Volume            `json:"volume" redis:"volume"`
+	Luns              []SCSILun           `json:"luns" redis:"luns"`
+	HBA               []HostBusAdapter    `json:"hba" redis:"hba"`
+	MultipathPathInfo []MultipathPathInfo `json:"multipath_path_info" redis:"multipath_path_info"`
 
-	SCSILuns            []ScsiLun   `json:"scsi_lun" redis:"scsi_lun"`
-	IscsiMultiPathPaths []IscsiPath `json:"iscsi_multi_path_paths" redis:"iscsi_multi_path_paths"`
-
-	SCSILunMounted    float64 `json:"scsi_lun_mounted" redis:"scsi_lun_mounted"`
-	SCSILunAccessible float64 `json:"scsi_lun_accessible" redis:"scsi_lun_accessible"`
+	// SCSILunMounted    float64 `json:"scsi_lun_mounted" redis:"scsi_lun_mounted"`
+	// SCSILunAccessible float64 `json:"scsi_lun_accessible" redis:"scsi_lun_accessible"`
 
 	NumberOfVMs        float64 `json:"number_of_vms" redis:"number_of_vms"`
 	NumberOfDatastores float64 `json:"number_of_datastores" redis:"number_of_datastores"`
@@ -78,7 +74,7 @@ func (h *Host) PowerStateFloat64() float64 {
 	return 0
 }
 
-// Return PowerState as float64
+// Return ConnectionState as float64
 //
 //	0 => Unknown
 //	1 => Connected
@@ -95,35 +91,84 @@ func (h *Host) ConnectionStateFloat64() float64 {
 	return 0
 }
 
-type HostBusAdapter struct {
-	Name     string `json:"name" redis:"name"`
-	Driver   string `json:"driver" redis:"driver"`
-	Model    string `json:"model" redis:"model"`
-	State    string `json:"state" redis:"state"`
-	Protocol string `json:"protocol" redis:"protocol"`
+///////////////////
+// SENSOR HEALTH
+///////////////////
+
+type HostNumericSensorHealth struct {
+	Name  string  `json:"name" redis:"name"`
+	Type  string  `json:"type" redis:"type"`
+	ID    string  `json:"id" redis:"id"`
+	Unit  string  `json:"unit" redis:"unit"`
+	Value float64 `json:"value" redis:"value"`
+	State string  `json:"state" redis:"state"`
+}
+
+type HardwareStatus struct {
+	Name    string `json:"name" redis:"name"`
+	Type    string `json:"type" redis:"type"`
+	Status  string `json:"status" redis:"status"`
+	Summary string `json:"summary" redis:"summary"`
 }
 
 // Return numeric sensor health state as a float64 number.
-// 0=> Unknown
-// 1=> Unbound
-// 2=> Offline
-// 3=> Online
-func (hba HostBusAdapter) StatusFloat64() float64 {
-	if strings.EqualFold(hba.State, "unbound") {
-		return 1.0
-	} else if strings.EqualFold(hba.State, "offline") {
-		return 2.0
-	} else if strings.EqualFold(hba.State, "online") {
-		return 3.0
-	}
-	return 0
+//
+//	0=> Unknown
+//	1=> Red
+//	2=> Yellow
+//	3=> Green
+func (h *HostNumericSensorHealth) HealthStatus() float64 {
+	return ColorToFloat64(h.State)
 }
 
-type IscsiHostBusAdapter struct {
-	HostBusAdapter
-	IQN             string                 `json:"iqn" redis:"iqn"`
-	DiscoveryTarget []IscsiDiscoveryTarget `json:"send_target" redis:"send_target"`
-	StaticTarget    []IscsiStaticTarget    `json:"static_target" redis:"static_target"`
+// Return numeric sensor health state as a float64 number.
+//
+//	0 => Gray
+//	1 => Red
+//	2 => Yellow
+//	3 => Green
+func (h *HardwareStatus) HealthStatus() float64 {
+	return ColorToFloat64(h.Status)
+}
+
+///////////////////
+// STORAGE
+///////////////////
+
+type Volume struct {
+	Name       string `json:"name" redis:"name"`
+	Type       string `json:"type" redis:"type"`
+	Path       string `json:"path" redis:"path"`
+	UUID       string `json:"uuid" redis:"uuid"`
+	Capacity   int64  `json:"capacity" redis:"capacity"`
+	Mounted    bool   `json:"mounted" redis:"mounted"`
+	Accessible bool   `json:"accessible" redis:"accessible"`
+	AccessMode string `json:"access_mode" redis:"access_mode"`
+	DiskName   string `json:"disk_name" redis:"disk_name"`
+	SSD        bool   `json:"ssd" redis:"ssd"`
+	Local      bool   `json:"local" redis:"local"`
+}
+
+type SCSILun struct {
+	CanonicalName     string `json:"canonical_name" redis:"canonical_name"`
+	Vendor            string `json:"vendor" redis:"vendor"`
+	Model             string `json:"model" redis:"model"`
+	SSD               bool   `json:"ssd" redis:"ssd"`
+	Local             bool   `json:"local" redis:"local"`
+	TotalNumberPaths  int64  `json:"total_number_paths" redis:"total_number_paths"`
+	ActiveNumberPaths int64  `json:"active_number_paths" redis:"active_number_paths"`
+}
+
+type HostBusAdapter struct {
+	Type                 string                 `json:"type" redis:"type"`
+	Device               string                 `json:"device" redis:"device"`
+	Status               string                 `json:"status" redis:"status"`
+	Model                string                 `json:"model" redis:"model"`
+	Driver               string                 `json:"driver" redis:"driver"`
+	Protocol             string                 `json:"protocol" redis:"protocol"`
+	IscsiInitiatorIQN    string                 `json:"iscsi_initiator_iqn" redis:"iscsi_initiator_iqn"`
+	IscsiDiscoveryTarget []IscsiDiscoveryTarget `json:"iscsi_discovery_target" redis:"iscsi_discovery_target"`
+	IscsiStaticTarget    []IscsiStaticTarget    `json:"iscsi_static_target" redis:"iscsi_static_target"`
 }
 
 type IscsiDiscoveryTarget struct {
@@ -138,58 +183,15 @@ type IscsiStaticTarget struct {
 	DiscoveryMethod string `json:"discovery_method" redis:"discovery_method"`
 }
 
-type HostNumericSensorHealth struct {
-	Name  string  `json:"name" redis:"name"`
-	Type  string  `json:"type" redis:"type"`
-	ID    string  `json:"id" redis:"id"`
-	Unit  string  `json:"unit" redis:"unit"`
-	Value float64 `json:"value" redis:"value"`
-	State string  `json:"state" redis:"state"`
-}
+type MultipathPathInfo struct {
+	Type    string
+	Name    string
+	State   string
+	Adapter string
+	LUN     int
 
-// Return numeric sensor health state as a float64 number.
-//
-//	0=> Unknown
-//	1=> Red
-//	2=> Yellow
-//	3=> Green
-func (h *HostNumericSensorHealth) HealthStatus() float64 {
-	return ColorToFloat64(h.State)
-}
-
-type HardwareStatus struct {
-	Name    string `json:"name" redis:"name"`
-	Type    string `json:"type" redis:"type"`
-	Status  string `json:"status" redis:"status"`
-	Summary string `json:"summary" redis:"summary"`
-}
-
-// Return numeric sensor health state as a float64 number.
-//
-//	0 => Gray
-//	1 => Red
-//	2 => Yellow
-//	3 => Green
-func (h *HardwareStatus) HealthStatus() float64 {
-	return ColorToFloat64(h.Status)
-}
-
-type ScsiLun struct {
-	CanonicalName string `json:"canonical_name" redis:"canonical_name"`
-	Vendor        string `json:"vendor" redis:"vendor"`
-	Model         string `json:"model" redis:"model"`
-	Datastore     string `json:"datastore" redis:"datastore"`
-	Accessible    bool   `json:"accessible" redis:"accessible"`
-	Mounted       bool   `json:"mounted" redis:"mounted"`
-}
-
-type IscsiPath struct {
-	Device        string `json:"device" redis:"device"`
-	NAA           string `json:"naa" redis:"naa"`
-	DatastoreName string `json:"datastore_name" redis:"datastore_name"`
-	TargetAddress string `json:"target_address" redis:"target_address"`
-	TargetIQN     string `json:"target_iqn" redis:"target_iqn"`
-	State         string `json:"state" redis:"state"`
+	IscsiTargetAddress string
+	IscsiTargetIQN     string
 }
 
 // Return state as a float64 number.
@@ -199,8 +201,7 @@ type IscsiPath struct {
 //	2 => Active
 //	3 => Disabled
 //	4 => Dead
-
-func (p *IscsiPath) StateFloat64() float64 {
+func (p *MultipathPathInfo) StateFloat64() float64 {
 	if strings.EqualFold(p.State, "standby") {
 		return 1.0
 	} else if strings.EqualFold(p.State, "active") {
@@ -208,6 +209,22 @@ func (p *IscsiPath) StateFloat64() float64 {
 	} else if strings.EqualFold(p.State, "disabled") {
 		return 3.0
 	} else if strings.EqualFold(p.State, "dead") {
+		return 4.0
+	}
+	return 0
+}
+
+// Return numeric sensor health state as a float64 number.
+// 0=> Unknown
+// 1=> Unbound
+// 2=> Offline
+// 3=> Online
+func (hba HostBusAdapter) StatusFloat64() float64 {
+	if strings.EqualFold(hba.Status, "unbound") {
+		return 1.0
+	} else if strings.EqualFold(hba.Status, "offline") {
+		return 2.0
+	} else if strings.EqualFold(hba.Status, "online") {
 		return 3.0
 	}
 	return 0

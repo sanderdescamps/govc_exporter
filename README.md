@@ -25,6 +25,34 @@ The perfmetrics are collected by a perf sensor, which is simular to the normal s
 
 Every performance sensor can be configured by the cli. Check the `--help` and look for `--scraper.[sensor].perf.[option]` for more information. 
 
+#### Filters
+
+Performance metrics can be very verbose, which is not always desirable. You can use filters to post-process the metrics and keep only the data you need.
+
+filters can be passed by the cli and have the format 
+
+    [metric name][;metric instance][;action{drop|sum}][;new_name]
+
+Example:
+
+- Drop all metrics with name starting with 'cpu.usage'
+
+        cpu\.usage*;.*;drop 
+    
+- Drop all cpu.usagemhz..... metrics with an instance
+
+        cpu\.usagemhz\..*;[0-9]+;drop
+
+- Sum of cpu.usage.average metrics. Result will be called cpu.usage.average.sum
+
+        cpu\.usage\.average;[0-9]+;sum
+
+- Sum of cpu.usage.average metrics. Result will be called cpu.usage.total.sum
+
+        cpu\.usage\.average;[0-9]+;sum,cpu.usage.total 
+
+
+
 ## Building and running
 
 ### Build
@@ -128,6 +156,8 @@ Flags:
                                  Collect default host perf metrics
       --scraper.host.perf.extra_metric=SCRAPER.HOST.PERF.EXTRA_METRIC ...  
                                  Collect additional host perf metrics
+      --scraper.host.perf.filter=SCRAPER.HOST.PERF.FILTER ...  
+                                 Filters to modify/cleanup perf metrics and reduce the amount of metrics exported.
       --[no-]scraper.repool      Enable resource pool sensor
       --scraper.repool.max_age=2m  
                                  time in seconds resource pools are cached
@@ -168,6 +198,8 @@ Flags:
                                  Collect default vm perf metrics
       --scraper.vm.perf.extra_metric=SCRAPER.VM.PERF.EXTRA_METRIC ...  
                                  Collect additional vm perf metrics
+      --scraper.vm.perf.filter=SCRAPER.VM.PERF.FILTER ...  
+                                 Filters to modify/cleanup perf metrics and reduce the amount of metrics exported.
       --scraper.backend.type=memory  
                                  type of backend
       --scraper.backend.redis.address="localhost:6379"  

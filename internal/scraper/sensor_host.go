@@ -7,7 +7,10 @@ import (
 	"maps"
 	"math/rand"
 	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,6 +144,7 @@ func (s *HostSensor) queryHostsForCluster(ctx context.Context, scraper *VCenterS
 			"config.fileSystemVolume",
 			// "network",
 			"hardware",
+			"vm",
 		},
 		&entities,
 	)
@@ -393,217 +397,192 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 		}
 	}
 
-	if config := h.Config; config != nil {
-		for _, adapter := range h.Config.StorageDevice.HostBusAdapter {
-
-			hbaInterface := reflect.ValueOf(adapter).Elem().Interface()
-			switch hba := hbaInterface.(type) {
-			case types.HostInternetScsiHba:
-				iscsiDiscoveryTarget := []objects.IscsiDiscoveryTarget{}
-				for _, target := range hba.ConfiguredSendTarget {
-					iscsiDiscoveryTarget = append(iscsiDiscoveryTarget, objects.IscsiDiscoveryTarget{
-						Address: target.Address,
-						Port:    target.Port,
-					})
-				}
-
-				iscsiStaticTarget := []objects.IscsiStaticTarget{}
-				for _, target := range hba.ConfiguredStaticTarget {
-					iscsiStaticTarget = append(iscsiStaticTarget, objects.IscsiStaticTarget{
-						Address:         target.Address,
-						Port:            target.Port,
-						IQN:             target.IScsiName,
-						DiscoveryMethod: target.DiscoveryMethod,
-					})
-				}
-
-				host.IscsiHBA = append(host.IscsiHBA, objects.IscsiHostBusAdapter{
-					HostBusAdapter: objects.HostBusAdapter{
-						Name:     hba.Device,
-						Model:    cleanString(hba.Model),
-						Protocol: hba.StorageProtocol,
-						Driver:   hba.Driver,
-						State:    hba.Status,
-					},
-					IQN:             hba.IScsiName,
-					DiscoveryTarget: iscsiDiscoveryTarget,
-					StaticTarget:    iscsiStaticTarget,
-				})
-			// case types.HostBlockHba:
-			// case types.HostFibreChannelHba:
-			// case types.HostParallelScsiHba:
-			// case types.HostPcieHba:
-			// case types.HostRdmaDevice:
-			// case types.HostSerialAttachedHba:
-			// case types.HostTcpHba:
-			default:
-				baseHba := adapter.GetHostHostBusAdapter()
-				host.GenericHBA = append(host.GenericHBA, objects.HostBusAdapter{
-					Name:     baseHba.Device,
-					Model:    cleanString(baseHba.Model),
-					Driver:   baseHba.Driver,
-					State:    baseHba.Status,
-					Protocol: baseHba.StorageProtocol,
-				})
-			}
-		}
-	}
-
-	host.IscsiMultiPathPaths = getHostMultiPathPaths(h)
-	host.SCSILuns = getAllScsiLuns(h)
+	host.Volumes = getVolumes(h)
+	host.HBA = getHBAs(h)
+	host.Luns = getSCSILuns(h)
+	host.MultipathPathInfo = getMultipathInfo(h)
 
 	return host
 }
 
-func getHostMultiPathPaths(host mo.HostSystem) []objects.IscsiPath {
-	hbaDeviceNameFunc := getHostHBADeviceNameLookupFunc(host)
-	lunCanonnicalNameLookup := getHostLunCanonicalNameLookupFunc(host)
-	scsiLunLookupFunc := getHostScsiLunLookupFunc(host)
-
-	iscsiPaths := []objects.IscsiPath{}
-	if host.Config != nil && host.Config.StorageDevice != nil {
-		for _, logicalUnit := range host.Config.StorageDevice.MultipathInfo.Lun {
-			uuid := logicalUnit.Id
-			naa := lunCanonnicalNameLookup(uuid)
-			scsiLun := scsiLunLookupFunc(naa)
-			for _, path := range logicalUnit.Path {
-				device := hbaDeviceNameFunc(path.Adapter)
-				if path.Transport != nil {
-					transportInterface := reflect.ValueOf(path.Transport).Elem().Interface()
-					switch transport := transportInterface.(type) {
-					case types.HostInternetScsiTargetTransport:
-						for _, address := range transport.Address {
-							iscsiPaths = append(iscsiPaths, objects.IscsiPath{
-								Device:        device,
-								NAA:           naa,
-								TargetIQN:     transport.IScsiName,
-								TargetAddress: address,
-								DatastoreName: scsiLun.Datastore,
-								State:         path.State,
-							})
+func getVolumes(host mo.HostSystem) []objects.Volume {
+	volumes := []objects.Volume{}
+	if host.Config != nil && host.Config.FileSystemVolume != nil {
+		for _, info := range host.Config.FileSystemVolume.MountInfo {
+			volumeInterface := reflect.ValueOf(info.Volume).Elem().Interface()
+			switch volInfo := volumeInterface.(type) {
+			case types.HostVmfsVolume:
+				volumes = append(volumes, objects.Volume{
+					AccessMode: info.MountInfo.AccessMode,
+					Accessible: info.MountInfo.Accessible != nil && *info.MountInfo.Accessible,
+					Mounted:    info.MountInfo.Mounted != nil && *info.MountInfo.Mounted,
+					Path:       info.MountInfo.Path,
+					Capacity:   volInfo.Capacity,
+					Name:       volInfo.Name,
+					Type:       volInfo.Type,
+					UUID:       volInfo.Uuid,
+					DiskName: func() string {
+						for _, extend := range volInfo.Extent {
+							return extend.DiskName
 						}
-						// default:
-						// 	iscsiPaths = append(iscsiPaths, iscsiPath{
-						// 		Device:        device,
-						// 		NAA:           naa,
-						// 		TargetIQN:     "",
-						// 		TargetAddress: "",
-						// 		DatastoreName: scsiLun.Datastore,
-						// 		State:         path.State,
-						// 	})
+						return ""
+					}(),
+					SSD:   volInfo.Ssd != nil && *volInfo.Ssd,
+					Local: volInfo.Local == nil || *volInfo.Local,
+				})
+			}
+		}
+	}
+	return volumes
+}
+
+func multipathPathCounter(host mo.HostSystem, lunKey string) (active int64, total int64) {
+	if config := host.Config; config != nil {
+		if storDev := config.StorageDevice; storDev != nil {
+			if mpInfo := storDev.MultipathInfo; mpInfo != nil {
+				for _, lun := range mpInfo.Lun {
+					if lun.Lun == lunKey {
+						for _, path := range lun.Path {
+							if strings.EqualFold(path.State, "active") {
+								active += 1
+							}
+							total += 1
+						}
+						return
 					}
+
 				}
 			}
 		}
 	}
-
-	return iscsiPaths
+	return 0, 0
 }
 
-func getHostHBADeviceNameLookupFunc(host mo.HostSystem) func(hbaKey string) string {
-	hbaDevices := map[string]string{}
+func getSCSILuns(host mo.HostSystem) []objects.SCSILun {
+	res := []objects.SCSILun{}
 	if host.Config != nil && host.Config.StorageDevice != nil {
-		for _, adapter := range host.Config.StorageDevice.HostBusAdapter {
-			hbaDevices[adapter.GetHostHostBusAdapter().Key] = adapter.GetHostHostBusAdapter().Device
-		}
-	}
-	return func(hbaKey string) string {
-		if val, ok := hbaDevices[hbaKey]; ok {
-			return val
-		}
-		return ""
-	}
-}
+		for _, sl := range host.Config.StorageDevice.ScsiLun {
 
-func getHostLunCanonicalNameLookupFunc(host mo.HostSystem) func(lunID string) string {
-	naas := map[string]string{}
-	if host.Config != nil && host.Config.StorageDevice != nil {
-		for _, lun := range host.Config.StorageDevice.ScsiLun {
-			naas[lun.GetScsiLun().Uuid] = lun.GetScsiLun().CanonicalName
-		}
-	}
-
-	return func(lunID string) string {
-		if val, ok := naas[lunID]; ok {
-			return val
-		}
-		return ""
-	}
-}
-
-func getHostScsiLunLookupFunc(host mo.HostSystem) func(canonicalName string) objects.ScsiLun {
-	scsiLuns := map[string]objects.ScsiLun{}
-
-	for _, l := range getAllScsiLuns(host) {
-		scsiLuns[l.CanonicalName] = l
-	}
-
-	return func(canonicalName string) objects.ScsiLun {
-		if val, ok := scsiLuns[canonicalName]; ok {
-			return val
-		}
-		return objects.ScsiLun{}
-	}
-}
-
-func getAllScsiLuns(host mo.HostSystem) []objects.ScsiLun {
-	mountInfoMap := map[string]types.HostFileSystemMountInfo{}
-	if host.Config != nil && host.Config.FileSystemVolume != nil {
-		for _, info := range host.Config.FileSystemVolume.MountInfo {
-			volumeInterface := reflect.ValueOf(info.Volume).Elem().Interface()
-			switch volume := volumeInterface.(type) {
-			case types.HostVmfsVolume:
-				for _, extend := range volume.Extent {
-					mountInfoMap[extend.DiskName] = info
-				}
+			switch disk := (reflect.ValueOf(sl).Elem().Interface()).(type) {
+			case types.HostScsiDisk:
+				activePaths, totalPaths := multipathPathCounter(host, disk.Key)
+				res = append(res, objects.SCSILun{
+					CanonicalName:     disk.CanonicalName,
+					Vendor:            cleanString(disk.Vendor),
+					Model:             cleanString(disk.Model),
+					ActiveNumberPaths: activePaths,
+					TotalNumberPaths:  totalPaths,
+					SSD:               disk.Ssd != nil && *disk.Ssd,
+					Local:             disk.LocalDisk == nil || *disk.LocalDisk,
+				})
 			default:
 				continue
 			}
 		}
 	}
+	return res
+}
 
-	scsiLuns := map[string]types.ScsiLun{}
-	if host.Config != nil && host.Config.StorageDevice != nil {
-		for _, l := range host.Config.StorageDevice.ScsiLun {
-			lun := l.GetScsiLun()
-			if lun != nil {
-				scsiLuns[lun.CanonicalName] = *lun
+func getHBAs(host mo.HostSystem) []objects.HostBusAdapter {
+	res := []objects.HostBusAdapter{}
+	if config := host.Config; config != nil {
+		if storDev := config.StorageDevice; storDev != nil {
+			for _, adapter := range storDev.HostBusAdapter {
+				ihba := reflect.ValueOf(adapter).Elem().Interface()
+				switch hba := ihba.(type) {
+				case types.HostInternetScsiHba:
+					iscsiDiscoveryTarget := []objects.IscsiDiscoveryTarget{}
+					for _, target := range hba.ConfiguredSendTarget {
+						iscsiDiscoveryTarget = append(iscsiDiscoveryTarget, objects.IscsiDiscoveryTarget{
+							Address: target.Address,
+							Port:    target.Port,
+						})
+					}
+
+					iscsiStaticTarget := []objects.IscsiStaticTarget{}
+					for _, target := range hba.ConfiguredStaticTarget {
+						iscsiStaticTarget = append(iscsiStaticTarget, objects.IscsiStaticTarget{
+							Address:         target.Address,
+							Port:            target.Port,
+							IQN:             target.IScsiName,
+							DiscoveryMethod: target.DiscoveryMethod,
+						})
+					}
+
+					res = append(res, objects.HostBusAdapter{
+						Type:                 "iscsi",
+						Device:               hba.Device,
+						Model:                cleanString(hba.Model),
+						Driver:               hba.Driver,
+						Status:               hba.Status,
+						Protocol:             hba.StorageProtocol,
+						IscsiInitiatorIQN:    hba.IScsiName,
+						IscsiDiscoveryTarget: iscsiDiscoveryTarget,
+						IscsiStaticTarget:    iscsiStaticTarget,
+					})
+				// case types.HostTcpHba:
+				// case types.HostBlockHba:
+				// case types.HostFibreChannelHba:
+				// case types.HostParallelScsiHba:
+				// case types.HostPcieHba:
+				// case types.HostRdmaDevice:
+				// case types.HostSerialAttachedHba:
+				default:
+					baseHba := adapter.GetHostHostBusAdapter()
+					res = append(res, objects.HostBusAdapter{
+						Type:     "generic",
+						Device:   baseHba.Device,
+						Model:    cleanString(baseHba.Model),
+						Driver:   baseHba.Driver,
+						Status:   baseHba.Status,
+						Protocol: baseHba.StorageProtocol,
+					})
+				}
 			}
 		}
 	}
+	return res
+}
 
-	result := []objects.ScsiLun{}
-	if host.Config != nil && host.Config.StorageDevice != nil {
-		for _, l := range host.Config.StorageDevice.ScsiLun {
-			lun := l.GetScsiLun()
-			if mountInfo, ok := mountInfoMap[lun.CanonicalName]; ok {
-				volume := mountInfo.Volume.GetHostFileSystemVolume()
-				result = append(result, objects.ScsiLun{
-					CanonicalName: lun.CanonicalName,
-					Model:         cleanString(lun.Model),
-					Vendor:        cleanString(lun.Vendor),
-					Datastore: func() string {
-						if volume != nil {
-							return volume.Name
+func getMultipathInfo(host mo.HostSystem) []objects.MultipathPathInfo {
+	res := []objects.MultipathPathInfo{}
+	if config := host.Config; config != nil {
+		if storDev := config.StorageDevice; storDev != nil {
+			if mpInfo := storDev.MultipathInfo; mpInfo != nil {
+				for _, lun := range mpInfo.Lun {
+					for _, path := range lun.Path {
+						mpPathInfo := objects.MultipathPathInfo{
+							Name:    path.Name,
+							State:   path.State,
+							Adapter: "",
 						}
-						return "unknown"
-					}(),
-					Mounted: func() bool {
-						if mountInfo.MountInfo.Mounted != nil {
-							return *mountInfo.MountInfo.Mounted
+
+						if r := regexp.MustCompile(`(\w+)-([\w\.]+)-(\w+)`); r.MatchString(path.Adapter) {
+							mpPathInfo.Adapter = r.FindStringSubmatch(path.Adapter)[3]
 						}
-						return false
-					}(),
-					Accessible: func() bool {
-						if mountInfo.MountInfo.Accessible != nil {
-							return *mountInfo.MountInfo.Accessible
+
+						if r := regexp.MustCompile(`(\w+):(\w+):(\w+):L(\d+)`); r.MatchString(path.Name) {
+							lunNr, _ := strconv.Atoi(r.FindStringSubmatch(path.Name)[4])
+							mpPathInfo.LUN = lunNr
 						}
-						return false
-					}(),
-				})
+
+						iTransport := reflect.ValueOf(path.Transport).Elem().Interface()
+						switch transport := iTransport.(type) {
+						case types.HostInternetScsiTargetTransport:
+							mpPathInfo.Type = "iscsi"
+							if len(transport.Address) == 1 {
+								mpPathInfo.IscsiTargetAddress = transport.Address[0]
+							}
+							mpPathInfo.IscsiTargetIQN = transport.IScsiName
+						default:
+							mpPathInfo.Type = "generic"
+						}
+
+						res = append(res, mpPathInfo)
+					}
+				}
 			}
-
 		}
 	}
-	return result
+	return res
 }

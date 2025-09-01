@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -67,7 +68,7 @@ type virtualMachineCollector struct {
 }
 
 func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *virtualMachineCollector {
-	labels := []string{"uuid", "name", "template", "vm_id"}
+	labels := []string{"uuid", "name", "template", "vm_id", "pool"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {
 		labels = append(labels, extraLabels...)
@@ -76,10 +77,10 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.Co
 	if cConf.UseIsecSpecifics {
 		labels = append(labels, "crit", "responsable", "service")
 	}
-	infoLabels := append(labels, "guest_id", "tools_version")
-	hostLabels := append(labels, "pool", "datacenter", "cluster", "esx")
-	diskLabels := append(labels, "disk_uuid", "thin_provisioned")
-	networkLabels := append(labels, "mac", "ip")
+	infoLabels := append(slices.Clone(labels), "guest_id", "tools_version")
+	hostLabels := append(slices.Clone(labels), "datacenter", "cluster", "esx")
+	diskLabels := append(slices.Clone(labels), "disk_uuid", "thin_provisioned")
+	networkLabels := append(slices.Clone(labels), "mac", "ip")
 
 	return &virtualMachineCollector{
 		scraper:                scraper,
@@ -264,20 +265,20 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
 
-		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.Value}
-		labelValues = append(labelValues, extraLabelValues...)
+		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.Value, vm.ResourcePool}
+		labelValues = append(slices.Clone(labelValues), extraLabelValues...)
 
 		if c.useIsecSpecifics && vm.IsecAnnotation != nil {
 			annotation := vm.IsecAnnotation
 			labelValues = append(
-				labelValues,
+				slices.Clone(labelValues),
 				annotation.Criticality,
 				annotation.Responsable,
 				annotation.Service,
 			)
 		}
 
-		hostLabelValues := append(labelValues, vm.ResourcePool, vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host)
+		hostLabelValues := append(slices.Clone(labelValues), vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host)
 
 		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 			c.numCPU, prometheus.GaugeValue, vm.NumCPU, labelValues...,
@@ -343,7 +344,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			c.toolsStatus, prometheus.GaugeValue, vm.GuestToolsStatusFloat64(), labelValues...,
 		))
 
-		infoLabelValues := append(labelValues, vm.GuestID, vm.GuestToolsVersion)
+		infoLabelValues := append(slices.Clone(labelValues), vm.GuestID, vm.GuestToolsVersion)
 		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 			c.vmInfo, prometheus.GaugeValue, 0, infoLabelValues...,
 		))
@@ -398,7 +399,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		// Advanced network metrics
 		if c.advancedNetworkMetrics {
 			for _, net := range vm.GuestNetwork {
-				networkLabelValues := append(labelValues, net.MacAddress, net.IpAddress)
+				networkLabelValues := append(slices.Clone(labelValues), net.MacAddress, net.IpAddress)
 				ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 					c.networkConnected, prometheus.GaugeValue, b2f(net.Connected), networkLabelValues...,
 				))
@@ -408,7 +409,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		//Advanced Storage metrics
 		if c.advancedStorageMetrics {
 			for _, disk := range vm.Disk {
-				diskLabelValues := append(labelValues, disk.UUID, strconv.FormatBool(disk.ThinProvisioned))
+				diskLabelValues := append(slices.Clone(labelValues), disk.UUID, strconv.FormatBool(disk.ThinProvisioned))
 				ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 					c.diskCapacityBytes, prometheus.GaugeValue, float64(disk.Capacity), diskLabelValues...,
 				))

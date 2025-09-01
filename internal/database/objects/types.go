@@ -11,6 +11,7 @@ const (
 	ManagedObjectTypesFolder          = ManagedObjectTypes("Folder")
 	ManagedObjectTypesHost            = ManagedObjectTypes("Host")
 	ManagedObjectTypesResourcePool    = ManagedObjectTypes("ResourcePool")
+	ManagedObjectTypesVirtualApp      = ManagedObjectTypes("VirtualApp")
 	ManagedObjectTypesStoragePod      = ManagedObjectTypes("StoragePod")
 	ManagedObjectTypesTag             = ManagedObjectTypes("Tag")
 	ManagedObjectTypesTagSet          = ManagedObjectTypes("TagSet")

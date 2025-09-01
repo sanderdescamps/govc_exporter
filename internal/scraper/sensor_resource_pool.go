@@ -197,18 +197,20 @@ func ConvertToResourcePool(ctx context.Context, scraper *VCenterScraper, p mo.Re
 
 	mb := int64(1024 * 1024)
 	if summary := p.Summary.GetResourcePoolSummary(); summary != nil {
-		pool.OverallCPUUsage = float64(summary.QuickStats.OverallCpuUsage)
-		pool.OverallCPUDemand = float64(summary.QuickStats.OverallCpuDemand)
-		pool.GuestMemoryUsage = float64(summary.QuickStats.GuestMemoryUsage * mb)
-		pool.HostMemoryUsage = float64(summary.QuickStats.HostMemoryUsage * mb)
-		pool.DistributedCPUEntitlement = float64(summary.QuickStats.DistributedCpuEntitlement)
-		pool.DistributedMemoryEntitlement = float64(summary.QuickStats.DistributedMemoryEntitlement * mb)
-		pool.StaticCPUEntitlement = float64(summary.QuickStats.StaticCpuEntitlement)
-		pool.PrivateMemory = float64(summary.QuickStats.PrivateMemory * mb)
-		pool.SwappedMemory = float64(summary.QuickStats.SwappedMemory * mb)
-		pool.BalloonedMemory = float64(summary.QuickStats.BalloonedMemory * mb)
-		pool.OverheadMemory = float64(summary.QuickStats.OverheadMemory * mb)
-		pool.ConsumedOverheadMemory = float64(summary.QuickStats.ConsumedOverheadMemory * mb)
+		if qs := summary.QuickStats; qs != nil {
+			pool.OverallCPUUsage = float64(qs.OverallCpuUsage)
+			pool.OverallCPUDemand = float64(qs.OverallCpuDemand)
+			pool.GuestMemoryUsage = float64(qs.GuestMemoryUsage * mb)
+			pool.HostMemoryUsage = float64(qs.HostMemoryUsage * mb)
+			pool.DistributedCPUEntitlement = float64(qs.DistributedCpuEntitlement)
+			pool.DistributedMemoryEntitlement = float64(qs.DistributedMemoryEntitlement * mb)
+			pool.StaticCPUEntitlement = float64(qs.StaticCpuEntitlement)
+			pool.PrivateMemory = float64(qs.PrivateMemory * mb)
+			pool.SwappedMemory = float64(qs.SwappedMemory * mb)
+			pool.BalloonedMemory = float64(qs.BalloonedMemory * mb)
+			pool.OverheadMemory = float64(qs.OverheadMemory * mb)
+			pool.ConsumedOverheadMemory = float64(qs.ConsumedOverheadMemory * mb)
+		}
 		if limit := summary.Config.MemoryAllocation.Limit; limit != nil {
 			pool.MemoryAllocationLimit = float64((*limit) * mb)
 		}

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/sanderdescamps/govc_exporter/internal/config"
-	"github.com/sanderdescamps/govc_exporter/internal/database/objects"
 	"github.com/sanderdescamps/govc_exporter/internal/helper"
 	"github.com/sanderdescamps/govc_exporter/internal/scraper/logger"
 	sensormetrics "github.com/sanderdescamps/govc_exporter/internal/scraper/sensor_metrics"
@@ -19,17 +18,22 @@ const VM_PERF_SENSOR_NAME = "VMPerfSensor"
 
 func DefaultVMPerfMetrics() []string {
 	return []string{
+		// "cpu.capacity.provisioned.average",
+		// "cpu.readiness.average",
+		// "cpu.costop.summation",
+		// "cpu.maxlimited.summation",
+		// "cpu.ready.summation",
+
 		"cpu.usagemhz.average",
-		"cpu.capacity.provisioned.average",
-		"cpu.readiness.average",
-		"cpu.costop.summation",
-		"cpu.maxlimited.summation",
-		"cpu.ready.summation",
+		"cpu.demand.average",
+		"cpu.usage.average",
+		"cpu.latency.average",
 		"mem.active.average",
 		"mem.granted.average",
 		"mem.consumed.average",
 		"disk.throughput.contention.average",
 		"disk.throughput.usage.average",
+		"net.usage.average",
 	}
 }
 
@@ -87,18 +91,18 @@ func (s *VMPerfSensor) refresh(ctx context.Context, scraper *VCenterScraper) err
 		vmRefs = append(vmRefs, ref.ToVMwareRef())
 	}
 
-	metricSeries, err := s.BasePerfSensor.QueryEntiryMetrics(ctx, scraper, vmRefs)
+	metricSeries, err := s.BasePerfSensor.QueryVMwareEntiryMetrics(ctx, scraper, vmRefs)
 	if err != nil {
 		return err
 	}
-	for _, metricSerie := range metricSeries {
-		entityRef := objects.NewManagedObjectReferenceFromVMwareRef(metricSerie.Entity)
-		metrics := EntityMetricToMetric(metricSerie)
-		err := scraper.MetricsDB.AddVmMetrics(ctx, entityRef, s.config.MaxAge, metrics...)
+
+	for ref, metrics := range s.BasePerfSensor.ToFilteredMetricsIter(metricSeries, s.config.MustParseFilters()) {
+		err := scraper.MetricsDB.AddVmMetrics(ctx, ref, s.config.MaxAge, metrics...)
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
