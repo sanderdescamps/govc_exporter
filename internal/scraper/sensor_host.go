@@ -430,7 +430,7 @@ func getVolumes(host mo.HostSystem) []objects.Volume {
 						return ""
 					}(),
 					SSD:   volInfo.Ssd != nil && *volInfo.Ssd,
-					Local: volInfo.Ssd == nil || *volInfo.Ssd,
+					Local: volInfo.Local == nil || *volInfo.Local,
 				})
 			}
 		}
