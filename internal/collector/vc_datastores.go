@@ -125,7 +125,7 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 		))
 
 		for _, mountInfo := range datastore.HostMountInfo {
-			hostLabelValues := append(labelValues, mountInfo.Host, mountInfo.HostID)
+			hostLabelValues := append(slices.Clone(labelValues), mountInfo.Host, mountInfo.HostID)
 			ch <- prometheus.NewMetricWithTimestamp(datastore.Timestamp, prometheus.MustNewConstMetric(
 				c.hostAccessible, prometheus.GaugeValue, b2f(mountInfo.Accessible), hostLabelValues...,
 			))
@@ -139,7 +139,7 @@ func (c *datastoreCollector) Collect(ch chan<- prometheus.Metric) {
 
 		if vmfsInfo := datastore.VmfsInfo; vmfsInfo != nil {
 			vmfsLabelValues := append(
-				labelValues,
+				slices.Clone(labelValues),
 				vmfsInfo.UUID,
 				vmfsInfo.NAA,
 				strconv.FormatBool(vmfsInfo.SSD),

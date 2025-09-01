@@ -344,7 +344,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			c.toolsStatus, prometheus.GaugeValue, vm.GuestToolsStatusFloat64(), labelValues...,
 		))
 
-		infoLabelValues := append(labelValues, vm.GuestID, vm.GuestToolsVersion)
+		infoLabelValues := append(slices.Clone(labelValues), vm.GuestID, vm.GuestToolsVersion)
 		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 			c.vmInfo, prometheus.GaugeValue, 0, infoLabelValues...,
 		))
@@ -399,7 +399,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		// Advanced network metrics
 		if c.advancedNetworkMetrics {
 			for _, net := range vm.GuestNetwork {
-				networkLabelValues := append(labelValues, net.MacAddress, net.IpAddress)
+				networkLabelValues := append(slices.Clone(labelValues), net.MacAddress, net.IpAddress)
 				ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 					c.networkConnected, prometheus.GaugeValue, b2f(net.Connected), networkLabelValues...,
 				))
@@ -409,7 +409,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		//Advanced Storage metrics
 		if c.advancedStorageMetrics {
 			for _, disk := range vm.Disk {
-				diskLabelValues := append(labelValues, disk.UUID, strconv.FormatBool(disk.ThinProvisioned))
+				diskLabelValues := append(slices.Clone(labelValues), disk.UUID, strconv.FormatBool(disk.ThinProvisioned))
 				ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 					c.diskCapacityBytes, prometheus.GaugeValue, float64(disk.Capacity), diskLabelValues...,
 				))

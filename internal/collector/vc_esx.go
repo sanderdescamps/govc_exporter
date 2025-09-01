@@ -209,10 +209,10 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 
 		labelValues := []string{host.Self.ID(), host.Name, host.Datacenter, host.Cluster}
 		labelValues = append(labelValues, extraLabelValues...)
-		infoLabelValues := append(labelValues, host.OSVersion, host.Vendor, host.Model, host.AssetTag, host.ServiceTag, host.BiosVersion)
+		infoLabelValues := append(slices.Clone(labelValues), host.OSVersion, host.Vendor, host.Model, host.AssetTag, host.ServiceTag, host.BiosVersion)
 
 		for _, health := range host.SystemHealthNumericSensors {
-			sysLabelsValues := append(labelValues, health.ID, health.Name, health.Type, health.Unit)
+			sysLabelsValues := append(slices.Clone(labelValues), health.ID, health.Name, health.Type, health.Unit)
 			ch <- prometheus.NewMetricWithTimestamp(host.Timestamp,
 				prometheus.MustNewConstMetric(
 					c.systemHealthNumericSensorValue, prometheus.GaugeValue, health.Value, sysLabelsValues...,
@@ -224,7 +224,7 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 
 		for _, elementStatus := range host.HardwareStatus {
-			sysLabelsValues := append(labelValues, "memory", elementStatus.Name)
+			sysLabelsValues := append(slices.Clone(labelValues), "memory", elementStatus.Name)
 			ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 				c.systemHealthStatusSensor, prometheus.GaugeValue, elementStatus.HealthStatus(), sysLabelsValues...,
 			))
@@ -275,20 +275,20 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 		))
 		if c.enableStorageMetrics {
 			for _, hba := range host.HBA {
-				hbaLabelValues := append(labelValues, hba.Device, hba.Driver, hba.Model)
+				hbaLabelValues := append(slices.Clone(labelValues), hba.Device, hba.Driver, hba.Model)
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 					c.hbaStatus, prometheus.GaugeValue, hba.StatusFloat64(), hbaLabelValues...,
 				))
 
 				if hba.Type == "iscsi" {
 					for _, target := range hba.IscsiDiscoveryTarget {
-						iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port))
+						iscsiLabelTargetValues := append(slices.Clone(hbaLabelValues), fmt.Sprintf("%s:%d", target.Address, target.Port))
 						ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 							c.hbaIscsiSendTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
 						))
 					}
 					for _, target := range hba.IscsiStaticTarget {
-						iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port), target.IQN, target.DiscoveryMethod)
+						iscsiLabelTargetValues := append(slices.Clone(hbaLabelValues), fmt.Sprintf("%s:%d", target.Address, target.Port), target.IQN, target.DiscoveryMethod)
 						ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 							c.hbaIscsiStaticTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
 						))
@@ -297,14 +297,14 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 			}
 
 			for _, p := range host.MultipathPathInfo {
-				pathLabelValues := append(labelValues, p.Name, p.Adapter, p.IscsiTargetAddress, p.IscsiTargetIQN, strconv.Itoa(p.LUN))
+				pathLabelValues := append(slices.Clone(labelValues), p.Name, p.Adapter, p.IscsiTargetAddress, p.IscsiTargetIQN, strconv.Itoa(p.LUN))
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 					c.multipathPathState, prometheus.GaugeValue, p.StateFloat64(), pathLabelValues...,
 				))
 			}
 
 			for _, lun := range host.Luns {
-				vmfsLabelValues := append(labelValues, lun.Vendor, lun.Model, lun.CanonicalName, strconv.FormatBool(lun.Local), strconv.FormatBool(lun.SSD))
+				vmfsLabelValues := append(slices.Clone(labelValues), lun.Vendor, lun.Model, lun.CanonicalName, strconv.FormatBool(lun.Local), strconv.FormatBool(lun.SSD))
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 					c.scsiLunActivePath, prometheus.GaugeValue, float64(lun.ActiveNumberPaths), vmfsLabelValues...,
 				))
@@ -314,7 +314,7 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 			}
 
 			for _, volume := range host.Volumes {
-				volumeLabelValues := append(labelValues, volume.UUID, volume.DiskName, volume.Name, strconv.FormatBool(volume.Local), strconv.FormatBool(volume.SSD))
+				volumeLabelValues := append(slices.Clone(labelValues), volume.UUID, volume.DiskName, volume.Name, strconv.FormatBool(volume.Local), strconv.FormatBool(volume.SSD))
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 					c.volumeAccessible, prometheus.GaugeValue, b2f(volume.Accessible), volumeLabelValues...,
 				))

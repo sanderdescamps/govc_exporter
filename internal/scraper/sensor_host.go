@@ -405,8 +405,6 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 	return host
 }
 
-//---------------------------------------------
-
 func getVolumes(host mo.HostSystem) []objects.Volume {
 	volumes := []objects.Volume{}
 	if host.Config != nil && host.Config.FileSystemVolume != nil {

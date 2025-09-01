@@ -64,7 +64,7 @@ func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 		labelValues = append(labelValues, extraLabelValues...)
 
 		for metric := range c.scraper.MetricsDB.PopAllVmMetricsIter(ctx, vm.Self) {
-			perfMetricLabelValues := append(labelValues, metric.Name, metric.Instance, metric.Unit)
+			perfMetricLabelValues := append(slices.Clone(labelValues), metric.Name, metric.Instance, metric.Unit)
 			ch <- prometheus.NewMetricWithTimestamp(metric.Timestamp, prometheus.MustNewConstMetric(
 				c.perfMetric, prometheus.GaugeValue, metric.Value, perfMetricLabelValues...,
 			))
