@@ -373,7 +373,6 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 		if host := scraper.DB.GetHost(ctx, oRef); host != nil {
 			virtualMachine.HostInfo = objects.VirtualMachineHostInfo{
 				Host:       host.Name,
-				Pool:       host.Pool,
 				Datacenter: host.Datacenter,
 				Cluster:    host.Cluster,
 			}
