@@ -3,8 +3,8 @@ package collector
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"slices"
+	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sanderdescamps/govc_exporter/internal/config"
@@ -19,7 +19,6 @@ type esxCollector struct {
 	// vcCollector
 	enableStorageMetrics bool
 	extraLabels          []string
-	logger               *slog.Logger
 
 	scraper                        *scraper.VCenterScraper
 	powerState                     *prometheus.Desc
@@ -40,16 +39,14 @@ type esxCollector struct {
 	systemHealthStatusSensor       *prometheus.Desc
 
 	// only used when advancedStorageMetrics == true
-	genericHBAStatus *prometheus.Desc
-	iscsiHBAStatus   *prometheus.Desc
-
+	hbaStatus                *prometheus.Desc
 	hbaIscsiSendTargetInfo   *prometheus.Desc
 	hbaIscsiStaticTargetInfo *prometheus.Desc
 	multipathPathState       *prometheus.Desc
-	multipathPathCount       *prometheus.Desc
-	// iscsiDiskInfo            *prometheus.Desc
-	scsiLunMounted    *prometheus.Desc
-	scsiLunAccessible *prometheus.Desc
+	volumeMounted            *prometheus.Desc
+	volumeAccessible         *prometheus.Desc
+	scsiLunActivePath        *prometheus.Desc
+	scsiLunTotalPath         *prometheus.Desc
 
 	vmNumTotal *prometheus.Desc
 }
@@ -64,13 +61,13 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConf
 	infoLabels := append(slices.Clone(labels), "os_version", "vendor", "model", "asset_tag", "service_tag", "bios_version")
 	sysNumLabels := append(slices.Clone(labels), "sensor_id", "sensor_name", "sensor_type", "sensor_unit")
 	sysStatusLabels := append(slices.Clone(labels), "sensor_type", "sensor_name")
-	genericHBALabels := append(slices.Clone(labels), "adapter_name", "driver", "model")
-	iscsiHBALabels := append(slices.Clone(labels), "adapter_name", "iqn", "driver", "model")
-	iscsiHbaSendTargetLabels := append(slices.Clone(labels), "adapter_name", "src_name", "driver", "model", "target_address")
-	iscsiHbaStaticTargetLabels := append(slices.Clone(labels), "adapter_name", "src_name", "driver", "model", "target_address", "target_name", "discovery_method")
-	multipathStatusLabels := append(slices.Clone(labels), "adapter_name", "target_address", "target_name", "disk_name", "datastore")
-	multipathCountLabels := append(slices.Clone(labels), "adapter_name", "target_name", "disk_name", "datastore")
-	vmfsLabels := append(slices.Clone(labels), "vendor", "model", "disk_name", "datastore")
+
+	hbaLabels := append(slices.Clone(labels), "adapter_name", "driver", "model")
+	iscsiHbaSendTargetLabels := append(slices.Clone(labels), "adapter_name", "driver", "model", "target_address")
+	iscsiHbaStaticTargetLabels := append(slices.Clone(labels), "adapter_name", "driver", "model", "target_address", "target_name", "discovery_method")
+	multipathStatusLabels := append(slices.Clone(labels), "path_name", "adapter_name", "target_address", "target_name", "lun")
+	volumeLabels := append(slices.Clone(labels), "uuid", "disk_name", "datastore", "local", "ssd")
+	scsiLunLabels := append(slices.Clone(labels), "vendor", "model", "canonical_name", "local", "ssd")
 
 	return &esxCollector{
 		scraper:              scraper,
@@ -135,12 +132,9 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConf
 			"system hardware status sensors", sysStatusLabels, nil),
 
 		//STORAGE
-		genericHBAStatus: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_generic_status"),
-			"Status of generic HBA cards", genericHBALabels, nil),
-		iscsiHBAStatus: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_iscsi_status"),
-			"Status of iscsi HBA card", iscsiHBALabels, nil),
+		hbaStatus: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_status"),
+			"Status of HBA cards", hbaLabels, nil),
 		hbaIscsiSendTargetInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "hba_iscsi_send_target_info"),
 			"The configured iSCSI send target entries", iscsiHbaSendTargetLabels, nil),
@@ -150,15 +144,18 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConf
 		multipathPathState: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "multipath_path_state"),
 			"Multipath path state", multipathStatusLabels, nil),
-		multipathPathCount: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "multipath_path_count"),
-			"Number of paths to LUN", multipathCountLabels, nil),
-		scsiLunMounted: prometheus.NewDesc(
+		volumeMounted: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "datastore_mounted"),
-			"VMFS Datastore mount status", vmfsLabels, nil),
-		scsiLunAccessible: prometheus.NewDesc(
+			"VMFS Datastore mount status", volumeLabels, nil),
+		volumeAccessible: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "datastore_accessible"),
-			"VMFS Datastore accessible status", vmfsLabels, nil),
+			"VMFS Datastore accessible status", volumeLabels, nil),
+		scsiLunActivePath: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "scsilun_active_paths"),
+			"Number of active paths to lun", scsiLunLabels, nil),
+		scsiLunTotalPath: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, esxCollectorSubsystem, "scsilun_total_paths"),
+			"Total number of paths to lun", scsiLunLabels, nil),
 	}
 
 }
@@ -179,14 +176,14 @@ func (c *esxCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.systemHealthNumericSensorState
 	ch <- c.systemHealthNumericSensorValue
 	ch <- c.systemHealthStatusSensor
-	ch <- c.scsiLunMounted
-	ch <- c.scsiLunAccessible
+	ch <- c.volumeAccessible
+	ch <- c.volumeMounted
 	ch <- c.hbaIscsiSendTargetInfo
 	ch <- c.hbaIscsiStaticTargetInfo
-	ch <- c.genericHBAStatus
-	ch <- c.iscsiHBAStatus
+	ch <- c.hbaStatus
 	ch <- c.multipathPathState
-	ch <- c.multipathPathCount
+	ch <- c.scsiLunActivePath
+	ch <- c.scsiLunTotalPath
 	ch <- c.vmNumTotal
 	ch <- c.info
 }
@@ -277,63 +274,52 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 			c.vmNumTotal, prometheus.GaugeValue, host.NumberOfVMs, labelValues...,
 		))
 		if c.enableStorageMetrics {
-			for _, hba := range host.GenericHBA {
-				hbaLabelValues := append(labelValues, hba.Name, hba.Driver, hba.Model)
+			for _, hba := range host.HBA {
+				hbaLabelValues := append(labelValues, hba.Device, hba.Driver, hba.Model)
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
-					c.genericHBAStatus, prometheus.GaugeValue, hba.StatusFloat64(), hbaLabelValues...,
+					c.hbaStatus, prometheus.GaugeValue, hba.StatusFloat64(), hbaLabelValues...,
 				))
+
+				if hba.Type == "iscsi" {
+					for _, target := range hba.IscsiDiscoveryTarget {
+						iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port))
+						ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+							c.hbaIscsiSendTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
+						))
+					}
+					for _, target := range hba.IscsiStaticTarget {
+						iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port), target.IQN, target.DiscoveryMethod)
+						ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+							c.hbaIscsiStaticTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
+						))
+					}
+				}
 			}
 
-			for _, hba := range host.IscsiHBA {
-				hbaLabelValues := append(labelValues, hba.Name, hba.IQN, hba.Driver, hba.Model)
-				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
-					c.iscsiHBAStatus, prometheus.GaugeValue, hba.StatusFloat64(), hbaLabelValues...,
-				))
-				for _, target := range hba.DiscoveryTarget {
-					iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port))
-					ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
-						c.hbaIscsiSendTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
-					))
-				}
-				for _, target := range hba.StaticTarget {
-					iscsiLabelTargetValues := append(hbaLabelValues, fmt.Sprintf("%s:%d", target.Address, target.Port), target.IQN, target.DiscoveryMethod)
-					ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
-						c.hbaIscsiStaticTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
-					))
-				}
-
-			}
-
-			pathsToLun := map[string]int64{}
-			pathsToLunLabels := map[string][]string{}
-			for _, p := range host.IscsiMultiPathPaths {
-				// extended
-				pathLabelValues := append(labelValues, p.Device, p.TargetAddress, p.TargetIQN, p.NAA, p.DatastoreName)
+			for _, p := range host.MultipathPathInfo {
+				pathLabelValues := append(labelValues, p.Name, p.Adapter, p.IscsiTargetAddress, p.IscsiTargetIQN, strconv.Itoa(p.LUN))
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 					c.multipathPathState, prometheus.GaugeValue, p.StateFloat64(), pathLabelValues...,
 				))
-
-				// compact
-				pathsToLun[p.NAA]++
-				if _, ok := pathsToLunLabels[p.NAA]; !ok {
-					pathsToLunLabels[p.NAA] = append(labelValues, p.Device, p.TargetIQN, p.NAA, p.DatastoreName)
-				}
 			}
 
-			// compact
-			for device := range pathsToLun {
+			for _, lun := range host.Luns {
+				vmfsLabelValues := append(labelValues, lun.Vendor, lun.Model, lun.CanonicalName, strconv.FormatBool(lun.Local), strconv.FormatBool(lun.SSD))
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
-					c.multipathPathCount, prometheus.GaugeValue, float64(pathsToLun[device]), pathsToLunLabels[device]...,
+					c.scsiLunActivePath, prometheus.GaugeValue, float64(lun.ActiveNumberPaths), vmfsLabelValues...,
+				))
+				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
+					c.scsiLunTotalPath, prometheus.GaugeValue, float64(lun.TotalNumberPaths), vmfsLabelValues...,
 				))
 			}
 
-			for _, lun := range host.SCSILuns {
-				vmfsLabelValues := append(labelValues, lun.Vendor, lun.Model, lun.CanonicalName, lun.Datastore)
+			for _, volume := range host.Volumes {
+				volumeLabelValues := append(labelValues, volume.UUID, volume.DiskName, volume.Name, strconv.FormatBool(volume.Local), strconv.FormatBool(volume.SSD))
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
-					c.scsiLunMounted, prometheus.GaugeValue, b2f(lun.Mounted), vmfsLabelValues...,
+					c.volumeAccessible, prometheus.GaugeValue, b2f(volume.Accessible), volumeLabelValues...,
 				))
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
-					c.scsiLunAccessible, prometheus.GaugeValue, b2f(lun.Accessible), vmfsLabelValues...,
+					c.volumeMounted, prometheus.GaugeValue, b2f(volume.Mounted), volumeLabelValues...,
 				))
 			}
 		}
