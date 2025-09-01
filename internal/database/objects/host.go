@@ -6,14 +6,12 @@ import (
 )
 
 type Host struct {
-	Timestamp     time.Time               `json:"timestamp" redis:"timestamp"`
-	Self          ManagedObjectReference  `json:"self" redis:"self"`
-	Parent        *ManagedObjectReference `json:"parent" redis:"parent"`
-	Name          string                  `json:"name" redis:"name"`
-	GuestHostname string                  `json:"guest_hostname" redis:"guest_hostname"`
-	Cluster       string                  `json:"cluster" redis:"cluster"`
-	Datacenter    string                  `json:"datacenter" redis:"datacenter"`
-	Pool          string                  `json:"pool" redis:"pool"`
+	Timestamp  time.Time               `json:"timestamp" redis:"timestamp"`
+	Self       ManagedObjectReference  `json:"self" redis:"self"`
+	Parent     *ManagedObjectReference `json:"parent" redis:"parent"`
+	Name       string                  `json:"name" redis:"name"`
+	Cluster    string                  `json:"cluster" redis:"cluster"`
+	Datacenter string                  `json:"datacenter" redis:"datacenter"`
 
 	OSVersion   string `json:"os_version" redis:"os_version"`
 	AssetTag    string `json:"asset_tag" redis:"asset_tag"`
@@ -34,7 +32,6 @@ type Host struct {
 	AvailMemBytes              float64                   `json:"avail_mem_bytes" redis:"avail_mem_bytes"`
 	UsedMemBytes               float64                   `json:"used_mem_bytes" redis:"used_mem_bytes"`
 	OverallStatus              string                    `json:"overall_status" redis:"overall_status"`
-	Info                       float64                   `json:"info" redis:"info"`
 	SystemHealthNumericSensors []HostNumericSensorHealth `json:"system_health_numeric_sensor" redis:"system_health_numeric_sensor"`
 	HardwareStatus             []HardwareStatus          `json:"hardware_status" redis:"hardware_status"`
 

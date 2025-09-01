@@ -88,7 +88,6 @@ type VirtualMachineSnapshot struct {
 
 type VirtualMachineHostInfo struct {
 	Host       string `json:"host" redis:"host"`
-	Pool       string `json:"pool" redis:"pool"`
 	Datacenter string `json:"datacenter" redis:"datacenter"`
 	Cluster    string `json:"cluster" redis:"cluster"`
 }
