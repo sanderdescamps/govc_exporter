@@ -56,20 +56,23 @@ func (s *HostSensor) querryAllHosts(ctx context.Context, scraper *VCenterScraper
 		s.SensorLogger.Error("Can't query for hosts if cluster sensor is not defined")
 		return nil, fmt.Errorf("no cluster sensor found")
 	}
-	(scraper.Cluster).(*ClusterSensor).WaitTillStartup()
+	(scraper.Datacenter).(*DatacenterSensor).WaitTillStartup()
 
-	clusterRefs := scraper.DB.GetAllClusterRefs(ctx)
+	dcRefs := scraper.DB.GetAllDatacenterRefs(ctx)
 
 	var wg sync.WaitGroup
-	wg.Add(len(clusterRefs))
-	resultChan := make(chan *[]objects.Host, len(clusterRefs))
-	for _, clusterRef := range clusterRefs {
+	wg.Add(len(dcRefs))
+	resultChan := make(chan *[]objects.Host, len(dcRefs))
+
+	//query hosts by datacenter
+	for _, dcRef := range dcRefs {
 		go func() {
 			defer wg.Done()
 
-			hosts, err := s.queryHostsForCluster(ctx, scraper, clusterRef.ToVMwareRef())
+			ref := dcRef.ToVMwareRef()
+			hosts, err := s.queryHostsInContainer(ctx, scraper, &ref, true)
 			if err != nil {
-				s.SensorLogger.Error("Failed to get hosts for cluster", "cluster", clusterRef.Value, "err", err)
+				s.SensorLogger.Error("Failed to get hosts for datacenter", "datacenter", dcRef.Value, "err", err)
 				s.statusMonitor.Fail()
 				return
 			}
@@ -80,7 +83,6 @@ func (s *HostSensor) querryAllHosts(ctx context.Context, scraper *VCenterScraper
 
 	readyChan := make(chan bool)
 	allHosts := map[objects.ManagedObjectReference]objects.Host{}
-
 	go func() {
 		for {
 			select {
@@ -109,7 +111,8 @@ func (s *HostSensor) querryAllHosts(ctx context.Context, scraper *VCenterScraper
 	return slices.Collect(maps.Values(allHosts)), nil
 }
 
-func (s *HostSensor) queryHostsForCluster(ctx context.Context, scraper *VCenterScraper, clusterRef types.ManagedObjectReference) ([]objects.Host, error) {
+// Queries for all hosts in a container. If container==nil the root will be used.
+func (s *HostSensor) queryHostsInContainer(ctx context.Context, scraper *VCenterScraper, containerRef *types.ManagedObjectReference, recursive bool) ([]objects.Host, error) {
 	sensorStopwatch := sensormetrics.NewSensorStopwatch()
 	sensorStopwatch.Start()
 	client, release, err := scraper.clientPool.AcquireWithContext(ctx)
@@ -118,13 +121,17 @@ func (s *HostSensor) queryHostsForCluster(ctx context.Context, scraper *VCenterS
 	}
 	defer release()
 
+	if containerRef == nil {
+		containerRef = &client.ServiceContent.RootFolder
+	}
+
 	sensorStopwatch.Mark1()
 	m := view.NewManager(client.Client)
 	v, err := m.CreateContainerView(
 		ctx,
-		clusterRef,
+		*containerRef,
 		[]string{"HostSystem"},
-		true,
+		recursive,
 	)
 	if err != nil {
 		return nil, NewSensorError("failed to create container", "err", err)
@@ -328,10 +335,10 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 
 		for _, i := range hardware.OtherIdentifyingInfo {
 			if i.IdentifierType.GetElementDescription().Key == "AssetTag" {
-				host.AssetTag = i.IdentifierValue
+				host.AssetTag = cleanString(i.IdentifierValue)
 			}
 			if i.IdentifierType.GetElementDescription().Key == "ServiceTag" {
-				host.ServiceTag = i.IdentifierValue
+				host.ServiceTag = cleanString(i.IdentifierValue)
 			}
 		}
 		host.Vendor = hardware.Vendor

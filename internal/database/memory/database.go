@@ -379,6 +379,15 @@ func (db *DB) GetAllClusterRefs(ctx context.Context) []objects.ManagedObjectRefe
 	return result
 }
 
+func (db *DB) GetAllDatacenterRefs(ctx context.Context) []objects.ManagedObjectReference {
+	dcs, _ := db.GetAllDatacenter(ctx)
+	result := []objects.ManagedObjectReference{}
+	for _, dc := range dcs {
+		result = append(result, dc.Self)
+	}
+	return result
+}
+
 func (db *DB) SetTags(ctx context.Context, tagSet objects.TagSet, ttl time.Duration) error {
 	err := db.Table(objects.ManagedObjectTypesTagSet).SetWithTTL(tagSet.ObjectRef.Hash(), tagSet, ttl)
 	if err != nil {

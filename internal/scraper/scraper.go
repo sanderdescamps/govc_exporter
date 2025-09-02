@@ -55,6 +55,7 @@ func NewVCenterScraper(ctx context.Context, conf config.ScraperConfig, logger *s
 	switch dbType := strings.ToLower(conf.Backend.Type); dbType {
 	case "redis":
 		logger.Info("init Redis backend")
+		logger.Warn("The redis backend is still considered as experimental.")
 		db = redis_db.NewDB(
 			conf.Backend.Redis.Address,
 			conf.Backend.Redis.Password,
