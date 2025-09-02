@@ -298,6 +298,12 @@ VirtualMachineScraperEnabled is enabled because scraper needs the hosts
 when it queries the vm's`)
 	}
 
+	if !c.Datacenter.Enabled && c.Host.Enabled {
+		return fmt.Errorf(`DatacenterSensor must be enabled when 
+HostSensor is enabled because scraper needs the dc's 
+when it queries the hosts`)
+	}
+
 	if c.Cluster.MaxAge.Seconds()+5 <= c.Cluster.RefreshInterval.Seconds() {
 		return fmt.Errorf("ClusterMaxAge must be more than 5sec bigger than ClusterRefreshInterval")
 	}

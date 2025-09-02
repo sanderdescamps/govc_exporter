@@ -56,7 +56,7 @@ func (s *HostSensor) querryAllHosts(ctx context.Context, scraper *VCenterScraper
 		s.SensorLogger.Error("Can't query for hosts if cluster sensor is not defined")
 		return nil, fmt.Errorf("no cluster sensor found")
 	}
-	(scraper.Cluster).(*ClusterSensor).WaitTillStartup()
+	(scraper.Datacenter).(*DatacenterSensor).WaitTillStartup()
 
 	dcRefs := scraper.DB.GetAllDatacenterRefs(ctx)
 
@@ -335,10 +335,10 @@ func ConvertToHost(ctx context.Context, scraper *VCenterScraper, h mo.HostSystem
 
 		for _, i := range hardware.OtherIdentifyingInfo {
 			if i.IdentifierType.GetElementDescription().Key == "AssetTag" {
-				host.AssetTag = i.IdentifierValue
+				host.AssetTag = cleanString(i.IdentifierValue)
 			}
 			if i.IdentifierType.GetElementDescription().Key == "ServiceTag" {
-				host.ServiceTag = i.IdentifierValue
+				host.ServiceTag = cleanString(i.IdentifierValue)
 			}
 		}
 		host.Vendor = hardware.Vendor
