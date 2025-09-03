@@ -184,11 +184,12 @@ type IscsiStaticTarget struct {
 }
 
 type MultipathPathInfo struct {
-	Type    string
-	Name    string
-	State   string
-	Adapter string
-	LUN     int
+	Type          string
+	Name          string
+	State         string
+	Adapter       string
+	LUN           int
+	CanonicalName string
 
 	IscsiTargetAddress string
 	IscsiTargetIQN     string
