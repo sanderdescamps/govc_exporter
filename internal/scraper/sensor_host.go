@@ -465,6 +465,22 @@ func multipathPathCounter(host mo.HostSystem, lunKey string) (active int64, tota
 	return 0, 0
 }
 
+func canonicalNameLookup(host mo.HostSystem, lunKey string) string {
+	if config := host.Config; config != nil {
+		if storDev := config.StorageDevice; storDev != nil {
+			for _, scsiLun := range storDev.ScsiLun {
+				switch disk := (reflect.ValueOf(scsiLun).Elem().Interface()).(type) {
+				case types.HostScsiDisk:
+					return disk.CanonicalName
+				default:
+					continue
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func getSCSILuns(host mo.HostSystem) []objects.SCSILun {
 	res := []objects.SCSILun{}
 	if host.Config != nil && host.Config.StorageDevice != nil {
@@ -557,11 +573,13 @@ func getMultipathInfo(host mo.HostSystem) []objects.MultipathPathInfo {
 		if storDev := config.StorageDevice; storDev != nil {
 			if mpInfo := storDev.MultipathInfo; mpInfo != nil {
 				for _, lun := range mpInfo.Lun {
+					canonicalName := canonicalNameLookup(host, lun.Key)
 					for _, path := range lun.Path {
 						mpPathInfo := objects.MultipathPathInfo{
-							Name:    path.Name,
-							State:   path.State,
-							Adapter: "",
+							Name:          path.Name,
+							State:         path.State,
+							Adapter:       "",
+							CanonicalName: canonicalName,
 						}
 
 						if r := regexp.MustCompile(`(\w+)-([\w\.]+)-(\w+)`); r.MatchString(path.Adapter) {

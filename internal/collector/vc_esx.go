@@ -64,9 +64,9 @@ func NewEsxCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConf
 
 	hbaLabels := append(slices.Clone(labels), "adapter_name", "driver", "model")
 	iscsiHbaSendTargetLabels := append(slices.Clone(labels), "adapter_name", "driver", "model", "target_address")
-	iscsiHbaStaticTargetLabels := append(slices.Clone(labels), "adapter_name", "driver", "model", "target_address", "target_name", "discovery_method")
-	multipathStatusLabels := append(slices.Clone(labels), "path_name", "adapter_name", "target_address", "target_name", "lun")
-	volumeLabels := append(slices.Clone(labels), "uuid", "disk_name", "datastore", "local", "ssd")
+	iscsiHbaStaticTargetLabels := append(slices.Clone(labels), "adapter_name", "driver", "model", "target_address", "target_name", "discovery_method", "initiator_name")
+	multipathStatusLabels := append(slices.Clone(labels), "path_name", "adapter_name", "target_address", "target_name", "lun", "canonical_name")
+	volumeLabels := append(slices.Clone(labels), "uuid", "canonical_name", "datastore", "local", "ssd")
 	scsiLunLabels := append(slices.Clone(labels), "vendor", "model", "canonical_name", "local", "ssd")
 
 	return &esxCollector{
@@ -288,7 +288,7 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 						))
 					}
 					for _, target := range hba.IscsiStaticTarget {
-						iscsiLabelTargetValues := append(slices.Clone(hbaLabelValues), fmt.Sprintf("%s:%d", target.Address, target.Port), target.IQN, target.DiscoveryMethod)
+						iscsiLabelTargetValues := append(slices.Clone(hbaLabelValues), fmt.Sprintf("%s:%d", target.Address, target.Port), target.IQN, target.DiscoveryMethod, hba.IscsiInitiatorIQN)
 						ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 							c.hbaIscsiStaticTargetInfo, prometheus.GaugeValue, 1, iscsiLabelTargetValues...,
 						))
@@ -297,7 +297,7 @@ func (c *esxCollector) Collect(ch chan<- prometheus.Metric) {
 			}
 
 			for _, p := range host.MultipathPathInfo {
-				pathLabelValues := append(slices.Clone(labelValues), p.Name, p.Adapter, p.IscsiTargetAddress, p.IscsiTargetIQN, strconv.Itoa(p.LUN))
+				pathLabelValues := append(slices.Clone(labelValues), p.Name, p.Adapter, p.IscsiTargetAddress, p.IscsiTargetIQN, strconv.Itoa(p.LUN), p.CanonicalName)
 				ch <- prometheus.NewMetricWithTimestamp(host.Timestamp, prometheus.MustNewConstMetric(
 					c.multipathPathState, prometheus.GaugeValue, p.StateFloat64(), pathLabelValues...,
 				))
