@@ -10,7 +10,7 @@ _test
 /out
 /vendor
 /external
-/tests/gi-vcenter-data
+/test-data
 /cmd/perf-metric-tester/
 /dumps
 gi-*
