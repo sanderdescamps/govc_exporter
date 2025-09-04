@@ -471,7 +471,9 @@ func canonicalNameLookup(host mo.HostSystem, lunKey string) string {
 			for _, scsiLun := range storDev.ScsiLun {
 				switch disk := (reflect.ValueOf(scsiLun).Elem().Interface()).(type) {
 				case types.HostScsiDisk:
-					return disk.CanonicalName
+					if disk.Key == lunKey {
+						return disk.CanonicalName
+					}
 				default:
 					continue
 				}
@@ -573,7 +575,7 @@ func getMultipathInfo(host mo.HostSystem) []objects.MultipathPathInfo {
 		if storDev := config.StorageDevice; storDev != nil {
 			if mpInfo := storDev.MultipathInfo; mpInfo != nil {
 				for _, lun := range mpInfo.Lun {
-					canonicalName := canonicalNameLookup(host, lun.Key)
+					canonicalName := canonicalNameLookup(host, lun.Lun)
 					for _, path := range lun.Path {
 						mpPathInfo := objects.MultipathPathInfo{
 							Name:          path.Name,
