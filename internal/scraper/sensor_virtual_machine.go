@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -228,7 +229,7 @@ func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCe
 			//"datatore",
 			"guest", //(only for advanced network)
 			// "guestHeartbeatStatus", //(not sure)
-			// "network",
+			"network",
 			"parent",
 			// "resourceConfig",
 			"resourcePool",
@@ -245,7 +246,7 @@ func (s *VirtualMachineSensor) queryVmsForHost(ctx context.Context, scraper *VCe
 
 	oVMs := []objects.VirtualMachine{}
 	for _, item := range items {
-		oVMs = append(oVMs, ConvertToVirtualMachine(ctx, scraper, item, time.Now()))
+		oVMs = append(oVMs, ConvertToVirtualMachine(ctx, s, scraper, item, time.Now()))
 	}
 
 	s.metricsCollector.UploadStats(sensorStopwatch.GetStats())
@@ -299,7 +300,7 @@ func (s *VirtualMachineSensor) GetLatestMetrics() []sensormetrics.SensorMetric {
 	)
 }
 
-func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo.VirtualMachine, t time.Time) objects.VirtualMachine {
+func ConvertToVirtualMachine(ctx context.Context, sensor *VirtualMachineSensor, scraper *VCenterScraper, vm mo.VirtualMachine, t time.Time) objects.VirtualMachine {
 	self := objects.NewManagedObjectReferenceFromVMwareRef(vm.Self)
 
 	var parent *objects.ManagedObjectReference
@@ -328,6 +329,7 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 
 		virtualMachine.UUID = config.Uuid
 		virtualMachine.GuestID = config.GuestId
+		virtualMachine.GuestFullName = strings.TrimSpace(config.GuestFullName)
 		virtualMachine.Template = config.Template
 		timeConfChanged, err := time.Parse(time.RFC3339Nano, config.ChangeVersion)
 		if err == nil {
@@ -424,7 +426,7 @@ func ConvertToVirtualMachine(ctx context.Context, scraper *VCenterScraper, vm mo
 		})
 	}
 
-	virtualMachine.Disk = ExtractDisksFromVM(vm)
+	virtualMachine.Disk = ExtractDisksFromVM(vm, sensor)
 
 	if snapshots := vm.Snapshot; snapshots != nil {
 		virtualMachine.Snapshot = append(virtualMachine.Snapshot, walkSnapshotTree(snapshots.RootSnapshotList)...)
@@ -455,19 +457,32 @@ func walkSnapshotTree(snaps []types.VirtualMachineSnapshotTree) []objects.Virtua
 	return result
 }
 
-func ExtractDisksFromVM(vm mo.VirtualMachine) []objects.VirtualMachineDisk {
+func ExtractDisksFromVM(vm mo.VirtualMachine, sensor *VirtualMachineSensor) []objects.VirtualMachineDisk {
 	result := []objects.VirtualMachineDisk{}
 	if vm.Config != nil {
 		disks := object.VirtualDeviceList(vm.Config.Hardware.Device).SelectByType((*types.VirtualDisk)(nil))
 		for _, d := range disks {
 			disk := d.(*types.VirtualDisk)
-			info := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo)
-			result = append(result, objects.VirtualMachineDisk{
-				UUID:            info.Uuid,
-				VMDKFile:        info.FileName,
-				Capacity:        float64(disk.CapacityInBytes),
-				ThinProvisioned: *info.ThinProvisioned,
-			})
+			switch info := disk.Backing.(type) {
+			case *types.VirtualDiskFlatVer2BackingInfo:
+				result = append(result, objects.VirtualMachineDisk{
+					UUID:            info.Uuid,
+					VMDKFile:        info.FileName,
+					Capacity:        float64(disk.CapacityInBytes),
+					ThinProvisioned: info.ThinProvisioned != nil && *info.ThinProvisioned,
+				})
+			case *types.VirtualDiskSparseVer2BackingInfo:
+				result = append(result, objects.VirtualMachineDisk{
+					UUID:            info.Uuid,
+					VMDKFile:        info.FileName,
+					Capacity:        float64(disk.CapacityInBytes),
+					ThinProvisioned: true, // ThinProvisioned not available for SparseVer2BackingInfo
+				})
+			default:
+				// Optionally log or skip unknown backing types
+				sensor.SensorLogger.Warn("Unknown disk backing type", "vm", vm.Name, "type", fmt.Sprintf("%T", info))
+				continue
+			}
 		}
 	}
 	return result
