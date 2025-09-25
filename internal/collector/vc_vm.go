@@ -68,7 +68,7 @@ type virtualMachineCollector struct {
 }
 
 func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *virtualMachineCollector {
-	labels := []string{"uuid", "name", "template", "vm_id", "pool"}
+	labels := []string{"uuid", "name", "template", "vm_id", "pool", "datacenter", "cluster", "esx", "power_state"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {
 		labels = append(labels, extraLabels...)
@@ -77,9 +77,8 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.Co
 	if cConf.UseIsecSpecifics {
 		labels = append(labels, "crit", "responsable", "service")
 	}
-	infoLabels := append(slices.Clone(labels), "guest_id", "tools_version")
-	hostLabels := append(slices.Clone(labels), "datacenter", "cluster", "esx")
-	diskLabels := append(slices.Clone(labels), "disk_uuid", "thin_provisioned")
+	infoLabels := append(slices.Clone(labels), "guest_id", "guest_full_name", "tools_version")
+	diskLabels := append(slices.Clone(labels), "disk_uuid", "thin_provisioned", "path")
 	networkLabels := append(slices.Clone(labels), "mac", "ip")
 
 	return &virtualMachineCollector{
@@ -148,7 +147,7 @@ func NewVirtualMachineCollector(scraper *scraper.VCenterScraper, cConf config.Co
 			"Info about vm", infoLabels, nil),
 		hostInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, virtualMachineCollectorSubsystem, "host_info"),
-			"Info about the host", hostLabels, nil),
+			"Info about the host", labels, nil),
 
 		// Advanced network metrics
 		networkConnected: prometheus.NewDesc(
@@ -265,7 +264,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
 
-		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.Value, vm.ResourcePool}
+		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.Value, vm.ResourcePool, vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host, vm.PowerState}
 		labelValues = append(slices.Clone(labelValues), extraLabelValues...)
 
 		if c.useIsecSpecifics && vm.IsecAnnotation != nil {
@@ -277,8 +276,6 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 				annotation.Service,
 			)
 		}
-
-		hostLabelValues := append(slices.Clone(labelValues), vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host)
 
 		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 			c.numCPU, prometheus.GaugeValue, vm.NumCPU, labelValues...,
@@ -344,13 +341,13 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 			c.toolsStatus, prometheus.GaugeValue, vm.GuestToolsStatusFloat64(), labelValues...,
 		))
 
-		infoLabelValues := append(slices.Clone(labelValues), vm.GuestID, vm.GuestToolsVersion)
+		infoLabelValues := append(slices.Clone(labelValues), vm.GuestID, vm.GuestFullName, vm.GuestToolsVersion)
 		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 			c.vmInfo, prometheus.GaugeValue, 0, infoLabelValues...,
 		))
 
 		ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
-			c.hostInfo, prometheus.GaugeValue, 1, hostLabelValues...,
+			c.hostInfo, prometheus.GaugeValue, 1, labelValues...,
 		))
 
 		//Legacy metrics
@@ -409,7 +406,7 @@ func (c *virtualMachineCollector) Collect(ch chan<- prometheus.Metric) {
 		//Advanced Storage metrics
 		if c.advancedStorageMetrics {
 			for _, disk := range vm.Disk {
-				diskLabelValues := append(slices.Clone(labelValues), disk.UUID, strconv.FormatBool(disk.ThinProvisioned))
+				diskLabelValues := append(slices.Clone(labelValues), disk.UUID, strconv.FormatBool(disk.ThinProvisioned), disk.VMDKFile)
 				ch <- prometheus.NewMetricWithTimestamp(vm.Timestamp, prometheus.MustNewConstMetric(
 					c.diskCapacityBytes, prometheus.GaugeValue, float64(disk.Capacity), diskLabelValues...,
 				))

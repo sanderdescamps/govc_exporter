@@ -19,7 +19,7 @@ type VMPerfCollector struct {
 }
 
 func NewVMPerfCollector(scraper *scraper.VCenterScraper, cConf config.CollectorConfig) *VMPerfCollector {
-	labels := []string{"uuid", "name", "template", "vm_id"}
+	labels := []string{"uuid", "name", "template", "vm_id", "pool", "datacenter", "cluster", "esx", "power_state"}
 	extraLabels := cConf.VMTagLabels
 	if len(extraLabels) != 0 {
 		labels = append(labels, extraLabels...)
@@ -60,7 +60,7 @@ func (c *VMPerfCollector) Collect(ch chan<- prometheus.Metric) {
 			extraLabelValues = append(extraLabelValues, objectTags.GetTag(tagCat))
 		}
 
-		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.ID()}
+		labelValues := []string{vm.UUID, vm.Name, strconv.FormatBool(vm.Template), vm.Self.ID(), vm.ResourcePool, vm.Datacenter, vm.HostInfo.Cluster, vm.HostInfo.Host, vm.PowerState}
 		labelValues = append(labelValues, extraLabelValues...)
 
 		for metric := range c.scraper.MetricsDB.PopAllVmMetricsIter(ctx, vm.Self) {

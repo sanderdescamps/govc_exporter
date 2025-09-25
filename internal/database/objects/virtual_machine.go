@@ -41,6 +41,7 @@ type VirtualMachine struct {
 	GuestToolsStatus     string  `json:"guest_tools_status" redis:"guest_tools_status"`
 	GuestToolsVersion    string  `json:"guest_tools_version" redis:"guest_tools_version"`
 	GuestID              string  `json:"guest_id" redis:"guest_id"`
+	GuestFullName        string  `json:"guest_full_name" redis:"guest_full_name"`
 
 	// Legacy metrics
 	DistributedCPUEntitlement    float64 `json:"distributed_cpu_entitlement" redis:"distributed_cpu_entitlement"`
